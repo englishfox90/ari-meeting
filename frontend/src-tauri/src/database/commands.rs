@@ -1,7 +1,7 @@
 use log::{error, info};
 use serde::Serialize;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use super::manager::DatabaseManager;
 use crate::state::AppState;
@@ -169,9 +169,12 @@ pub async fn import_and_initialize_database(
 
     info!("Legacy database imported and initialized successfully");
 
-    // Emit event to notify frontend that database is ready
-    app.emit("database-initialized", ())
-        .map_err(|e| format!("Failed to emit database-initialized event: {}", e))?;
+    // Emit event to notify frontend that database is ready. Routed through the
+    // Engine's EventSink (headless-ready); the engine is managed in setup()
+    // before any first-launch DB command runs, so state() is present here.
+    app.state::<std::sync::Arc<crate::engine::Engine>>()
+        .event_sink()
+        .emit("database-initialized", ());
 
     Ok(())
 }
@@ -223,9 +226,12 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
 
     info!("Fresh database initialized successfully with default models");
 
-    // Emit event to notify frontend that database is ready
-    app.emit("database-initialized", ())
-        .map_err(|e| format!("Failed to emit database-initialized event: {}", e))?;
+    // Emit event to notify frontend that database is ready. Routed through the
+    // Engine's EventSink (headless-ready); the engine is managed in setup()
+    // before any first-launch DB command runs, so state() is present here.
+    app.state::<std::sync::Arc<crate::engine::Engine>>()
+        .event_sink()
+        .emit("database-initialized", ());
 
     Ok(())
 }

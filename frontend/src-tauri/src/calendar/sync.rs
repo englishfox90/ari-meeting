@@ -192,7 +192,7 @@ pub fn spawn_background_sync(app: tauri::AppHandle) {
 
 #[cfg(target_os = "macos")]
 async fn run_background_sync_once(app: &tauri::AppHandle) {
-    use tauri::{Emitter, Manager};
+    use tauri::Manager;
 
     let status = eventkit::permission_status();
     if status != "authorized" && status != "fullAccess" {
@@ -223,10 +223,9 @@ async fn run_background_sync_once(app: &tauri::AppHandle) {
     match sync_range_core(pool, &selected_ids, start, end).await {
         Ok(count) => {
             log::info!("📅 Background sync complete: {count} events synced");
-            if let Err(e) = app.emit("calendar-sync-updated", serde_json::json!({ "count": count }))
-            {
-                log::error!("📅 Failed to emit calendar-sync-updated: {e}");
-            }
+            app.state::<std::sync::Arc<crate::engine::Engine>>()
+                .event_sink()
+                .emit("calendar-sync-updated", serde_json::json!({ "count": count }));
         }
         Err(e) => {
             log::error!("📅 Background sync failed: {e}");
