@@ -1,4 +1,5 @@
 use anyhow::Result;
+use crate::engine::EventSink;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -339,9 +340,9 @@ impl RecordingManager {
     }
 
     /// Save recording after transcription is complete
-    pub async fn save_recording_only<R: tauri::Runtime>(
+    pub async fn save_recording_only(
         &mut self,
-        app: &tauri::AppHandle<R>,
+        sink: &Arc<dyn EventSink>,
     ) -> Result<()> {
         debug!("Saving recording with transcript chunks");
 
@@ -352,7 +353,7 @@ impl RecordingManager {
         // Save the recording with actual duration
         match self
             .recording_saver
-            .stop_and_save(app, recording_duration)
+            .stop_and_save(sink, recording_duration)
             .await
         {
             Ok(Some(file_path)) => {
@@ -372,9 +373,9 @@ impl RecordingManager {
     }
 
     /// Stop recording and save audio (legacy method)
-    pub async fn stop_recording<R: tauri::Runtime>(
+    pub async fn stop_recording(
         &mut self,
-        app: &tauri::AppHandle<R>,
+        sink: &Arc<dyn EventSink>,
     ) -> Result<()> {
         info!("Stopping recording manager");
 
@@ -398,7 +399,7 @@ impl RecordingManager {
         // Save the recording with actual duration
         match self
             .recording_saver
-            .stop_and_save(app, recording_duration)
+            .stop_and_save(sink, recording_duration)
             .await
         {
             Ok(Some(file_path)) => {

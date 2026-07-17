@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use anyhow::Result;
-use log::{error, info};
+use log::info;
 use serde::Serialize;
 
 #[derive(Debug, Serialize, Clone)]
@@ -23,6 +23,11 @@ pub struct AudioLevelUpdate {
 static IS_MONITORING: AtomicBool = AtomicBool::new(false);
 
 /// Start audio level monitoring for specified devices
+///
+/// Kept on `AppHandle<R>` (rather than an `EventSink` param, per the Stage-A emit
+/// sweep) because its sole caller is the `#[tauri::command]` in `lib.rs`, which is
+/// out of scope for this sweep. The emit itself still routes through the managed
+/// Engine's `EventSink`, derived here.
 pub async fn start_monitoring<R: Runtime>(
     app_handle: AppHandle<R>,
     device_names: Vec<String>,
@@ -39,7 +44,7 @@ pub async fn start_monitoring<R: Runtime>(
     IS_MONITORING.store(true, Ordering::SeqCst);
 
     // For now, create fake level data to test the UI
-    let app_handle_clone = app_handle.clone();
+    let sink = app_handle.state::<std::sync::Arc<crate::engine::Engine>>().event_sink();
     tokio::spawn(async move {
         let mut counter: f32 = 0.0;
 
@@ -67,10 +72,7 @@ pub async fn start_monitoring<R: Runtime>(
                 levels,
             };
 
-            if let Err(e) = app_handle_clone.emit("audio-levels", &update) {
-                error!("Failed to emit audio levels: {}", e);
-                break;
-            }
+            sink.emit("audio-levels", &update);
         }
 
         info!("Audio level monitoring task ended");

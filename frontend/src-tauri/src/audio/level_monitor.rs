@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
-use tauri::{AppHandle, Emitter, Runtime};
+use crate::engine::EventSink;
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -40,9 +40,9 @@ impl AudioLevelMonitor {
     }
 
     /// Start monitoring audio levels for specified devices
-    pub async fn start_monitoring<R: Runtime>(
+    pub async fn start_monitoring(
         &mut self,
-        app_handle: AppHandle<R>,
+        sink: Arc<dyn EventSink>,
         device_names: Vec<String>,
     ) -> Result<()> {
         if AUDIO_LEVEL_STATE.is_monitoring.load(Ordering::SeqCst) {
@@ -79,7 +79,7 @@ impl AudioLevelMonitor {
         }
 
         // Start emission task
-        let app_handle_clone = app_handle.clone();
+        let sink_clone = sink.clone();
         let level_data_clone = level_data.clone();
 
         tokio::spawn(async move {
@@ -104,9 +104,7 @@ impl AudioLevelMonitor {
                         levels,
                     };
 
-                    if let Err(e) = app_handle_clone.emit("audio-levels", &update) {
-                        error!("Failed to emit audio levels: {}", e);
-                    }
+                    sink_clone.emit("audio-levels", &update);
                 }
             }
         });

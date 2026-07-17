@@ -1,9 +1,9 @@
 use anyhow::Result;
+use crate::engine::EventSink;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -574,11 +574,11 @@ impl RecordingSaver {
     /// Stop and save using incremental saving approach
     ///
     /// # Arguments
-    /// * `app` - Tauri app handle for emitting events
+    /// * `sink` - EventSink for emitting the `recording-saved` event
     /// * `recording_duration` - Actual recording duration in seconds (from RecordingState)
-    pub async fn stop_and_save<R: Runtime>(
+    pub async fn stop_and_save(
         &mut self,
-        app: &AppHandle<R>,
+        sink: &Arc<dyn EventSink>,
         recording_duration: Option<f64>,
     ) -> Result<Option<String>, String> {
         info!("Stopping recording saver");
@@ -694,9 +694,7 @@ impl RecordingSaver {
                 .map(|f| f.to_string_lossy().to_string())
         });
 
-        if let Err(e) = app.emit("recording-saved", &save_event) {
-            warn!("Failed to emit recording-saved event: {}", e);
-        }
+        sink.emit("recording-saved", &save_event);
 
         // Clean up transcript segments
         if let Ok(mut segments) = self.transcript_segments.lock() {

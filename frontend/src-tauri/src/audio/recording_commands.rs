@@ -4,13 +4,14 @@
 // Delegates to transcription and recording modules for actual implementation.
 
 use anyhow::Result;
+use crate::engine::Engine;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tokio::task::JoinHandle;
 
 use super::{
@@ -80,6 +81,11 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
 
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
 
+    // EventSink for this recording session, derived from the managed Engine.
+    // `app` itself stays in scope for state access, event listen/unlisten, and
+    // the tray — only the emits route through `sink`.
+    let sink = app.state::<Arc<Engine>>().event_sink();
+
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
     info!("🔍 IS_RECORDING state check: {}", current_recording_state);
@@ -94,7 +100,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
 
         // Emit error event for frontend - actionable: false to show toast instead of modal
         // (download progress is already shown in top-right toast)
-        let _ = app.emit("transcription-error", serde_json::json!({
+        sink.emit("transcription-error", serde_json::json!({
             "error": validation_error,
             "userMessage": "Recording cannot start: Transcription model is still downloading. Please wait for the download to complete.",
             "actionable": false
@@ -225,9 +231,9 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     manager.set_meeting_name(Some(effective_meeting_name));
 
     // Set up error callback
-    let app_for_error = app.clone();
+    let sink_for_error = sink.clone();
     manager.set_error_callback(move |error| {
-        let _ = app_for_error.emit("recording-error", error.user_message());
+        sink_for_error.emit("recording-error", error.user_message());
     });
 
     // Start recording with resolved devices (replaces start_recording_with_defaults_and_auto_save call)
@@ -289,11 +295,11 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     }
 
     // Emit success event
-    app.emit("recording-started", serde_json::json!({
+    sink.emit("recording-started", serde_json::json!({
         "message": "Recording started successfully with parallel processing",
         "devices": ["Default Microphone", "Default System Audio"],
         "workers": 3
-    })).map_err(|e| e.to_string())?;
+    }));
 
     // Update tray menu to reflect recording state
     crate::tray::update_tray_menu(&app);
@@ -326,6 +332,9 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
     let engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
 
+    // EventSink for this recording session, derived from the managed Engine.
+    let sink = app.state::<Arc<Engine>>().event_sink();
+
     // Check if already recording
     let current_recording_state = IS_RECORDING.load(Ordering::SeqCst);
     info!("🔍 IS_RECORDING state check: {}", current_recording_state);
@@ -340,7 +349,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 
         // Emit error event for frontend - actionable: false to show toast instead of modal
         // (download progress is already shown in top-right toast)
-        let _ = app.emit("transcription-error", serde_json::json!({
+        sink.emit("transcription-error", serde_json::json!({
             "error": validation_error,
             "userMessage": "Recording cannot start: Transcription model is still downloading. Please wait for the download to complete.",
             "actionable": false
@@ -409,9 +418,9 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     manager.set_meeting_name(Some(effective_meeting_name));
 
     // Set up error callback
-    let app_for_error = app.clone();
+    let sink_for_error = sink.clone();
     manager.set_error_callback(move |error| {
-        let _ = app_for_error.emit("recording-error", error.user_message());
+        sink_for_error.emit("recording-error", error.user_message());
     });
 
     // Start recording with specified devices and auto_save setting
@@ -473,14 +482,14 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     }
 
     // Emit success event
-    app.emit("recording-started", serde_json::json!({
+    sink.emit("recording-started", serde_json::json!({
         "message": "Recording started with custom devices and parallel processing",
         "devices": [
             mic_device_name.unwrap_or_else(|| "Default Microphone".to_string()),
             system_device_name.unwrap_or_else(|| "Default System Audio".to_string())
         ],
         "workers": 3
-    })).map_err(|e| e.to_string())?;
+    }));
 
     // Update tray menu to reflect recording state
     crate::tray::update_tray_menu(&app);
@@ -499,6 +508,9 @@ pub async fn stop_recording<R: Runtime>(
         "🛑 Starting optimized recording shutdown - ensuring ALL transcript chunks are preserved"
     );
 
+    // EventSink for this shutdown, derived from the managed Engine.
+    let sink = app.state::<Arc<Engine>>().event_sink();
+
     // Check if recording is active
     if !IS_RECORDING.load(Ordering::SeqCst) {
         info!("Recording was not active");
@@ -506,7 +518,7 @@ pub async fn stop_recording<R: Runtime>(
     }
 
     // Emit shutdown progress to frontend
-    let _ = app.emit(
+    sink.emit(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "stopping_audio",
@@ -556,7 +568,7 @@ pub async fn stop_recording<R: Runtime>(
     }
 
     // Step 2: Signal transcription workers to finish processing ALL queued chunks
-    let _ = app.emit(
+    sink.emit(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "processing_transcripts",
@@ -575,7 +587,7 @@ pub async fn stop_recording<R: Runtime>(
         info!("⏳ Waiting for ALL transcription chunks to be processed (no timeout - preserving every chunk)");
 
         // Enhanced progress monitoring during shutdown
-        let progress_app = app.clone();
+        let progress_sink = sink.clone();
         let progress_task = tokio::spawn(async move {
             let last_update = std::time::Instant::now();
 
@@ -584,7 +596,7 @@ pub async fn stop_recording<R: Runtime>(
 
                 // Emit periodic progress updates during shutdown
                 let elapsed = last_update.elapsed().as_secs();
-                let _ = progress_app.emit(
+                progress_sink.emit(
                     "recording-shutdown-progress",
                     serde_json::json!({
                         "stage": "processing_transcripts",
@@ -626,7 +638,7 @@ pub async fn stop_recording<R: Runtime>(
     }
 
     // Step 3: Now safely unload Whisper model after ALL chunks are processed
-    let _ = app.emit(
+    sink.emit(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "unloading_model",
@@ -839,7 +851,7 @@ pub async fn stop_recording<R: Runtime>(
     }
 
     // Step 4: Finalize recording state and cleanup resources safely
-    let _ = app.emit(
+    sink.emit(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "finalizing",
@@ -858,7 +870,7 @@ pub async fn stop_recording<R: Runtime>(
 
         match tokio::time::timeout(
             tokio::time::Duration::from_secs(300), // 5 minutes max for file I/O
-            manager.save_recording_only(&app)
+            manager.save_recording_only(&sink)
         ).await {
             Ok(Ok(_)) => {
                 info!("✅ Recording data saved successfully during cleanup");
@@ -905,7 +917,7 @@ pub async fn stop_recording<R: Runtime>(
     info!("ℹ️ Skipping database save in Rust - frontend will save after all transcripts received");
 
     // Step 5: Complete shutdown
-    let _ = app.emit(
+    sink.emit(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "complete",
@@ -915,15 +927,14 @@ pub async fn stop_recording<R: Runtime>(
     );
 
     // Emit final stop event with folder_path and meeting_name for frontend to save
-    app.emit(
+    sink.emit(
         "recording-stopped",
         serde_json::json!({
             "message": "Recording stopped - frontend will save after all transcripts received",
             "folder_path": folder_path_str,
             "meeting_name": meeting_name_str
         }),
-    )
-    .map_err(|e| e.to_string())?;
+    );
 
     // Update tray menu to reflect stopped state
     crate::tray::update_tray_menu(&app);
@@ -962,13 +973,12 @@ pub async fn pause_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String
         manager.pause_recording().map_err(|e| e.to_string())?;
 
         // Emit pause event to frontend
-        app.emit(
+        app.state::<Arc<Engine>>().event_sink().emit(
             "recording-paused",
             serde_json::json!({
                 "message": "Recording paused"
             }),
-        )
-        .map_err(|e| e.to_string())?;
+        );
 
         // Update tray menu to reflect paused state
         crate::tray::update_tray_menu(&app);
@@ -996,13 +1006,12 @@ pub async fn resume_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), Strin
         manager.resume_recording().map_err(|e| e.to_string())?;
 
         // Emit resume event to frontend
-        app.emit(
+        app.state::<Arc<Engine>>().event_sink().emit(
             "recording-resumed",
             serde_json::json!({
                 "message": "Recording resumed"
             }),
-        )
-        .map_err(|e| e.to_string())?;
+        );
 
         // Update tray menu to reflect resumed state
         crate::tray::update_tray_menu(&app);

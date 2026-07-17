@@ -5,6 +5,7 @@ use crate::audio::vad::get_speech_chunks_with_progress;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
+use crate::engine::{Engine, EventSink};
 use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 /// Global flag to track if retranscription is in progress
 static RETRANSCRIPTION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -101,6 +102,11 @@ pub async fn start_retranscription<R: Runtime>(
     // Reset cancellation flag
     RETRANSCRIPTION_CANCELLED.store(false, Ordering::SeqCst);
 
+    // EventSink for this retranscription, derived from the managed Engine. `app`
+    // itself stays in scope for `run_retranscription`, which needs it for
+    // AppState/whisper/parakeet access well beyond emitting events.
+    let sink = app.state::<Arc<Engine>>().event_sink();
+
     let use_parakeet = provider.as_deref() == Some("parakeet");
     let result = run_retranscription(app.clone(), meeting_id.clone(), meeting_folder_path, language, model, provider).await;
 
@@ -112,7 +118,7 @@ pub async fn start_retranscription<R: Runtime>(
 
     match &result {
         Ok(res) => {
-            let _ = app.emit(
+            sink.emit(
                 "retranscription-complete",
                 serde_json::json!({
                     "meeting_id": res.meeting_id,
@@ -123,7 +129,7 @@ pub async fn start_retranscription<R: Runtime>(
             );
         }
         Err(e) => {
-            let _ = app.emit(
+            sink.emit(
                 "retranscription-error",
                 RetranscriptionError {
                     meeting_id: meeting_id.clone(),
@@ -189,8 +195,11 @@ async fn run_retranscription<R: Runtime>(
         meeting_id, language, model, provider
     );
 
+    // EventSink for this retranscription run, derived from the managed Engine.
+    let sink = app.state::<Arc<Engine>>().event_sink();
+
     // Emit progress: decoding
-    emit_progress(&app, &meeting_id, "decoding", 5, "Decoding audio file...");
+    emit_progress(&sink, &meeting_id, "decoding", 5, "Decoding audio file...");
 
     // Check for cancellation
     if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
@@ -211,7 +220,7 @@ async fn run_retranscription<R: Runtime>(
         duration_seconds, decoded.sample_rate, decoded.channels
     );
 
-    emit_progress(&app, &meeting_id, "decoding", 15, "Converting audio format...");
+    emit_progress(&sink, &meeting_id, "decoding", 15, "Converting audio format...");
 
     // Check for cancellation
     if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
@@ -226,7 +235,7 @@ async fn run_retranscription<R: Runtime>(
     .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
     info!("Converted to 16kHz mono format: {} samples", audio_samples.len());
 
-    emit_progress(&app, &meeting_id, "vad", 20, "Detecting speech segments...");
+    emit_progress(&sink, &meeting_id, "vad", 20, "Detecting speech segments...");
 
     // Check for cancellation
     if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
@@ -236,7 +245,7 @@ async fn run_retranscription<R: Runtime>(
     // Use VAD to find natural speech boundaries (same approach as live transcription)
     // IMPORTANT: Run VAD in a blocking task to avoid blocking the async runtime
     // For large files (35+ minutes), VAD processing can take several minutes
-    let app_for_vad = app.clone();
+    let sink_for_vad = sink.clone();
     let meeting_id_for_vad = meeting_id.clone();
 
     let speech_segments = tokio::task::spawn_blocking(move || {
@@ -247,7 +256,7 @@ async fn run_retranscription<R: Runtime>(
                 // Map VAD progress (0-100) to overall progress (20-25)
                 let overall_progress = 20 + (vad_progress as f32 * 0.05) as u32;
                 emit_progress(
-                    &app_for_vad,
+                    &sink_for_vad,
                     &meeting_id_for_vad,
                     "vad",
                     overall_progress,
@@ -297,7 +306,7 @@ async fn run_retranscription<R: Runtime>(
         return Err(anyhow!("No speech detected in audio file"));
     }
 
-    emit_progress(&app, &meeting_id, "transcribing", 25, "Loading transcription engine...");
+    emit_progress(&sink, &meeting_id, "transcribing", 25, "Loading transcription engine...");
 
     // Initialize the appropriate engine once (not per-segment). Apple STT is a
     // spawn-per-segment sidecar with no persistent engine to load here.
@@ -351,7 +360,7 @@ async fn run_retranscription<R: Runtime>(
         let progress = 25 + ((i as f32 / processable_count as f32) * 55.0) as u32;
         let segment_duration_sec = (segment.end_timestamp_ms - segment.start_timestamp_ms) / 1000.0;
         emit_progress(
-            &app,
+            &sink,
             &meeting_id,
             "transcribing",
             progress,
@@ -426,7 +435,7 @@ async fn run_retranscription<R: Runtime>(
         return Err(anyhow!("Retranscription cancelled"));
     }
 
-    emit_progress(&app, &meeting_id, "saving", 80, "Saving transcripts...");
+    emit_progress(&sink, &meeting_id, "saving", 80, "Saving transcripts...");
 
     // Create transcript segments with proper timestamps from VAD
     let segments = create_transcript_segments(&all_transcripts);
@@ -489,7 +498,7 @@ async fn run_retranscription<R: Runtime>(
     );
 
     // Write updated transcripts.json and metadata.json to the meeting folder
-    emit_progress(&app, &meeting_id, "saving", 90, "Writing transcript files...");
+    emit_progress(&sink, &meeting_id, "saving", 90, "Writing transcript files...");
 
     if let Err(e) = write_transcripts_json(&folder_path, &segments) {
         warn!("Failed to write transcripts.json: {}", e);
@@ -511,7 +520,7 @@ async fn run_retranscription<R: Runtime>(
         warn!("Failed to update metadata.json: {}", e);
     }
 
-    emit_progress(&app, &meeting_id, "complete", 100, "Retranscription complete");
+    emit_progress(&sink, &meeting_id, "complete", 100, "Retranscription complete");
 
     Ok(RetranscriptionResult {
         meeting_id,
@@ -522,14 +531,14 @@ async fn run_retranscription<R: Runtime>(
 }
 
 /// Emit progress event
-fn emit_progress<R: Runtime>(
-    app: &AppHandle<R>,
+fn emit_progress(
+    sink: &Arc<dyn EventSink>,
     meeting_id: &str,
     stage: &str,
     progress: u32,
     message: &str,
 ) {
-    let _ = app.emit(
+    sink.emit(
         "retranscription-progress",
         RetranscriptionProgress {
             meeting_id: meeting_id.to_string(),

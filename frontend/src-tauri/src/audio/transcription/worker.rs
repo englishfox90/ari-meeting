@@ -5,11 +5,12 @@
 use super::engine::TranscriptionEngine;
 use super::provider::TranscriptionError;
 use crate::audio::AudioChunk;
+use crate::engine::EventSink;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 // Sequence counter for transcript updates
 static SEQUENCE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -49,12 +50,19 @@ pub fn start_transcription_task<R: Runtime>(
     tokio::spawn(async move {
         info!("🚀 Starting optimized parallel transcription task - guaranteeing zero chunk loss");
 
+        // EventSink for this task: derived once from the managed Engine so every
+        // downstream emit (workers, dispatcher, final verification) routes through
+        // the sink rather than naming `app` directly. `app` itself stays in scope
+        // only for `get_or_init_transcription_engine`, which needs `AppHandle` to
+        // reach the DB-backed transcript config via `app.state::<Arc<Engine>>()`.
+        let sink: Arc<dyn EventSink> = app.state::<Arc<crate::engine::Engine>>().event_sink();
+
         // Initialize transcription engine (Whisper or Parakeet based on config)
         let transcription_engine = match super::engine::get_or_init_transcription_engine(&app).await {
             Ok(engine) => engine,
             Err(e) => {
                 error!("Failed to initialize transcription engine: {}", e);
-                let _ = app.emit("transcription-error", serde_json::json!({
+                sink.emit("transcription-error", serde_json::json!({
                     "error": e,
                     "userMessage": "Recording failed: Unable to initialize speech recognition. Please check your model settings.",
                     "actionable": true
@@ -83,7 +91,7 @@ pub fn start_transcription_task<R: Runtime>(
                 TranscriptionEngine::Parakeet(e) => TranscriptionEngine::Parakeet(e.clone()),
                 TranscriptionEngine::Provider(p) => TranscriptionEngine::Provider(p.clone()),
             };
-            let app_clone = app.clone();
+            let sink_clone = sink.clone();
             let work_receiver_clone = work_receiver.clone();
             let chunks_completed_clone = chunks_completed.clone();
             let input_finished_clone = input_finished.clone();
@@ -147,7 +155,7 @@ pub fn start_transcription_task<R: Runtime>(
                             match transcribe_chunk_with_provider(
                                 &engine_clone,
                                 chunk,
-                                &app_clone,
+                                &sink_clone,
                             )
                             .await
                             {
@@ -181,12 +189,10 @@ pub fn start_transcription_task<R: Runtime>(
 
                                         if !current_flag {
                                             SPEECH_DETECTED_EMITTED.store(true, Ordering::SeqCst);
-                                            match app_clone.emit("speech-detected", serde_json::json!({
+                                            sink_clone.emit("speech-detected", serde_json::json!({
                                                 "message": "Speech activity detected"
-                                            })) {
-                                                Ok(_) => info!("🎤 ✅ First speech detected - successfully emitted speech-detected event"),
-                                                Err(e) => error!("🎤 ❌ Failed to emit speech-detected event: {}", e),
-                                            }
+                                            }));
+                                            info!("🎤 ✅ First speech detected - emitted speech-detected event");
                                         } else {
                                             info!("🔍 Speech already detected in this session, not re-emitting");
                                         }
@@ -219,13 +225,7 @@ pub fn start_transcription_task<R: Runtime>(
                                             duration: chunk_duration,
                                         };
 
-                                        if let Err(e) = app_clone.emit("transcript-update", &update)
-                                        {
-                                            error!(
-                                                "Worker {}: Failed to emit transcript update: {}",
-                                                worker_id, e
-                                            );
-                                        }
+                                        sink_clone.emit("transcript-update", &update);
                                         // PERFORMANCE: Removed verbose logging of every emission
                                     } else if !transcript.trim().is_empty() && should_log_this_chunk
                                     {
@@ -251,7 +251,7 @@ pub fn start_transcription_task<R: Runtime>(
                                         }
                                         _ => {
                                             warn!("Worker {}: Transcription failed: {}", worker_id, e);
-                                            let _ = app_clone.emit("transcription-warning", e.to_string());
+                                            sink_clone.emit("transcription-warning", e.to_string());
                                         }
                                     }
                                 }
@@ -280,7 +280,7 @@ pub fn start_transcription_task<R: Runtime>(
                                 100
                             };
 
-                            let _ = app_clone.emit("transcription-progress", serde_json::json!({
+                            sink_clone.emit("transcription-progress", serde_json::json!({
                                 "worker_id": worker_id,
                                 "chunks_completed": completed,
                                 "chunks_queued": queued,
@@ -344,7 +344,7 @@ pub fn start_transcription_task<R: Runtime>(
               total_chunks_queued, NUM_WORKERS);
 
         // Emit final chunk count to frontend
-        let _ = app.emit("transcription-queue-complete", serde_json::json!({
+        sink.emit("transcription-queue-complete", serde_json::json!({
             "total_chunks": total_chunks_queued,
             "message": format!("{} chunks queued for processing - waiting for completion", total_chunks_queued)
         }));
@@ -386,7 +386,7 @@ pub fn start_transcription_task<R: Runtime>(
                 );
 
                 // Emit critical error event
-                let _ = app.emit(
+                sink.emit(
                     "transcript-chunk-loss-detected",
                     serde_json::json!({
                         "chunks_queued": final_queued,
@@ -405,10 +405,10 @@ pub fn start_transcription_task<R: Runtime>(
 
 /// Transcribe audio chunk using the appropriate provider (Whisper, Parakeet, or trait-based)
 /// Returns: (text, confidence Option, is_partial)
-async fn transcribe_chunk_with_provider<R: Runtime>(
+async fn transcribe_chunk_with_provider(
     engine: &TranscriptionEngine,
     chunk: AudioChunk,
-    app: &AppHandle<R>,
+    sink: &Arc<dyn EventSink>,
 ) -> std::result::Result<(String, Option<f32>, bool), TranscriptionError> {
     // Convert to 16kHz mono for transcription
     let transcription_data = if chunk.sample_rate != 16000 {
@@ -472,7 +472,7 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                     );
 
                     let transcription_error = TranscriptionError::EngineFailed(e.to_string());
-                    let _ = app.emit(
+                    sink.emit(
                         "transcription-error",
                         &serde_json::json!({
                             "error": transcription_error.to_string(),
@@ -508,7 +508,7 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                     );
 
                     let transcription_error = TranscriptionError::EngineFailed(e.to_string());
-                    let _ = app.emit(
+                    sink.emit(
                         "transcription-error",
                         &serde_json::json!({
                             "error": transcription_error.to_string(),
@@ -556,7 +556,7 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                         e
                     );
 
-                    let _ = app.emit(
+                    sink.emit(
                         "transcription-error",
                         &serde_json::json!({
                             "error": e.to_string(),

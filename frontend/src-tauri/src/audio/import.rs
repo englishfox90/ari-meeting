@@ -4,6 +4,7 @@ use crate::api::TranscriptSegment;
 use crate::audio::decoder::{decode_audio_file, decode_audio_file_with_progress};
 use crate::audio::vad::get_speech_chunks_with_progress;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
+use crate::engine::{Engine, EventSink};
 use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
@@ -13,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 
@@ -265,6 +266,11 @@ pub async fn start_import<R: Runtime>(
     // Reset cancellation flag
     IMPORT_CANCELLED.store(false, Ordering::SeqCst);
 
+    // EventSink for this import, derived from the managed Engine. `app` itself
+    // stays in scope for `run_import`, which needs it for AppState/whisper/
+    // parakeet access well beyond emitting events.
+    let sink = app.state::<Arc<Engine>>().event_sink();
+
     let use_parakeet = provider.as_deref() == Some("parakeet");
     let result = run_import(
         app.clone(),
@@ -284,7 +290,7 @@ pub async fn start_import<R: Runtime>(
 
     match &result {
         Ok(res) => {
-            let _ = app.emit(
+            sink.emit(
                 "import-complete",
                 serde_json::json!({
                     "meeting_id": res.meeting_id,
@@ -295,7 +301,7 @@ pub async fn start_import<R: Runtime>(
             );
         }
         Err(e) => {
-            let _ = app.emit(
+            sink.emit(
                 "import-error",
                 ImportError {
                     error: e.to_string(),
@@ -332,7 +338,10 @@ async fn run_import<R: Runtime>(
     let use_parakeet = provider.as_deref() == Some("parakeet");
     let use_apple = provider.as_deref() == Some("apple");
 
-    emit_progress(&app, "copying", 5, "Creating meeting folder...");
+    // EventSink for this import run, derived from the managed Engine.
+    let sink = app.state::<Arc<Engine>>().event_sink();
+
+    emit_progress(&sink, "copying", 5, "Creating meeting folder...");
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -344,7 +353,7 @@ async fn run_import<R: Runtime>(
     let meeting_folder = create_meeting_folder(&base_folder, &title, false)?;
 
     // Copy audio file to meeting folder
-    emit_progress(&app, "copying", 10, "Copying audio file...");
+    emit_progress(&sink, "copying", 10, "Copying audio file...");
 
     let dest_filename = format!(
         "audio.{}",
@@ -371,14 +380,14 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "decoding", 15, "Decoding audio file...");
+    emit_progress(&sink, "decoding", 15, "Decoding audio file...");
 
     // Decode the audio file with progress updates
-    let app_for_decode = app.clone();
+    let sink_for_decode = sink.clone();
     let decode_progress = Box::new(move |progress: u32, msg: &str| {
         // Map decode progress: 15% + (progress * 0.05) to go from 15% to 20%
         let overall_progress = 15 + ((progress as f32 * 0.05) as u32);
-        emit_progress(&app_for_decode, "decoding", overall_progress, msg);
+        emit_progress(&sink_for_decode, "decoding", overall_progress, msg);
     });
 
     let path_for_decode = dest_path.clone();
@@ -394,7 +403,7 @@ async fn run_import<R: Runtime>(
         duration_seconds, decoded.sample_rate, decoded.channels
     );
 
-    emit_progress(&app, "resampling", 20, "Converting audio format...");
+    emit_progress(&sink, "resampling", 20, "Converting audio format...");
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -403,11 +412,11 @@ async fn run_import<R: Runtime>(
     }
 
     // Convert to 16kHz mono format with progress updates
-    let app_for_resample = app.clone();
+    let sink_for_resample = sink.clone();
     let resample_progress = Box::new(move |progress: u32, msg: &str| {
         // Map resample progress: 20% + (progress * 0.05) to go from 20% to 25%
         let overall_progress = 20 + ((progress as f32 * 0.05) as u32);
-        emit_progress(&app_for_resample, "resampling", overall_progress, msg);
+        emit_progress(&sink_for_resample, "resampling", overall_progress, msg);
     });
 
     let audio_samples = tokio::task::spawn_blocking(move || {
@@ -420,7 +429,7 @@ async fn run_import<R: Runtime>(
         audio_samples.len()
     );
 
-    emit_progress(&app, "vad", 25, "Detecting speech segments...");
+    emit_progress(&sink, "vad", 25, "Detecting speech segments...");
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -429,7 +438,7 @@ async fn run_import<R: Runtime>(
     }
 
     // Use VAD to find speech segments
-    let app_for_vad = app.clone();
+    let sink_for_vad = sink.clone();
 
     let speech_segments = tokio::task::spawn_blocking(move || {
         get_speech_chunks_with_progress(
@@ -438,7 +447,7 @@ async fn run_import<R: Runtime>(
             |vad_progress, segments_found| {
                 let overall_progress = 25 + (vad_progress as f32 * 0.05) as u32;
                 emit_progress(
-                    &app_for_vad,
+                    &sink_for_vad,
                     "vad",
                     overall_progress,
                     &format!(
@@ -487,7 +496,7 @@ async fn run_import<R: Runtime>(
         warn!("No speech detected in audio");
 
         // Emit warning to frontend
-        let _ = app.emit(
+        sink.emit(
             "import-warning",
             ImportWarning {
                 warning: "No speech detected in audio file".to_string(),
@@ -506,7 +515,7 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "transcribing", 30, "Loading transcription engine...");
+    emit_progress(&sink, "transcribing", 30, "Loading transcription engine...");
 
     // Initialize the appropriate engine. Apple STT is a spawn-per-segment
     // sidecar with no persistent engine to load here.
@@ -559,7 +568,7 @@ async fn run_import<R: Runtime>(
         let progress = 30 + ((i as f32 / processable_count.max(1) as f32) * 50.0) as u32;
         let segment_duration_sec = (segment.end_timestamp_ms - segment.start_timestamp_ms) / 1000.0;
         emit_progress(
-            &app,
+            &sink,
             "transcribing",
             progress,
             &format!(
@@ -637,7 +646,7 @@ async fn run_import<R: Runtime>(
         return Err(anyhow!("Import cancelled"));
     }
 
-    emit_progress(&app, "saving", 85, "Creating meeting...");
+    emit_progress(&sink, "saving", 85, "Creating meeting...");
 
     // Create transcript segments
     let segments = create_transcript_segments(&all_transcripts);
@@ -658,7 +667,7 @@ async fn run_import<R: Runtime>(
     .await?;
 
     // Write transcripts.json and metadata.json to the meeting folder
-    emit_progress(&app, "saving", 90, "Writing transcript files...");
+    emit_progress(&sink, "saving", 90, "Writing transcript files...");
 
     if let Err(e) = write_transcripts_json(&meeting_folder, &segments) {
         warn!("Failed to write transcripts.json: {}", e);
@@ -675,7 +684,7 @@ async fn run_import<R: Runtime>(
         warn!("Failed to write metadata.json: {}", e);
     }
 
-    emit_progress(&app, "complete", 100, "Import complete");
+    emit_progress(&sink, "complete", 100, "Import complete");
 
     Ok(ImportResult {
         meeting_id,
@@ -686,8 +695,8 @@ async fn run_import<R: Runtime>(
 }
 
 /// Emit progress event
-fn emit_progress<R: Runtime>(app: &AppHandle<R>, stage: &str, progress: u32, message: &str) {
-    let _ = app.emit(
+fn emit_progress(sink: &Arc<dyn EventSink>, stage: &str, progress: u32, message: &str) {
+    sink.emit(
         "import-progress",
         ImportProgress {
             stage: stage.to_string(),
