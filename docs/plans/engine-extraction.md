@@ -81,10 +81,15 @@ or, on failure mid-stream:
 - **Method naming.** `<service>.<verb>`. `service` comes from the command's domain (see the service map below); `verb` comes from the command's own name with the domain prefix/module path stripped (e.g. `api::api_delete_meeting` → `meetings.delete`; `audio::recording_commands::pause_recording` → `recording.pause`; `recall::commands::recall_reindex` → `recall.reindex`). Rust already namespaces most of this surface via `module::submodule::fn`, so the mapping is close to mechanical — the table below makes it explicit per command.
 - **Versioning.** `v` is the **envelope** version; a breaking change to the envelope itself (adding/removing a `kind`, changing `id` semantics, etc.) bumps it. Method-level evolution — new methods, new optional params, new result fields — is additive within a `v` and does not require a bump.
 - **Strangler compatibility.** The Tauri host is the first client and must be behaviorally invisible to the frontend: every existing `invoke(cmd, args)` call site keeps working unchanged, now implemented as "host command handler builds a `request`, writes it to the engine, awaits the matching `response`/`stream`". Every existing `emit` call becomes "host relays an `event`/`stream` message from the engine verbatim." The Swift shell (Phase 2) is the **second client** of the same protocol — it never gets a bespoke API; anything not expressible in this protocol isn't available to either client.
+- **UI-adjacent OS calls are the client's job; the engine is pure logic + data (decided 2026-07-17).** `ari-engine` is headless — it has no window, no `AppHandle`, and no main-thread AppKit run loop. Two classes of today's commands depend on exactly those and therefore **do not become engine RPCs**; they stay on the client (Tauri host now, Swift shell later), which then hands the engine the *result*:
+  - **Native file pickers** (`selectAndValidateAudio`, `selectLegacyPath`) — the client presents `NSOpenPanel`/the Tauri dialog and sends the chosen path to the engine as a plain `params` string. The engine method becomes "validate/import *this path*", never "open a picker".
+  - **Main-thread permission prompts** (`triggerMicrophonePermission`, the system-audio permission prompts) — the client runs the TCC prompt on its UI thread (today's `app.run_on_main_thread(...)` pattern) and reports the granted/denied outcome to the engine. The engine may still *check* a permission's current status (a pure syscall, no UI) via an RPC, but it never *shows* the prompt.
+
+  This is one consistent boundary — "if it needs a window or the main thread, it's client-side" — and it's the same split the Swift shell will need natively, so drawing it now costs nothing later. Commands in the service map below that fall on the client side of this line are tagged **[client-side]**.
 
 ## Service map
 
-Grouped from the `generate_handler!` list in `frontend/src-tauri/src/lib.rs` (~lines 615–902), 210 live commands. `#[cfg(target_os = "macos")]`-gated commands are noted since the engine itself is macOS-only (per project scope) — the gate becomes moot once the engine only ever runs on macOS, but is called out for traceability against today's source.
+Grouped from the `generate_handler!` list in `frontend/src-tauri/src/lib.rs`. **Updated 2026-07-17** to reflect the completed prunes: the 36 vestigial (commit `3a04394`) and 37 dead (commit `ae47d5f`) commands have been removed from the tree, so this map now lists only the **~211 surviving live commands** — the dead rows the first draft still carried are gone. `#[cfg(target_os = "macos")]`-gated commands are noted since the engine itself is macOS-only (per project scope) — the gate becomes moot once the engine only ever runs on macOS, but is called out for traceability against today's source.
 
 ### `recording`
 
@@ -96,12 +101,10 @@ Grouped from the `generate_handler!` list in `frontend/src-tauri/src/lib.rs` (~l
 | `recording.getTranscriptionStatus` | `get_transcription_status` | |
 | `recording.readAudioFile` | `read_audio_file` | |
 | `recording.getAudioDevices` | `get_audio_devices` | |
-| `recording.triggerMicrophonePermission` | `trigger_microphone_permission` | main-thread AppKit prompt — engine-side thread affinity concern carries over |
-| `recording.startWithDevices` | `start_recording_with_devices` | |
-| `recording.startWithDevicesAndMeeting` | `start_recording_with_devices_and_meeting` | |
+| `recording.triggerMicrophonePermission` | `trigger_microphone_permission` | **[client-side]** — main-thread AppKit TCC prompt; engine records the outcome |
+| `recording.startWithDevicesAndMeeting` | `start_recording_with_devices_and_meeting` | (`start_recording_with_devices`, the meeting-less variant, was pruned as dead) |
 | `recording.startAudioLevelMonitoring` | `start_audio_level_monitoring` | |
 | `recording.stopAudioLevelMonitoring` | `stop_audio_level_monitoring` | |
-| `recording.isAudioLevelMonitoring` | `is_audio_level_monitoring` | |
 | `recording.pause` | `audio::recording_commands::pause_recording` | |
 | `recording.resume` | `audio::recording_commands::resume_recording` | |
 | `recording.isPaused` | `audio::recording_commands::is_recording_paused` | |
@@ -109,10 +112,7 @@ Grouped from the `generate_handler!` list in `frontend/src-tauri/src/lib.rs` (~l
 | `recording.getMeetingFolderPath` | `audio::recording_commands::get_meeting_folder_path` | |
 | `recording.getTranscriptHistory` | `audio::recording_commands::get_transcript_history` | reload-sync path |
 | `recording.getMeetingName` | `audio::recording_commands::get_recording_meeting_name` | reload-sync path |
-| `recording.pollAudioDeviceEvents` | `audio::recording_commands::poll_audio_device_events` | Bluetooth/AirPods monitoring |
-| `recording.getReconnectionStatus` | `audio::recording_commands::get_reconnection_status` | |
-| `recording.attemptDeviceReconnect` | `audio::recording_commands::attempt_device_reconnect` | |
-| `recording.getActiveAudioOutput` | `audio::recording_commands::get_active_audio_output` | Bluetooth playback warning |
+| `recording.getActiveAudioOutput` | `audio::recording_commands::get_active_audio_output` | Bluetooth playback warning (the `poll_audio_device_events`/`get_reconnection_status`/`attempt_device_reconnect` command wrappers were pruned as dead — the underlying device-monitor infra stays) |
 | `recording.recoverAudioFromCheckpoints` | `audio::incremental_saver::recover_audio_from_checkpoints` | crash recovery |
 | `recording.cleanupCheckpoints` | `audio::incremental_saver::cleanup_checkpoints` | |
 | `recording.hasAudioCheckpoints` | `audio::incremental_saver::has_audio_checkpoints` | |
@@ -120,22 +120,13 @@ Grouped from the `generate_handler!` list in `frontend/src-tauri/src/lib.rs` (~l
 | `recording.setPreferences` | `audio::recording_preferences::set_recording_preferences` | |
 | `recording.getDefaultFolderPath` | `audio::recording_preferences::get_default_recordings_folder_path` | |
 | `recording.openRecordingsFolder` | `audio::recording_preferences::open_recordings_folder` | |
-| `recording.selectRecordingFolder` | `audio::recording_preferences::select_recording_folder` | native file picker — may need a client-side (host/shell) affordance instead of an engine RPC; flag in Open Questions |
-| `recording.getAvailableAudioBackends` | `audio::recording_preferences::get_available_audio_backends` | |
+| `recording.getAvailableAudioBackends` | `audio::recording_preferences::get_available_audio_backends` | (`select_recording_folder` was pruned as dead — the surviving file pickers are `selectAndValidateAudio`/`selectLegacyPath`) |
 | `recording.getCurrentAudioBackend` | `audio::recording_preferences::get_current_audio_backend` | |
 | `recording.setAudioBackend` | `audio::recording_preferences::set_audio_backend` | |
 | `recording.getAudioBackendInfo` | `audio::recording_preferences::get_audio_backend_info` | |
-| `recording.startSystemAudioCapture` | `audio::system_audio_commands::start_system_audio_capture_command` | |
-| `recording.listSystemAudioDevices` | `audio::system_audio_commands::list_system_audio_devices_command` | |
-| `recording.checkSystemAudioPermissions` | `audio::system_audio_commands::check_system_audio_permissions_command` | |
-| `recording.startSystemAudioMonitoring` | `audio::system_audio_commands::start_system_audio_monitoring` | |
-| `recording.stopSystemAudioMonitoring` | `audio::system_audio_commands::stop_system_audio_monitoring` | |
-| `recording.getSystemAudioMonitoringStatus` | `audio::system_audio_commands::get_system_audio_monitoring_status` | |
-| `recording.checkScreenRecordingPermission` | `audio::permissions::check_screen_recording_permission_command` | |
-| `recording.requestScreenRecordingPermission` | `audio::permissions::request_screen_recording_permission_command` | |
-| `recording.triggerSystemAudioPermission` | `audio::permissions::trigger_system_audio_permission_command` | |
-| `recording.preflightSystemAudioPermission` | `audio::permissions::preflight_system_audio_permission_command` | |
-| `recording.promptSystemAudioPermission` | `audio::permissions::prompt_system_audio_permission_command` | |
+| `recording.triggerSystemAudioPermission` | `audio::permissions::trigger_system_audio_permission_command` | **[client-side]** — shows a TCC prompt; engine records the outcome |
+| `recording.preflightSystemAudioPermission` | `audio::permissions::preflight_system_audio_permission_command` | **[client-side]** |
+| `recording.promptSystemAudioPermission` | `audio::permissions::prompt_system_audio_permission_command` | **[client-side]** |
 | `recording.setLanguagePreference` | `set_language_preference` | top-level fn; global `LANGUAGE_PREFERENCE` state — carries over as engine-process global |
 
 ### `transcription` (whisper + parakeet + retranscription + import)
@@ -171,14 +162,12 @@ Grouped from the `generate_handler!` list in `frontend/src-tauri/src/lib.rs` (~l
 | `transcription.parakeetDeleteCorruptedModel` | `parakeet_engine::commands::parakeet_delete_corrupted_model` | |
 | `transcription.parakeetOpenModelsFolder` | `parakeet_engine::commands::open_parakeet_models_folder` | |
 | `transcription.getSystemResources` | `whisper_engine::parallel_commands::get_system_resources` | live memory probe — the one kept command from the whisper-parallel deletion group (see Deletion appendix) |
-| `transcription.startRetranscription` | `audio::retranscription::start_retranscription_command` | |
+| `transcription.startRetranscription` | `audio::retranscription::start_retranscription_command` | (`is_retranscription_in_progress_command` pruned as dead) |
 | `transcription.cancelRetranscription` | `audio::retranscription::cancel_retranscription_command` | |
-| `transcription.isRetranscriptionInProgress` | `audio::retranscription::is_retranscription_in_progress_command` | |
-| `transcription.selectAndValidateAudio` | `audio::import::select_and_validate_audio_command` | native file picker — flag alongside `recording.selectRecordingFolder`, see Open Questions |
+| `transcription.selectAndValidateAudio` | `audio::import::select_and_validate_audio_command` | **[client-side]** — client presents the file picker, then calls the engine with the chosen path |
 | `transcription.validateAudioFile` | `audio::import::validate_audio_file_command` | |
 | `transcription.startImportAudio` | `audio::import::start_import_audio_command` | |
-| `transcription.cancelImport` | `audio::import::cancel_import_command` | |
-| `transcription.isImportInProgress` | `audio::import::is_import_in_progress_command` | |
+| `transcription.cancelImport` | `audio::import::cancel_import_command` | (`is_import_in_progress_command` pruned as dead) |
 
 ### `summary` (incl. templates, builtin-ai, claude-cli)
 
@@ -193,9 +182,7 @@ Grouped from the `generate_handler!` list in `frontend/src-tauri/src/lib.rs` (~l
 | `summary.saveDetectedLanguage` | `summary::commands::api_save_meeting_detected_summary_language` | |
 | `summary.detectTranscriptLanguage` | `summary::commands::api_detect_transcript_summary_language` | |
 | `summary.cancel` | `summary::commands::api_cancel_summary` | |
-| `summary.listTemplates` | `summary::template_commands::api_list_templates` | |
-| `summary.getTemplateDetails` | `summary::template_commands::api_get_template_details` | |
-| `summary.validateTemplate` | `summary::template_commands::api_validate_template` | |
+| `summary.listTemplates` | `summary::template_commands::api_list_templates` | (`api_get_template_details`/`api_validate_template` pruned as dead) |
 | `summary.suggestTemplate` | `summary::template_selector::api_suggest_template` | F6 auto-suggest |
 | `summary.claudeCliDetect` | `summary::claude_cli::claude_cli_detect` | |
 | `summary.builtinAiListModels` | `summary::summary_engine::commands::builtin_ai_list_models` | drives llama-helper sidecar |
@@ -260,13 +247,11 @@ Commented-out in `lib.rs` today (`api_get_auto_generate_setting` / `api_save_aut
 | `recall.embedderListModels` | `recall::embed_models::recall_embedder_list_models` | |
 | `recall.embedderDownloadModel` | `recall::embed_models::recall_embedder_download_model` | drives `recall-embedder-download-progress` |
 | `recall.embedderCancelDownload` | `recall::embed_models::recall_embedder_cancel_download` | |
-| `recall.embedderDeleteModel` | `recall::embed_models::recall_embedder_delete_model` | |
-| `recall.embedderIsReady` | `recall::embed_models::recall_embedder_is_ready` | |
+| `recall.embedderDeleteModel` | `recall::embed_models::recall_embedder_delete_model` | (`recall_embedder_is_ready` pruned as dead) |
 | `recall.conversationList` | `recall::conversations::ask_conversation_list` | |
 | `recall.conversationGet` | `recall::conversations::ask_conversation_get` | |
 | `recall.conversationCreate` | `recall::conversations::ask_conversation_create` | |
-| `recall.messageAppend` | `recall::conversations::ask_message_append` | |
-| `recall.conversationRename` | `recall::conversations::ask_conversation_rename` | |
+| `recall.messageAppend` | `recall::conversations::ask_message_append` | (`ask_conversation_rename` pruned as dead) |
 | `recall.conversationDelete` | `recall::conversations::ask_conversation_delete` | |
 
 ### `providers` (ollama / openai / anthropic / groq / openrouter)
@@ -374,15 +359,14 @@ Commented-out in `lib.rs` today (`api_get_auto_generate_setting` / `api_save_aut
 |---|---|---|
 | `onboarding.getStatus` | `onboarding::get_onboarding_status` | |
 | `onboarding.saveStatus` | `onboarding::save_onboarding_status_cmd` | struct param `OnboardingStatus` — unrenamed serde, nested keys stay snake_case; the protocol's `params` JSON preserves that shape verbatim |
-| `onboarding.resetStatus` | `onboarding::reset_onboarding_status_cmd` | |
-| `onboarding.complete` | `onboarding::complete_onboarding` | |
+| `onboarding.complete` | `onboarding::complete_onboarding` | (`reset_onboarding_status_cmd` pruned as dead) |
 
 ### `database`
 
 | method | Rust command | notes |
 |---|---|---|
 | `database.checkFirstLaunch` | `database::commands::check_first_launch` | drives `first-launch-detected` |
-| `database.selectLegacyPath` | `database::commands::select_legacy_database_path` | native file picker — see Open Questions |
+| `database.selectLegacyPath` | `database::commands::select_legacy_database_path` | **[client-side]** — client presents the file picker, then calls the engine with the chosen path |
 | `database.detectLegacy` | `database::commands::detect_legacy_database` | |
 | `database.checkDefaultLegacy` | `database::commands::check_default_legacy_database` | |
 | `database.checkHomebrew` | `database::commands::check_homebrew_database` | |
@@ -478,23 +462,21 @@ These appeared in the `.emit(` grep but no matching `listen('<name>', ...)` call
 
 This group is fully resolved for the Phase 1.5 carve — do not re-audit it, and do not carry any of the 34 actually-removed commands across the seam.
 
-### (b) Deferred dead-command group — needs a per-command re-verify pass
+### (b) Dead-command group — re-verify pass done, pruned (commit `ae47d5f`)
 
-37 commands flagged as unwired-dead by the grep-based audit, deferred because grep evidence is a lower bound (the `invokeTauri` wrapper pattern can hide a real call site). **Specific, already-identified unit to remove together:**
+37 commands were flagged unwired-dead by the grep audit. The per-command re-verify pass (widened grep across `invoke`/`invokeTauri`/`*Service.ts`, plus Rust-internal caller checks that ignore same-name struct-method collisions) ran on 2026-07-17: **37 removed, 1 kept.**
 
-- `api::api_get_profile`, `api::api_save_profile`, `api::api_update_profile` — the dead profile-sync trio (confirmed: `api/api.rs:1032/1052/1079`, all routed through `make_api_request`).
-- `api::make_api_request` (`api/api.rs:509`) and `api::get_server_address` (`api/api.rs:503`) — the HTTP client helpers that only the profile trio calls.
-- `api::APP_SERVER_URL` (`api/api.rs:26`, `"http://localhost:5167"`) — the hardcoded dead-server constant, currently kept only because `get_server_address` references it.
+- **Kept (real internal caller, not dead):** `is_recording_paused` — called directly from `tray.rs:339` and `notch/bridge.rs:537`, so it's a live method that also happens to be a command. Mapped to `recording.isPaused` above.
+- **HTTP-profile unit removed as a bundle:** the `api_get_profile`/`api_save_profile`/`api_update_profile` trio + their only callers `make_api_request`/`get_server_address` + the `APP_SERVER_URL` (`"http://localhost:5167"`) constant + 4 profile DTO structs. This closes out the "never reintroduce localhost:5167" cleanup from repo-root `CLAUDE.md`.
+- **Everything else** (12 notification commands, system-audio monitoring/permission wrappers, device-reconnect wrappers, screen-recording permission wrappers, import/retranscription in-progress flags, `select_recording_folder`, `recall_embedder_is_ready`, `ask_conversation_rename`, `reset_onboarding_status_cmd`, the two template authoring-helper commands) removed with their orphaned DTOs/imports/re-exports; two system-audio tests were rewritten to call the underlying non-command fns so coverage survived.
 
-These four items form one orphaned HTTP subsystem: remove the profile trio's `generate_handler!` entries, then `make_api_request`/`get_server_address`/`APP_SERVER_URL` become unreachable and should go in the same change — don't leave the helper/constant behind "just in case." This is explicitly called out because it's the one item in the deferred-37 group with enough evidence (repo-root `CLAUDE.md`'s "never reintroduce `localhost:5167`" rule already treats this constant as dead) to act on now rather than wait for the full re-verify pass.
-
-The remaining ~33 commands in the deferred group are **not enumerated here** — they need the promised per-command re-verify pass (grep for the command name across `frontend/src`, accounting for the `invokeTauri` wrapper) before Phase 1.5 carves them in or drops them. Doing that pass is out of scope for this doc; it's tracked as an Open Question below.
+**Follow-up candidate (out of this pass's scope):** `audio::init_system_audio_state()` / `SystemAudioDetectorState` is still `.manage()`d in `lib.rs` but its only consumer commands are now gone — a safe removal once someone confirms the app-init wiring, tracked below.
 
 ## Open questions
 
-1. **Native file pickers over a stdio protocol.** `recording.selectRecordingFolder`, `transcription.selectAndValidateAudio`, and `database.selectLegacyPath` today call macOS's native file-open panel directly from the Tauri process (which has a window/main-thread context). Once `ari-engine` is headless with no window of its own, does the file-picker UI stay client-side (host/shell presents the panel, then sends the chosen path to the engine as a request param) or does the engine need some other affordance? Recommend client-side — the engine has no reason to own UI-adjacent OS panels — but this needs an explicit decision before the carve, since it changes these three commands' shape (they'd stop being simple `params in → result out` and become "client picks path, then calls a different/simpler engine method").
-2. **`meetings.saveTranscript` vs `transcription.saveTranscript` naming collision.** `api::api_save_transcript` and the top-level `save_transcript` are both live, separate commands with overlapping names once namespaced. Confirm they're actually distinct in purpose (or that one is dead) before finalizing method names — flagged, not resolved, in the service map above.
-3. **`model-config-updated` event.** Listened to in `hooks/meeting-details/useModelConfiguration.ts` but not found via the `.emit(` grep — needs a targeted look to confirm whether it's an engine-emitted event (belongs in this map) or a same-process React/context event (doesn't cross the protocol boundary at all).
-4. **The ~33 unresolved deferred-dead commands.** This doc only resolves the profile/HTTP unit; the plan's promised "per-command re-verify pass" for the rest of the deferred-37 group is unstarted and should probably happen *before* the carve (no point building protocol plumbing for commands about to be deleted).
-5. **Main-thread affinity across the process boundary.** `trigger_microphone_permission` and other AppKit-touching calls today rely on `app.run_on_main_thread(...)`. Once the engine is a separate headless process with no `AppHandle`, how does a permission-prompt request get to a UI thread? Likely answer: the engine can't show AppKit UI itself and this becomes a client-side responsibility (client shows the prompt, then tells the engine the outcome) — same shape as the file-picker question above, but worth confirming as one consistent pattern rather than solving twice.
+1. ✅ **RESOLVED (2026-07-17) — native file pickers & main-thread permission prompts are client-side.** Folded into the cross-cutting "UI-adjacent OS calls are the client's job" rule above (this merges the former Q1 + Q5). The surviving affected commands (`selectAndValidateAudio`, `selectLegacyPath`, `triggerMicrophonePermission`, the system-audio permission prompts) are tagged **[client-side]** in the service map; `select_recording_folder` was pruned as dead so it's moot.
+2. ✅ **RESOLVED (2026-07-17) — the ~33-command re-verify pass is done** (see Deletion appendix (b); commit `ae47d5f`). No dead-command plumbing will be carried across the seam.
+3. **`meetings.saveTranscript` vs `transcription.saveTranscript` naming collision.** `api::api_save_transcript` and the top-level `save_transcript` are both live, separate commands with overlapping names once namespaced. Confirm they're actually distinct in purpose (or that one is dead) before finalizing method names — flagged, not resolved, in the service map above.
+4. **`model-config-updated` event.** Listened to in `hooks/meeting-details/useModelConfiguration.ts` but not found via the `.emit(` grep — needs a targeted look to confirm whether it's an engine-emitted event (belongs in this map) or a same-process React/context event (doesn't cross the protocol boundary at all).
+5. **`SystemAudioDetectorState` app-init cleanup.** Its consumer commands were pruned but it's still `.manage()`d in `lib.rs`; safe to remove once the app-init wiring is confirmed (follow-up from the dead-command pass).
 6. **Concurrent request ordering.** The envelope allows out-of-order responses via `id` correlation; confirm whether `ari-engine` will actually process requests concurrently (multiple in-flight commands) or serially (one at a time, `id` correlation used only for safety) — affects whether the host needs a real pending-request map or can get away with a simple queue.
