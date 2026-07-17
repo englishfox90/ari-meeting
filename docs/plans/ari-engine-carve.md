@@ -84,15 +84,19 @@ The reference migration of `complete_onboarding` (green) establishes the pattern
 
 Approach: parallel Sonnet agents in the **main tree** (not worktrees — `isolation: worktree` pins to the session-start commit and can't see in-session foundation commits), disjoint files, compiling disabled, orchestrator runs one **central `cargo check`** per batch. Clean and fast (warm cache); the central check caught one over-generified impl in batch 1.
 
-- **Done + committed — 8 services, ~61 commands, `cargo check` (lib+tests) green:**
-  - reference: `onboarding` (1) — commit `9778aa1`
+- **✅ AppState / manager-state migration COMPLETE — 14 services, ~102 commands, `cargo check` (lib+tests) green, 33 recall tests pass:**
+  - reference: `onboarding` (1) — `9778aa1`
   - batch 1 (`a3b3abd`): `persons` (18), `meeting_series` (11), `diarization` (10)
   - batch 2 (`7da1e76`): `meeting_time` (1), `summary` (9), `recall/conversations` (5), `calendar` (10)
-- **Remaining Stage-A (per module cluster):**
-  - `api/api.rs` — **the big one** (meetings + settings + `recall.answerLocally` + search in one 2.3k-line file); do solo/carefully, not a blind fan-out.
-  - manager-state services: `summary/summary_engine/commands.rs` (`ModelManagerState`→`engine.summary_models()`), `recall/embed_models.rs` (`engine.embed_models()`), `whisper_engine/parallel_commands.rs` (`engine.parallel()`).
-  - `recall/commands.rs` + `recall/stream.rs` (streaming — `engine.events()`), the whisper/parakeet engine command files (emit + `MODELS_DIR` statics), `providers` (ollama emit; most don't touch DB), `audio/*` (emit-heavy) + the `lib.rs` top-level `recording` fns (**orchestrator-owned** — shared file), `notch/bridge.rs`, `apple/mod.rs`, `database/commands.rs`, `app_config.rs` (Paths seam, not AppState).
-  - then: the **emit-conversion sweep** (`app.emit`→`engine.events()`), **retire the old `.manage()` states** once each has no consumer, and design the **`Notifier`** + **Tauri-store** host seams.
+  - round 3 (`2b2bd54`): `api/api.rs` (21), `summary_engine` (8), `recall/embed_models` (4), `parallel_commands` (1) + cross-module caller reconcile (audio/whisper/parakeet internal callers → `app.state::<Arc<Engine>>()`) + `Engine::event_sink()`
+  - round 4 (`cafb0ac`): `recall/commands` (4), `recall/stream` (streaming) — **last AppState consumers**; `EventSink::emit` made lifetime-generic
+  - **Zero `tauri::State<'_, AppState>` / manager-state consumers remain.** Providers (ollama/openai/anthropic/groq/openrouter) never used AppState — no DB migration needed.
+- **Remaining Stage-A:**
+  - **Emit sweep** — `app.emit`→`engine.events()`/`event_sink()` in the still-Tauri-emitting files: `audio/*` (recording_commands, transcription/worker, import, retranscription, level monitors, recording_saver — the trickiest, deep pipeline helpers need a sink threaded from the recording task), `whisper_engine/commands`, `parakeet_engine/commands`, `ollama`, `notch/bridge`, `apple/mod`, `database/commands`, `calendar/sync`, `tray` (host-side — may stay).
+  - **`lib.rs` top-level `recording` commands** (start/stop/pause/…, emit-heavy) — **orchestrator-owned** (shared file).
+  - **Seams:** `app_config.rs` (Paths, `app_config_dir`), `notifications` (the `Notifier` host capability), Tauri-store (onboarding).
+  - **Retire the old `.manage()` states** (AppState + the 3 manager states) once the startup writers (init_model_manager_at_startup, whisper/parakeet init, DB setup, recall backfill, shutdown) also go through `engine`, so nothing but `Engine` references them.
+- **Build-test point:** after the emit sweep + state retirement — when `Engine` is the sole path and a real `pnpm run app:local` record→transcribe→summarize→ask→calendar pass validates the carve.
 
 ### Stage B — Extract the `ari-engine` library crate
 
