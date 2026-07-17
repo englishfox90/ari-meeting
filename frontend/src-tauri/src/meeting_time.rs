@@ -11,18 +11,17 @@
 // Registered as `meeting_time::set_meeting_time_from_source` in `lib.rs`.
 
 use crate::database::repositories::calendar::CalendarRepository;
-use crate::state::AppState;
+use crate::engine::Engine;
 
 /// Set an imported meeting's `created_at` from its source audio file's modified time.
 ///
 /// Best-effort and non-fatal: the caller (frontend import flow) ignores failures so a
 /// successful import is never undone by a timestamp-correction hiccup. Returns the
 /// applied RFC3339 timestamp on success, or `None` if the meeting id was not found.
-#[tauri::command]
-pub async fn set_meeting_time_from_source(
+async fn set_meeting_time_from_source_impl(
+    engine: &Engine,
     meeting_id: String,
     source_path: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Option<String>, String> {
     let modified = std::fs::metadata(&source_path)
         .and_then(|meta| meta.modified())
@@ -30,13 +29,11 @@ pub async fn set_meeting_time_from_source(
 
     let created_at: chrono::DateTime<chrono::Utc> = modified.into();
 
-    let rows = CalendarRepository::realign_meeting_created_at(
-        state.db_manager.pool(),
-        &meeting_id,
-        created_at,
-    )
-    .await
-    .map_err(|e| format!("Failed to realign meeting time for {}: {}", meeting_id, e))?;
+    let db = engine.db().await?;
+    let pool = db.pool();
+    let rows = CalendarRepository::realign_meeting_created_at(pool, &meeting_id, created_at)
+        .await
+        .map_err(|e| format!("Failed to realign meeting time for {}: {}", meeting_id, e))?;
 
     if rows == 0 {
         log::warn!(
@@ -52,4 +49,13 @@ pub async fn set_meeting_time_from_source(
         created_at.to_rfc3339()
     );
     Ok(Some(created_at.to_rfc3339()))
+}
+
+#[tauri::command]
+pub async fn set_meeting_time_from_source(
+    meeting_id: String,
+    source_path: String,
+    engine: tauri::State<'_, std::sync::Arc<crate::engine::Engine>>,
+) -> Result<Option<String>, String> {
+    set_meeting_time_from_source_impl(&engine, meeting_id, source_path).await
 }

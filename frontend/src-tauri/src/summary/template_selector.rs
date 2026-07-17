@@ -16,13 +16,13 @@
 //!   junk response) falls back to `standard_meeting` rather than blocking.
 
 use crate::database::repositories::setting::SettingsRepository;
-use crate::state::AppState;
+use crate::engine::Engine;
 use crate::summary::llm_client::{generate_summary, LLMProvider};
 use crate::summary::templates;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 use tracing::{info, warn};
 
 /// Meeting type is almost always evident early (greetings, agenda, roll-call),
@@ -136,11 +136,9 @@ struct ResolvedModel {
 
 /// Resolves the currently-configured summary model the same way the summary
 /// service does, condensed to what a single stateless call needs.
-async fn resolve_model<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &tauri::State<'_, AppState>,
-) -> Result<ResolvedModel, String> {
-    let pool = state.db_manager.pool();
+async fn resolve_model(engine: &Engine) -> Result<ResolvedModel, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     let config = SettingsRepository::get_model_config(pool)
         .await
         .map_err(|e| format!("Could not read model configuration: {e}"))?
@@ -149,7 +147,7 @@ async fn resolve_model<R: Runtime>(
     let provider = LLMProvider::from_str(&config.provider)
         .map_err(|_| format!("Unsupported provider: {}", config.provider))?;
 
-    let app_data_dir = app.path().app_data_dir().ok();
+    let app_data_dir = Some(engine.paths().app_data.clone());
 
     // Custom OpenAI keeps its endpoint/key/model in a separate JSON config.
     if provider == LLMProvider::CustomOpenAI {
@@ -193,10 +191,8 @@ async fn resolve_model<R: Runtime>(
 ///
 /// Returns the chosen `{ id, name }`. Never errors on classifier failure —
 /// it degrades to the default template so summary generation is never blocked.
-#[tauri::command]
-pub async fn api_suggest_template<R: Runtime>(
-    app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+async fn api_suggest_template_impl(
+    engine: &Engine,
     text: String,
     speaker_count: Option<u32>,
     calendar_context: Option<String>,
@@ -213,7 +209,7 @@ pub async fn api_suggest_template<R: Runtime>(
         return Ok(default_suggestion(&options));
     }
 
-    let resolved = match resolve_model(&app, &state).await {
+    let resolved = match resolve_model(engine).await {
         Ok(r) => r,
         Err(e) => {
             warn!("Template auto-select: falling back to default ({e})");
@@ -267,6 +263,21 @@ pub async fn api_suggest_template<R: Runtime>(
 
     info!("Auto-selected template '{}' for summary", id);
     Ok(TemplateSuggestion { id, name })
+}
+
+/// F6: auto-select the best-fitting summary template for a transcript.
+///
+/// Returns the chosen `{ id, name }`. Never errors on classifier failure —
+/// it degrades to the default template so summary generation is never blocked.
+#[tauri::command]
+pub async fn api_suggest_template<R: Runtime>(
+    _app: AppHandle<R>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    text: String,
+    speaker_count: Option<u32>,
+    calendar_context: Option<String>,
+) -> Result<TemplateSuggestion, String> {
+    api_suggest_template_impl(&engine, text, speaker_count, calendar_context).await
 }
 
 #[cfg(test)]

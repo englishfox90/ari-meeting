@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::api::LocalRecallSource;
 use crate::database::models::{AskConversationRow, AskMessageRow};
 use crate::database::repositories::ask_conversation::AskConversationRepository;
-use crate::state::AppState;
+use crate::engine::Engine;
 
 const RETENTION_DAYS: i64 = 7;
 
@@ -75,12 +75,12 @@ pub struct AskConversationDetailDto {
     pub messages: Vec<AskMessageDto>,
 }
 
-#[tauri::command]
-pub async fn ask_conversation_list(
-    state: tauri::State<'_, AppState>,
+async fn ask_conversation_list_impl(
+    engine: &Engine,
     meeting_id: Option<String>,
 ) -> Result<Vec<AskConversationDto>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     // Enforce retention lazily on read.
     let _ = AskConversationRepository::prune_older_than(pool, &retention_cutoff()).await;
     let rows = AskConversationRepository::list(pool, meeting_id.as_deref())
@@ -90,11 +90,19 @@ pub async fn ask_conversation_list(
 }
 
 #[tauri::command]
-pub async fn ask_conversation_get(
-    state: tauri::State<'_, AppState>,
+pub async fn ask_conversation_list(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    meeting_id: Option<String>,
+) -> Result<Vec<AskConversationDto>, String> {
+    ask_conversation_list_impl(&engine, meeting_id).await
+}
+
+async fn ask_conversation_get_impl(
+    engine: &Engine,
     conversation_id: String,
 ) -> Result<AskConversationDetailDto, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let conversation = AskConversationRepository::get(pool, &conversation_id)
         .await
         .map_err(|e| e.to_string())?
@@ -109,12 +117,20 @@ pub async fn ask_conversation_get(
 }
 
 #[tauri::command]
-pub async fn ask_conversation_create(
-    state: tauri::State<'_, AppState>,
+pub async fn ask_conversation_get(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    conversation_id: String,
+) -> Result<AskConversationDetailDto, String> {
+    ask_conversation_get_impl(&engine, conversation_id).await
+}
+
+async fn ask_conversation_create_impl(
+    engine: &Engine,
     meeting_id: Option<String>,
     title: Option<String>,
 ) -> Result<String, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let id = Uuid::new_v4().to_string();
     AskConversationRepository::create(
         pool,
@@ -129,8 +145,16 @@ pub async fn ask_conversation_create(
 }
 
 #[tauri::command]
-pub async fn ask_message_append(
-    state: tauri::State<'_, AppState>,
+pub async fn ask_conversation_create(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    meeting_id: Option<String>,
+    title: Option<String>,
+) -> Result<String, String> {
+    ask_conversation_create_impl(&engine, meeting_id, title).await
+}
+
+async fn ask_message_append_impl(
+    engine: &Engine,
     conversation_id: String,
     role: String,
     content: String,
@@ -139,7 +163,8 @@ pub async fn ask_message_append(
     if role != "user" && role != "assistant" {
         return Err("Unsupported message role.".to_string());
     }
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let message_id = Uuid::new_v4().to_string();
     let sources_json = sources
         .as_ref()
@@ -161,12 +186,31 @@ pub async fn ask_message_append(
 }
 
 #[tauri::command]
-pub async fn ask_conversation_delete(
-    state: tauri::State<'_, AppState>,
+pub async fn ask_message_append(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    conversation_id: String,
+    role: String,
+    content: String,
+    sources: Option<Vec<LocalRecallSource>>,
+) -> Result<String, String> {
+    ask_message_append_impl(&engine, conversation_id, role, content, sources).await
+}
+
+async fn ask_conversation_delete_impl(
+    engine: &Engine,
     conversation_id: String,
 ) -> Result<(), String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     AskConversationRepository::delete(pool, &conversation_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ask_conversation_delete(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    conversation_id: String,
+) -> Result<(), String> {
+    ask_conversation_delete_impl(&engine, conversation_id).await
 }

@@ -9,7 +9,7 @@ use crate::calendar::models::{
 use crate::calendar::sync::sync_range_core;
 use crate::database::repositories::calendar::CalendarRepository;
 use crate::database::repositories::summary::SummaryProcessesRepository;
-use crate::state::AppState;
+use crate::engine::Engine;
 use chrono::{Duration, Utc};
 use tauri::AppHandle;
 
@@ -55,12 +55,10 @@ pub async fn calendar_request_access(app: AppHandle) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
-pub async fn calendar_list_calendars(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<CalendarInfo>, String> {
+async fn calendar_list_calendars_impl(engine: &Engine) -> Result<Vec<CalendarInfo>, String> {
     let native = eventkit::list_calendars()?;
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     let mut out = Vec::with_capacity(native.len());
     for cal in native {
@@ -85,11 +83,18 @@ pub async fn calendar_list_calendars(
 }
 
 #[tauri::command]
-pub async fn calendar_set_selected(
+pub async fn calendar_list_calendars(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<CalendarInfo>, String> {
+    calendar_list_calendars_impl(&engine).await
+}
+
+async fn calendar_set_selected_impl(
+    engine: &Engine,
     calendar_ids: Vec<String>,
-    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    CalendarRepository::set_selected_calendars(state.db_manager.pool(), &calendar_ids)
+    let db = engine.db().await?;
+    CalendarRepository::set_selected_calendars(db.pool(), &calendar_ids)
         .await
         .map_err(|e| {
             log::error!("📅 set_selected_calendars failed ({} ids): {e}", calendar_ids.len());
@@ -98,12 +103,20 @@ pub async fn calendar_set_selected(
 }
 
 #[tauri::command]
-pub async fn calendar_sync_events(
+pub async fn calendar_set_selected(
+    calendar_ids: Vec<String>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<(), String> {
+    calendar_set_selected_impl(&engine, calendar_ids).await
+}
+
+async fn calendar_sync_events_impl(
+    engine: &Engine,
     days_past: i64,
     days_future: i64,
-    state: tauri::State<'_, AppState>,
 ) -> Result<usize, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     let selected_ids = CalendarRepository::selected_calendar_ids(pool)
         .await
@@ -116,15 +129,24 @@ pub async fn calendar_sync_events(
     sync_range_core(pool, &selected_ids, range_start, range_end).await
 }
 
+#[tauri::command]
+pub async fn calendar_sync_events(
+    days_past: i64,
+    days_future: i64,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<usize, String> {
+    calendar_sync_events_impl(&engine, days_past, days_future).await
+}
+
 /// Range-based sync (Phase 2): parse RFC3339 bounds directly instead of day offsets from
 /// "now" — used by the week-view calendar page to sync exactly the visible week.
-#[tauri::command]
-pub async fn calendar_sync_range(
+async fn calendar_sync_range_impl(
+    engine: &Engine,
     start_iso: String,
     end_iso: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<usize, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     let start = chrono::DateTime::parse_from_rfc3339(&start_iso)
         .map(|dt| dt.with_timezone(&Utc))
@@ -140,14 +162,22 @@ pub async fn calendar_sync_range(
     sync_range_core(pool, &selected_ids, start, end).await
 }
 
+#[tauri::command]
+pub async fn calendar_sync_range(
+    start_iso: String,
+    end_iso: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<usize, String> {
+    calendar_sync_range_impl(&engine, start_iso, end_iso).await
+}
+
 /// Range-based read (Phase 2): DB-only lookup of events already synced into
 /// `calendar_events`, ordered by start time — used to render the week view instantly
 /// from local state while a `calendar_sync_range` refresh runs in the background.
-#[tauri::command]
-pub async fn calendar_get_events_range(
+async fn calendar_get_events_range_impl(
+    engine: &Engine,
     start_iso: String,
     end_iso: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<CalendarEvent>, String> {
     let start = chrono::DateTime::parse_from_rfc3339(&start_iso)
         .map(|dt| dt.with_timezone(&Utc))
@@ -156,11 +186,21 @@ pub async fn calendar_get_events_range(
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|e| format!("Invalid end_iso: {}", e))?;
 
-    let rows = CalendarRepository::list_events_in_range(state.db_manager.pool(), start, end)
+    let db = engine.db().await?;
+    let rows = CalendarRepository::list_events_in_range(db.pool(), start, end)
         .await
         .map_err(|e| format!("Failed to load calendar events: {}", e))?;
 
     Ok(rows.into_iter().map(row_to_calendar_event).collect())
+}
+
+#[tauri::command]
+pub async fn calendar_get_events_range(
+    start_iso: String,
+    end_iso: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<CalendarEvent>, String> {
+    calendar_get_events_range_impl(&engine, start_iso, end_iso).await
 }
 
 fn parse_attendees(json: Option<&str>) -> Vec<Attendee> {
@@ -186,21 +226,30 @@ fn row_to_calendar_event(row: crate::database::repositories::calendar::CalendarE
     }
 }
 
-#[tauri::command]
-pub async fn calendar_get_events(
+async fn calendar_get_events_impl(
+    engine: &Engine,
     days_past: i64,
     days_future: i64,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<CalendarEvent>, String> {
     let now = Utc::now();
     let range_start = now - Duration::days(days_past.max(0));
     let range_end = now + Duration::days(days_future.max(0));
 
-    let rows = CalendarRepository::list_events_in_range(state.db_manager.pool(), range_start, range_end)
+    let db = engine.db().await?;
+    let rows = CalendarRepository::list_events_in_range(db.pool(), range_start, range_end)
         .await
         .map_err(|e| format!("Failed to load calendar events: {}", e))?;
 
     Ok(rows.into_iter().map(row_to_calendar_event).collect())
+}
+
+#[tauri::command]
+pub async fn calendar_get_events(
+    days_past: i64,
+    days_future: i64,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<CalendarEvent>, String> {
+    calendar_get_events_impl(&engine, days_past, days_future).await
 }
 
 /// Read-only summary lookup for a linked meeting: does it have a summary, and if so the
@@ -253,12 +302,12 @@ fn collect_text(value: &serde_json::Value) -> String {
     }
 }
 
-#[tauri::command]
-pub async fn calendar_get_event(
+async fn calendar_get_event_impl(
+    engine: &Engine,
     event_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Option<CalendarEventDetail>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let row = CalendarRepository::get_event(pool, &event_id)
         .await
         .map_err(|e| format!("Failed to load calendar event {}: {}", event_id, e))?;
@@ -314,12 +363,20 @@ pub async fn calendar_get_event(
 }
 
 #[tauri::command]
-pub async fn calendar_link_meeting(
+pub async fn calendar_get_event(
+    event_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Option<CalendarEventDetail>, String> {
+    calendar_get_event_impl(&engine, event_id).await
+}
+
+async fn calendar_link_meeting_impl(
+    engine: &Engine,
     event_id: String,
     meeting_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     CalendarRepository::set_manual_link(pool, &event_id, &meeting_id)
         .await
         .map_err(|e| format!("Failed to link meeting: {}", e))?;
@@ -334,21 +391,35 @@ pub async fn calendar_link_meeting(
 }
 
 #[tauri::command]
-pub async fn calendar_unlink_meeting(
+pub async fn calendar_link_meeting(
     event_id: String,
-    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<(), String> {
-    CalendarRepository::unlink_meeting(state.db_manager.pool(), &event_id)
+    calendar_link_meeting_impl(&engine, event_id, meeting_id).await
+}
+
+async fn calendar_unlink_meeting_impl(engine: &Engine, event_id: String) -> Result<(), String> {
+    let db = engine.db().await?;
+    CalendarRepository::unlink_meeting(db.pool(), &event_id)
         .await
         .map_err(|e| format!("Failed to unlink meeting: {}", e))
 }
 
 #[tauri::command]
-pub async fn calendar_suggest_meetings(
+pub async fn calendar_unlink_meeting(
     event_id: String,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<(), String> {
+    calendar_unlink_meeting_impl(&engine, event_id).await
+}
+
+async fn calendar_suggest_meetings_impl(
+    engine: &Engine,
+    event_id: String,
 ) -> Result<Vec<MeetingCandidate>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let row = CalendarRepository::get_event(pool, &event_id)
         .await
         .map_err(|e| format!("Failed to load calendar event {}: {}", event_id, e))?;
@@ -385,4 +456,12 @@ pub async fn calendar_suggest_meetings(
             created_at: created_at.to_rfc3339(),
         })
         .collect())
+}
+
+#[tauri::command]
+pub async fn calendar_suggest_meetings(
+    event_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<MeetingCandidate>, String> {
+    calendar_suggest_meetings_impl(&engine, event_id).await
 }

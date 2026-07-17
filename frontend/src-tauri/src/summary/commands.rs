@@ -2,7 +2,7 @@ use crate::database::repositories::{
     meeting::MeetingsRepository,
     summary::SummaryProcessesRepository, transcript_chunk::TranscriptChunksRepository,
 };
-use crate::state::AppState;
+use crate::engine::Engine;
 use crate::summary::metadata::{
     read_detected_summary_language_from_metadata, read_summary_language_from_metadata,
     write_detected_summary_language_to_metadata, write_summary_language_to_metadata,
@@ -72,19 +72,17 @@ enum MeetingFolderResolution {
 /// Saves a meeting summary (Native SQLx implementation)
 ///
 /// Expected format: { "markdown": "...", "summary_json": [...BlockNote blocks...] }
-#[tauri::command]
-pub async fn api_save_meeting_summary<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+async fn api_save_meeting_summary_impl(
+    engine: &Engine,
     meeting_id: String,
     summary: serde_json::Value,
-    _auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
         "api_save_meeting_summary (native) called for meeting_id: {}",
         meeting_id
     );
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     match SummaryProcessesRepository::update_meeting_summary(pool, &meeting_id, &summary).await {
         Ok(true) => {
@@ -107,11 +105,20 @@ pub async fn api_save_meeting_summary<R: Runtime>(
     }
 }
 
-/// Gets the per-meeting summary language override from metadata.json.
 #[tauri::command]
-pub async fn api_get_meeting_summary_language<R: Runtime>(
+pub async fn api_save_meeting_summary<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    meeting_id: String,
+    summary: serde_json::Value,
+    _auth_token: Option<String>,
+) -> Result<serde_json::Value, String> {
+    api_save_meeting_summary_impl(&engine, meeting_id, summary).await
+}
+
+/// Gets the per-meeting summary language override from metadata.json.
+async fn api_get_meeting_summary_language_impl(
+    engine: &Engine,
     meeting_id: String,
 ) -> Result<MeetingSummaryLanguagePreference, String> {
     log_info!(
@@ -119,7 +126,8 @@ pub async fn api_get_meeting_summary_language<R: Runtime>(
         meeting_id
     );
 
-    match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
+    let db = engine.db().await?;
+    match resolve_meeting_folder(db.pool(), &meeting_id).await? {
         MeetingFolderResolution::Folder(folder) => read_summary_language_from_metadata(&folder)
             .map(MeetingSummaryLanguagePreference::metadata)
             .map_err(|e| e.to_string()),
@@ -127,11 +135,18 @@ pub async fn api_get_meeting_summary_language<R: Runtime>(
     }
 }
 
-/// Saves or clears the per-meeting summary language override in metadata.json.
 #[tauri::command]
-pub async fn api_save_meeting_summary_language<R: Runtime>(
+pub async fn api_get_meeting_summary_language<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    meeting_id: String,
+) -> Result<MeetingSummaryLanguagePreference, String> {
+    api_get_meeting_summary_language_impl(&engine, meeting_id).await
+}
+
+/// Saves or clears the per-meeting summary language override in metadata.json.
+async fn api_save_meeting_summary_language_impl(
+    engine: &Engine,
     meeting_id: String,
     summary_language: Option<String>,
 ) -> Result<MeetingSummaryLanguagePreference, String> {
@@ -141,7 +156,8 @@ pub async fn api_save_meeting_summary_language<R: Runtime>(
         summary_language
     );
 
-    match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
+    let db = engine.db().await?;
+    match resolve_meeting_folder(db.pool(), &meeting_id).await? {
         MeetingFolderResolution::Folder(folder) => {
             write_summary_language_to_metadata(&folder, summary_language.as_deref())
                 .map_err(|e| e.to_string())?;
@@ -153,11 +169,19 @@ pub async fn api_save_meeting_summary_language<R: Runtime>(
     }
 }
 
-/// Gets the cached Auto-detected summary language from metadata.json.
 #[tauri::command]
-pub async fn api_get_meeting_detected_summary_language<R: Runtime>(
+pub async fn api_save_meeting_summary_language<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    meeting_id: String,
+    summary_language: Option<String>,
+) -> Result<MeetingSummaryLanguagePreference, String> {
+    api_save_meeting_summary_language_impl(&engine, meeting_id, summary_language).await
+}
+
+/// Gets the cached Auto-detected summary language from metadata.json.
+async fn api_get_meeting_detected_summary_language_impl(
+    engine: &Engine,
     meeting_id: String,
 ) -> Result<MeetingSummaryLanguagePreference, String> {
     log_info!(
@@ -165,7 +189,8 @@ pub async fn api_get_meeting_detected_summary_language<R: Runtime>(
         meeting_id
     );
 
-    match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
+    let db = engine.db().await?;
+    match resolve_meeting_folder(db.pool(), &meeting_id).await? {
         MeetingFolderResolution::Folder(folder) => read_detected_summary_language_from_metadata(&folder)
             .map(MeetingSummaryLanguagePreference::metadata)
             .map_err(|e| e.to_string()),
@@ -173,11 +198,18 @@ pub async fn api_get_meeting_detected_summary_language<R: Runtime>(
     }
 }
 
-/// Saves or clears the cached Auto-detected summary language in metadata.json.
 #[tauri::command]
-pub async fn api_save_meeting_detected_summary_language<R: Runtime>(
+pub async fn api_get_meeting_detected_summary_language<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    meeting_id: String,
+) -> Result<MeetingSummaryLanguagePreference, String> {
+    api_get_meeting_detected_summary_language_impl(&engine, meeting_id).await
+}
+
+/// Saves or clears the cached Auto-detected summary language in metadata.json.
+async fn api_save_meeting_detected_summary_language_impl(
+    engine: &Engine,
     meeting_id: String,
     detected_summary_language: Option<String>,
 ) -> Result<MeetingSummaryLanguagePreference, String> {
@@ -187,7 +219,8 @@ pub async fn api_save_meeting_detected_summary_language<R: Runtime>(
         detected_summary_language
     );
 
-    match resolve_meeting_folder(state.db_manager.pool(), &meeting_id).await? {
+    let db = engine.db().await?;
+    match resolve_meeting_folder(db.pool(), &meeting_id).await? {
         MeetingFolderResolution::Folder(folder) => {
             write_detected_summary_language_to_metadata(&folder, detected_summary_language.as_deref())
                 .map_err(|e| e.to_string())?;
@@ -197,6 +230,17 @@ pub async fn api_save_meeting_detected_summary_language<R: Runtime>(
         }
         MeetingFolderResolution::NoFolder => Ok(MeetingSummaryLanguagePreference::local_fallback()),
     }
+}
+
+#[tauri::command]
+pub async fn api_save_meeting_detected_summary_language<R: Runtime>(
+    _app: AppHandle<R>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    meeting_id: String,
+    detected_summary_language: Option<String>,
+) -> Result<MeetingSummaryLanguagePreference, String> {
+    api_save_meeting_detected_summary_language_impl(&engine, meeting_id, detected_summary_language)
+        .await
 }
 
 /// Detects the dominant supported summary language from transcript segments.
@@ -226,18 +270,16 @@ async fn resolve_meeting_folder(
 /// Gets summary status and data (Native SQLx implementation)
 ///
 /// Returns summary status (pending/processing/completed/failed) and parsed result data
-#[tauri::command]
-pub async fn api_get_summary<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+async fn api_get_summary_impl(
+    engine: &Engine,
     meeting_id: String,
-    _auth_token: Option<String>,
 ) -> Result<SummaryResponse, String> {
     log_info!(
         "api_get_summary (native) called for meeting_id: {}",
         meeting_id
     );
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     match SummaryProcessesRepository::get_summary_data_for_meeting(pool, &meeting_id).await {
         Ok(Some(process)) => {
@@ -319,13 +361,25 @@ pub async fn api_get_summary<R: Runtime>(
     }
 }
 
+/// Gets summary status and data (Native SQLx implementation)
+///
+/// Returns summary status (pending/processing/completed/failed) and parsed result data
+#[tauri::command]
+pub async fn api_get_summary<R: Runtime>(
+    _app: AppHandle<R>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    meeting_id: String,
+    _auth_token: Option<String>,
+) -> Result<SummaryResponse, String> {
+    api_get_summary_impl(&engine, meeting_id).await
+}
+
 /// Processes transcript and generates summary (Native SQLx implementation)
 ///
 /// Spawns a background task and returns immediately with process_id
-#[tauri::command]
-pub async fn api_process_transcript<R: Runtime>(
+async fn api_process_transcript_impl<R: Runtime>(
+    engine: &Engine,
     app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
     text: String,
     model: String,
     model_name: String,
@@ -346,7 +400,8 @@ pub async fn api_process_transcript<R: Runtime>(
         &model
     );
 
-    let pool = state.db_manager.pool().clone();
+    let db = engine.db().await?;
+    let pool = db.pool().clone();
     let final_prompt = custom_prompt.unwrap_or_else(|| "".to_string());
     let final_template_id = template_id.unwrap_or_else(|| "daily_standup".to_string());
 
@@ -406,16 +461,43 @@ pub async fn api_process_transcript<R: Runtime>(
     })
 }
 
+#[tauri::command]
+pub async fn api_process_transcript<R: Runtime>(
+    app: AppHandle<R>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    text: String,
+    model: String,
+    model_name: String,
+    meeting_id: Option<String>,
+    _chunk_size: Option<i32>,
+    _overlap: Option<i32>,
+    custom_prompt: Option<String>,
+    template_id: Option<String>,
+    summary_language: Option<String>,
+    _auth_token: Option<String>,
+) -> Result<ProcessTranscriptResponse, String> {
+    api_process_transcript_impl(
+        &engine,
+        app,
+        text,
+        model,
+        model_name,
+        meeting_id,
+        _chunk_size,
+        _overlap,
+        custom_prompt,
+        template_id,
+        summary_language,
+        _auth_token,
+    )
+    .await
+}
+
 /// Cancels an ongoing summary generation process
 ///
 /// This command triggers the cancellation token for the specified meeting,
 /// stopping the summary generation gracefully.
-#[tauri::command]
-pub async fn api_cancel_summary<R: Runtime>(
-    _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
-    meeting_id: String,
-) -> Result<serde_json::Value, String> {
+async fn api_cancel_summary_impl(engine: &Engine, meeting_id: String) -> Result<serde_json::Value, String> {
     log_info!("api_cancel_summary called for meeting_id: {}", meeting_id);
 
     // Trigger cancellation via the service
@@ -423,7 +505,8 @@ pub async fn api_cancel_summary<R: Runtime>(
 
     if cancelled {
         // Update database status to cancelled
-        let pool = state.db_manager.pool();
+        let db = engine.db().await?;
+        let pool = db.pool();
         if let Err(e) = SummaryProcessesRepository::update_process_cancelled(pool, &meeting_id).await {
             log_error!("Failed to update DB status to cancelled for {}: {}", meeting_id, e);
             return Err(format!("Failed to update cancellation status: {}", e));
@@ -441,4 +524,13 @@ pub async fn api_cancel_summary<R: Runtime>(
             "meeting_id": meeting_id,
         }))
     }
+}
+
+#[tauri::command]
+pub async fn api_cancel_summary<R: Runtime>(
+    _app: AppHandle<R>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    meeting_id: String,
+) -> Result<serde_json::Value, String> {
+    api_cancel_summary_impl(&engine, meeting_id).await
 }
