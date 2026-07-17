@@ -10,3 +10,5 @@
 //!
 //! **Empty scaffold today.** The crate exists and compiles so B1 has a target
 //! to move modules into; no logic has been moved yet.
+
+pub mod providers;

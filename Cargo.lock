@@ -203,6 +203,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ari-protocol",
+ "log",
+ "reqwest 0.11.27",
  "serde",
  "serde_json",
  "tokio",
