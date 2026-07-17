@@ -31,15 +31,17 @@ struct AppleAssetsProgress {
 /// progress tick the sidecar streams. Resolves to whether the assets are now
 /// installed, or an honest error on failure (No-Fake-State).
 #[tauri::command]
-pub async fn apple_ensure_assets<R: tauri::Runtime>(
+pub async fn apple_ensure_assets(
     which: String,
-    app: tauri::AppHandle<R>,
+    engine: tauri::State<'_, std::sync::Arc<crate::engine::Engine>>,
 ) -> Result<bool, String> {
-    use tauri::Emitter;
+    // Owned sink: moved into the 'static progress callback, which can't
+    // borrow from `&Engine`.
+    let sink = engine.event_sink();
     helper::ensure_assets(
         &which,
         move |fraction| {
-            let _ = app.emit("apple-assets-progress", AppleAssetsProgress { fraction });
+            sink.emit("apple-assets-progress", AppleAssetsProgress { fraction });
         },
         None,
     )

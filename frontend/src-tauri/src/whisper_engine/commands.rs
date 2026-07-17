@@ -1,7 +1,7 @@
 use crate::whisper_engine::{ModelInfo, WhisperEngine};
 use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
-use tauri::{command, Emitter, Manager, AppHandle, Runtime};
+use tauri::{command, Manager, AppHandle, Runtime};
 use crate::config::WHISPER_MODEL_CATALOG;
 
 // Global whisper engine
@@ -125,50 +125,44 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
 
 #[command]
 pub async fn whisper_load_model(
-    app_handle: tauri::AppHandle,
+    engine: tauri::State<'_, std::sync::Arc<crate::engine::Engine>>,
     model_name: String
 ) -> Result<(), String> {
-    let engine = {
+    let whisper_engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
         guard.as_ref().cloned()
     };
 
-    if let Some(engine) = engine {
+    if let Some(whisper_engine) = whisper_engine {
         // FIX 6: Emit model loading started event
-        if let Err(e) = app_handle.emit(
+        engine.events().emit(
             "model-loading-started",
             serde_json::json!({
                 "modelName": model_name
             }),
-        ) {
-            log::error!("Failed to emit model-loading-started event: {}", e);
-        }
+        );
 
-        let result = engine
+        let result = whisper_engine
             .load_model(&model_name)
             .await
             .map_err(|e| format!("Failed to load model: {}", e));
 
         // FIX 6: Emit model loading completed/failed event
         if result.is_ok() {
-            if let Err(e) = app_handle.emit(
+            engine.events().emit(
                 "model-loading-completed",
                 serde_json::json!({
                     "modelName": model_name
                 }),
-            ) {
-                log::error!("Failed to emit model-loading-completed event: {}", e);
-            }
+            );
         } else if let Err(ref error) = result {
-            if let Err(e) = app_handle.emit(
+            engine.events().emit(
                 "model-loading-failed",
                 serde_json::json!({
                     "modelName": model_name,
                     "error": error
                 }),
-            ) {
-                log::error!("Failed to emit model-loading-failed event: {}", e);
-            }
+            );
         }
 
         result
@@ -419,62 +413,59 @@ pub async fn whisper_get_models_directory() -> Result<String, String> {
 
 #[command]
 pub async fn whisper_download_model(
-    app_handle: tauri::AppHandle,
+    engine: tauri::State<'_, std::sync::Arc<crate::engine::Engine>>,
     model_name: String,
 ) -> Result<(), String> {
-    let engine = {
+    let whisper_engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
         guard.as_ref().cloned()
     };
 
-    if let Some(engine) = engine {
+    if let Some(whisper_engine) = whisper_engine {
         // Create progress callback that emits events
-        let app_handle_clone = app_handle.clone();
+        // Owned sink for the 'static progress callback (a borrow via engine.events()
+        // can't escape into the callback).
+        let sink = engine.event_sink();
+        let sink_cb = sink.clone();
         let model_name_clone = model_name.clone();
 
         let progress_callback = Box::new(move |progress: u8| {
             log::info!("Download progress for {}: {}%", model_name_clone, progress);
 
             // Emit download progress event
-            if let Err(e) = app_handle_clone.emit(
+            sink_cb.emit(
                 "model-download-progress",
                 serde_json::json!({
                     "modelName": model_name_clone,
                     "progress": progress
                 }),
-            ) {
-                log::error!("Failed to emit download progress event: {}", e);
-            }
+            );
         });
 
-        let result = engine
+        let result = whisper_engine
             .download_model(&model_name, Some(progress_callback))
             .await;
 
         match result {
             Ok(()) => {
                 // Emit completion event
-                if let Err(e) = app_handle.emit(
+                sink.emit(
                     "model-download-complete",
                     serde_json::json!({
                         "modelName": model_name
                     }),
-                ) {
-                    log::error!("Failed to emit download complete event: {}", e);
-                }
+                );
                 Ok(())
             }
             Err(e) => {
                 // Emit error event
-                if let Err(emit_e) = app_handle.emit(
+                sink.emit(
                     "model-download-error",
                     serde_json::json!({
                         "modelName": model_name,
                         "error": e.to_string()
                     }),
-                ) {
-                    log::error!("Failed to emit download error event: {}", emit_e);
-                }
+                );
                 Err(format!("Failed to download model: {}", e))
             }
         }
