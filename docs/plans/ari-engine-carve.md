@@ -122,6 +122,10 @@ The three host-capability seams, with every real call site pinned so B1 starts f
 ### Stage B — Extract the `ari-engine` library crate
 
 B1. Create `ari-engine` lib crate; move the decoupled engine modules into it (audio, transcription engines, summary, recall, calendar, persons, series, diarization, database, providers, notch/apple bridges, config). The `#[tauri::command]` shims stay behind in the host.
+
+**B1 progress:**
+- **✅ Crate scaffolded (`923e6d9`, 2026-07-17)** — `ari-engine` is an empty workspace-member lib crate; the host (`ari-meeting`) depends on it. Compiling target ready; modules migrate in one at a time, workspace green after each.
+- **⇒ Next move — the provider clients (the lowest-risk leaves).** Coupling audit (2026-07-17): `anthropic`/`openai`/`groq`/`openrouter` have **zero `crate::` back-deps** — each is one pure `get_*_models` fn + its model structs, coupled to Tauri only via the `#[command]` attribute. Move the pure fns + structs to `ari-engine::providers::{anthropic,openai,groq,openrouter}`; leave a thin `#[tauri::command]` shim in the host at the **same module path** (`anthropic::anthropic::get_anthropic_models`, etc.) so `generate_handler!` in `lib.rs` is untouched. **`ollama` is deferred** — `pull_ollama_model` takes `State<Arc<Engine>>` for progress emits, so it can't move until `engine/` itself moves (Engine + EventSink live host-side today). This is the proof-of-shape for the B1 move pattern (pure logic → crate, command shim → host).
 B2. The host keeps its command shims but now calls `ari-engine` fns in-process (`Engine` constructed host-side, `TauriEventSink` injected). **Still one process.** This isolates "does the code compile as an independent crate" from "does cross-process work."
 B3. Port the engine test suites into `ari-engine` (esp. `local_recall_tests`, system-audio tests). Green.
 
