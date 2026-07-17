@@ -16,7 +16,7 @@ use crate::persons::models::{
     ProfileFactSource, ProfileFactWithPerson, ReconciliationResult,
 };
 use crate::persons::reconciliation;
-use crate::state::AppState;
+use crate::engine::Engine;
 
 fn row_to_person(row: PersonRow) -> Person {
     Person {
@@ -83,9 +83,9 @@ async fn build_person_summary(
     })
 }
 
-#[tauri::command]
-pub async fn person_list(state: tauri::State<'_, AppState>) -> Result<Vec<PersonSummary>, String> {
-    let pool = state.db_manager.pool();
+async fn person_list_impl(engine: &Engine) -> Result<Vec<PersonSummary>, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     let rows = PersonRepository::list(pool)
         .await
         .map_err(|e| format!("Failed to list persons: {}", e))?;
@@ -102,11 +102,15 @@ pub async fn person_list(state: tauri::State<'_, AppState>) -> Result<Vec<Person
 }
 
 #[tauri::command]
-pub async fn person_get(
-    person_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<PersonDetail, String> {
-    let pool = state.db_manager.pool();
+pub async fn person_list(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<PersonSummary>, String> {
+    person_list_impl(&engine).await
+}
+
+async fn person_get_impl(engine: &Engine, person_id: String) -> Result<PersonDetail, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     let row = PersonRepository::get(pool, &person_id)
         .await
         .map_err(|e| format!("Failed to load person {}: {}", person_id, e))?
@@ -128,51 +132,85 @@ pub async fn person_get(
 }
 
 #[tauri::command]
-pub async fn person_upsert(
-    person: NewPerson,
-    state: tauri::State<'_, AppState>,
-) -> Result<Person, String> {
-    let row = PersonRepository::upsert_authored(state.db_manager.pool(), &person)
+pub async fn person_get(
+    person_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<PersonDetail, String> {
+    person_get_impl(&engine, person_id).await
+}
+
+async fn person_upsert_impl(engine: &Engine, person: NewPerson) -> Result<Person, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
+    let row = PersonRepository::upsert_authored(pool, &person)
         .await
         .map_err(|e| format!("Failed to save person: {}", e))?;
     Ok(row_to_person(row))
 }
 
 #[tauri::command]
-pub async fn person_delete(
-    person_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    PersonRepository::delete(state.db_manager.pool(), &person_id)
+pub async fn person_upsert(
+    person: NewPerson,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Person, String> {
+    person_upsert_impl(&engine, person).await
+}
+
+async fn person_delete_impl(engine: &Engine, person_id: String) -> Result<(), String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
+    PersonRepository::delete(pool, &person_id)
         .await
         .map_err(|e| format!("Failed to delete person {}: {}", person_id, e))
 }
 
 #[tauri::command]
-pub async fn owner_get(state: tauri::State<'_, AppState>) -> Result<Option<Person>, String> {
-    let row = PersonRepository::get_owner(state.db_manager.pool())
+pub async fn person_delete(
+    person_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<(), String> {
+    person_delete_impl(&engine, person_id).await
+}
+
+async fn owner_get_impl(engine: &Engine) -> Result<Option<Person>, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
+    let row = PersonRepository::get_owner(pool)
         .await
         .map_err(|e| format!("Failed to load owner: {}", e))?;
     Ok(row.map(row_to_person))
 }
 
 #[tauri::command]
-pub async fn owner_set(
-    person: NewPerson,
-    state: tauri::State<'_, AppState>,
-) -> Result<Person, String> {
-    let row = PersonRepository::set_owner(state.db_manager.pool(), &person)
+pub async fn owner_get(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Option<Person>, String> {
+    owner_get_impl(&engine).await
+}
+
+async fn owner_set_impl(engine: &Engine, person: NewPerson) -> Result<Person, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
+    let row = PersonRepository::set_owner(pool, &person)
         .await
         .map_err(|e| format!("Failed to set owner: {}", e))?;
     Ok(row_to_person(row))
 }
 
 #[tauri::command]
-pub async fn person_import_from_event(
+pub async fn owner_set(
+    person: NewPerson,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Person, String> {
+    owner_set_impl(&engine, person).await
+}
+
+async fn person_import_from_event_impl(
+    engine: &Engine,
     event_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<Person>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let rows = crate::persons::import::import_participants_from_event(pool, &event_id)
         .await
         .map_err(|e| format!("Failed to import attendees for event {}: {}", event_id, e))?;
@@ -181,11 +219,19 @@ pub async fn person_import_from_event(
 }
 
 #[tauri::command]
-pub async fn meeting_participants(
+pub async fn person_import_from_event(
+    event_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<Person>, String> {
+    person_import_from_event_impl(&engine, event_id).await
+}
+
+async fn meeting_participants_impl(
+    engine: &Engine,
     meeting_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<PersonSummary>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let rows = PersonRepository::list_participants(pool, &meeting_id)
         .await
         .map_err(|e| format!("Failed to list participants for meeting {}: {}", meeting_id, e))?;
@@ -202,27 +248,39 @@ pub async fn meeting_participants(
 }
 
 #[tauri::command]
-pub async fn profile_facts_for_person(
+pub async fn meeting_participants(
+    meeting_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<PersonSummary>, String> {
+    meeting_participants_impl(&engine, meeting_id).await
+}
+
+async fn profile_facts_for_person_impl(
+    engine: &Engine,
     person_id: String,
     include_superseded: bool,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ProfileFact>, String> {
-    let rows = ProfileFactRepository::list_for_person(
-        state.db_manager.pool(),
-        &person_id,
-        include_superseded,
-    )
-    .await
-    .map_err(|e| format!("Failed to load facts for person {}: {}", person_id, e))?;
+    let db = engine.db().await?;
+    let pool = db.pool();
+    let rows = ProfileFactRepository::list_for_person(pool, &person_id, include_superseded)
+        .await
+        .map_err(|e| format!("Failed to load facts for person {}: {}", person_id, e))?;
 
     Ok(rows.into_iter().map(row_to_fact).collect())
 }
 
 #[tauri::command]
-pub async fn profile_facts_pending(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<ProfileFactWithPerson>, String> {
-    let pool = state.db_manager.pool();
+pub async fn profile_facts_for_person(
+    person_id: String,
+    include_superseded: bool,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<ProfileFact>, String> {
+    profile_facts_for_person_impl(&engine, person_id, include_superseded).await
+}
+
+async fn profile_facts_pending_impl(engine: &Engine) -> Result<Vec<ProfileFactWithPerson>, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     let rows = ProfileFactRepository::list_pending(pool)
         .await
         .map_err(|e| format!("Failed to load pending facts: {}", e))?;
@@ -247,11 +305,15 @@ pub async fn profile_facts_pending(
 }
 
 #[tauri::command]
-pub async fn profile_fact_confirm(
-    fact_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    let pool = state.db_manager.pool();
+pub async fn profile_facts_pending(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<ProfileFactWithPerson>, String> {
+    profile_facts_pending_impl(&engine).await
+}
+
+async fn profile_fact_confirm_impl(engine: &Engine, fact_id: String) -> Result<(), String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     ProfileFactRepository::set_status(pool, &fact_id, "active")
         .await
         .map_err(|e| format!("Failed to confirm fact {}: {}", fact_id, e))?;
@@ -288,39 +350,63 @@ pub async fn profile_fact_confirm(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn profile_fact_confirm(
+    fact_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<(), String> {
+    profile_fact_confirm_impl(&engine, fact_id).await
+}
+
 /// All recorded sources backing a fact (origin + reaffirmations + carried-forward lineage),
 /// newest observation first. Empty for manually-added facts. Read-only; drives the person
 /// detail page's "Seen in N meetings" expansion.
-#[tauri::command]
-pub async fn profile_fact_sources(
+async fn profile_fact_sources_impl(
+    engine: &Engine,
     fact_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ProfileFactSource>, String> {
-    let rows = ProfileFactSourceRepository::list_for_fact(state.db_manager.pool(), &fact_id)
+    let db = engine.db().await?;
+    let pool = db.pool();
+    let rows = ProfileFactSourceRepository::list_for_fact(pool, &fact_id)
         .await
         .map_err(|e| format!("Failed to load sources for fact {}: {}", fact_id, e))?;
     Ok(rows.into_iter().map(row_to_source).collect())
 }
 
 #[tauri::command]
-pub async fn profile_fact_reject(
+pub async fn profile_fact_sources(
     fact_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    ProfileFactRepository::set_status(state.db_manager.pool(), &fact_id, "rejected")
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<ProfileFactSource>, String> {
+    profile_fact_sources_impl(&engine, fact_id).await
+}
+
+async fn profile_fact_reject_impl(engine: &Engine, fact_id: String) -> Result<(), String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
+    ProfileFactRepository::set_status(pool, &fact_id, "rejected")
         .await
         .map_err(|e| format!("Failed to reject fact {}: {}", fact_id, e))
 }
 
 #[tauri::command]
-pub async fn profile_fact_add_manual(
+pub async fn profile_fact_reject(
+    fact_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<(), String> {
+    profile_fact_reject_impl(&engine, fact_id).await
+}
+
+async fn profile_fact_add_manual_impl(
+    engine: &Engine,
     person_id: String,
     fact_text: String,
     fact_kind: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<ProfileFact, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     let row = ProfileFactRepository::insert(
-        state.db_manager.pool(),
+        pool,
         &person_id,
         &fact_text,
         &fact_kind,
@@ -337,20 +423,36 @@ pub async fn profile_fact_add_manual(
 }
 
 #[tauri::command]
+pub async fn profile_fact_add_manual(
+    person_id: String,
+    fact_text: String,
+    fact_kind: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<ProfileFact, String> {
+    profile_fact_add_manual_impl(&engine, person_id, fact_text, fact_kind).await
+}
+
+async fn person_extract_facts_for_meeting_impl(
+    engine: &Engine,
+    app: &tauri::AppHandle,
+    meeting_id: String,
+) -> Result<ExtractionResult, String> {
+    use tauri::Manager;
+    let db = engine.db().await?;
+    let pool = db.pool();
+    let app_data_dir = app.path().app_data_dir().ok();
+    extraction::extract_facts_for_meeting(pool, app_data_dir.as_deref(), &meeting_id)
+        .await
+        .map_err(|e| format!("Fact extraction failed for meeting {}: {}", meeting_id, e))
+}
+
+#[tauri::command]
 pub async fn person_extract_facts_for_meeting(
     meeting_id: String,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<ExtractionResult, String> {
-    use tauri::Manager;
-    let app_data_dir = app.path().app_data_dir().ok();
-    extraction::extract_facts_for_meeting(
-        state.db_manager.pool(),
-        app_data_dir.as_deref(),
-        &meeting_id,
-    )
-    .await
-    .map_err(|e| format!("Fact extraction failed for meeting {}: {}", meeting_id, e))
+    person_extract_facts_for_meeting_impl(&engine, &app, meeting_id).await
 }
 
 /// Reconciles a meeting's facts against each participant's CURRENT active+pending facts
@@ -360,36 +462,51 @@ pub async fn person_extract_facts_for_meeting(
 /// `person_extract_facts_for_meeting` for that trigger (the plain-extraction command stays
 /// registered for any other caller/manual use, but is no longer wired to the summary
 /// lifecycle hook).
+async fn person_reconcile_facts_for_meeting_impl(
+    engine: &Engine,
+    app: &tauri::AppHandle,
+    meeting_id: String,
+) -> Result<ReconciliationResult, String> {
+    use tauri::Manager;
+    let db = engine.db().await?;
+    let pool = db.pool();
+    let app_data_dir = app.path().app_data_dir().ok();
+    reconciliation::reconcile_facts_for_meeting(pool, app_data_dir.as_deref(), &meeting_id)
+        .await
+        .map_err(|e| format!("Fact reconciliation failed for meeting {}: {}", meeting_id, e))
+}
+
 #[tauri::command]
 pub async fn person_reconcile_facts_for_meeting(
     meeting_id: String,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<ReconciliationResult, String> {
-    use tauri::Manager;
-    let app_data_dir = app.path().app_data_dir().ok();
-    reconciliation::reconcile_facts_for_meeting(
-        state.db_manager.pool(),
-        app_data_dir.as_deref(),
-        &meeting_id,
-    )
-    .await
-    .map_err(|e| format!("Fact reconciliation failed for meeting {}: {}", meeting_id, e))
+    person_reconcile_facts_for_meeting_impl(&engine, &app, meeting_id).await
 }
 
 /// Active/pending facts for a person that haven't been (re)confirmed in over
 /// `reconciliation::STALE_AFTER_DAYS` — a read-only surface for a future "needs review" UI
 /// affordance (not built in this task; see `reconciliation::facts_needing_review` doc comment
 /// for the intended mount point).
-#[tauri::command]
-pub async fn person_facts_needing_review(
+async fn person_facts_needing_review_impl(
+    engine: &Engine,
     person_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ProfileFact>, String> {
-    let rows = reconciliation::facts_needing_review(state.db_manager.pool(), &person_id)
+    let db = engine.db().await?;
+    let pool = db.pool();
+    let rows = reconciliation::facts_needing_review(pool, &person_id)
         .await
         .map_err(|e| format!("Failed to load stale facts for person {}: {}", person_id, e))?;
     Ok(rows.into_iter().map(row_to_fact).collect())
+}
+
+#[tauri::command]
+pub async fn person_facts_needing_review(
+    person_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<ProfileFact>, String> {
+    person_facts_needing_review_impl(&engine, person_id).await
 }
 
 /// Max profile facts injected per person (owner and participants alike), ranked by
@@ -436,13 +553,13 @@ async fn person_facts_clause(
     ))
 }
 
-#[tauri::command]
-pub async fn summary_context_for_meeting(
+async fn summary_context_for_meeting_impl(
+    engine: &Engine,
+    app: &tauri::AppHandle,
     meeting_id: String,
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     let owner = PersonRepository::get_owner(pool)
         .await
@@ -457,7 +574,7 @@ pub async fn summary_context_for_meeting(
     }
 
     // Organization is company-wide (a global config, not a per-person field). State it once.
-    let organization = crate::app_config::load(&app)
+    let organization = crate::app_config::load(app)
         .map(|c| c.organization)
         .unwrap_or_default();
 
@@ -624,4 +741,13 @@ pub async fn summary_context_for_meeting(
     }
 
     Ok(block.trim_end().to_string())
+}
+
+#[tauri::command]
+pub async fn summary_context_for_meeting(
+    meeting_id: String,
+    app: tauri::AppHandle,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<String, String> {
+    summary_context_for_meeting_impl(&engine, &app, meeting_id).await
 }

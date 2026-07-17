@@ -22,7 +22,7 @@
 use serde::Serialize;
 
 use crate::database::repositories::speaker::SpeakerRepository;
-use crate::state::AppState;
+use crate::engine::Engine;
 
 /// How many radial buckets a centroid is reduced to. Small enough to keep the
 /// IPC payload tiny and the ring elegant at 16px; large enough to stay unique.
@@ -120,12 +120,12 @@ pub fn downsample_normalize(embedding: &[f32], buckets: usize) -> Option<Vec<f32
 /// each real centroid, and down-samples it server-side (keeping the IPC payload
 /// tiny). Speakers with no usable centroid are simply absent from the result —
 /// never represented by a fabricated signature.
-#[tauri::command]
-pub async fn speaker_voiceprint_signatures(
+pub async fn speaker_voiceprint_signatures_impl(
+    engine: &Engine,
     meeting_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<VoiceprintSignature>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let speakers = SpeakerRepository::list_for_meeting(pool, &meeting_id)
         .await
         .map_err(|e| format!("failed to load speakers for meeting {meeting_id}: {e}"))?;
@@ -143,16 +143,24 @@ pub async fn speaker_voiceprint_signatures(
     Ok(signatures)
 }
 
+#[tauri::command]
+pub async fn speaker_voiceprint_signatures(
+    meeting_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<VoiceprintSignature>, String> {
+    speaker_voiceprint_signatures_impl(&engine, meeting_id).await
+}
+
 /// Read command: the voiceprint signature for ONE person, from their canonical
 /// enrolled speaker. Returns `None` when the person has no usable enrolled
 /// voiceprint (never enrolled, or a degenerate centroid) — the frontend then
 /// renders nothing rather than a fabricated glyph.
-#[tauri::command]
-pub async fn person_voiceprint_signature(
+pub async fn person_voiceprint_signature_impl(
+    engine: &Engine,
     person_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Option<PersonVoiceprintSignature>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let speaker = SpeakerRepository::canonical_enrolled_for_person(pool, &person_id)
         .await
         .map_err(|e| format!("failed to load voiceprint for person {person_id}: {e}"))?;
@@ -168,14 +176,22 @@ pub async fn person_voiceprint_signature(
     }))
 }
 
+#[tauri::command]
+pub async fn person_voiceprint_signature(
+    person_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Option<PersonVoiceprintSignature>, String> {
+    person_voiceprint_signature_impl(&engine, person_id).await
+}
+
 /// Read command: the canonical voiceprint signature for every person that has an
 /// enrolled voiceprint, in one call (for the People list). Persons whose centroid
 /// is unusable are omitted. One signature per person (the canonical row).
-#[tauri::command]
-pub async fn person_voiceprint_signatures(
-    state: tauri::State<'_, AppState>,
+pub async fn person_voiceprint_signatures_impl(
+    engine: &Engine,
 ) -> Result<Vec<PersonVoiceprintSignature>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let speakers = SpeakerRepository::list_canonical_enrolled(pool)
         .await
         .map_err(|e| format!("failed to load person voiceprint signatures: {e}"))?;
@@ -194,6 +210,13 @@ pub async fn person_voiceprint_signatures(
         })
         .collect();
     Ok(dedupe_first_per_person(signatures))
+}
+
+#[tauri::command]
+pub async fn person_voiceprint_signatures(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<PersonVoiceprintSignature>, String> {
+    person_voiceprint_signatures_impl(&engine).await
 }
 
 #[cfg(test)]

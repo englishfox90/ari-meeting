@@ -5,8 +5,8 @@ use crate::database::repositories::meeting::MeetingsRepository;
 use crate::database::repositories::meeting_series::{
     MeetingSeriesMemberRow, MeetingSeriesRepository,
 };
+use crate::engine::Engine;
 use crate::meeting_series::models::{SeriesDetail, SeriesForMeeting, SeriesMember, SeriesSummary};
-use crate::state::AppState;
 
 /// Resolve a meeting's current title (falls back to "Untitled meeting" if the row is gone).
 async fn meeting_title(pool: &sqlx::SqlitePool, meeting_id: &str) -> Result<String, sqlx::Error> {
@@ -16,11 +16,9 @@ async fn meeting_title(pool: &sqlx::SqlitePool, meeting_id: &str) -> Result<Stri
         .unwrap_or_else(|| "Untitled meeting".to_string()))
 }
 
-#[tauri::command]
-pub async fn series_list(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<SeriesSummary>, String> {
-    let pool = state.db_manager.pool();
+async fn series_list_impl(engine: &Engine) -> Result<Vec<SeriesSummary>, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     let rows = MeetingSeriesRepository::list_series(pool)
         .await
         .map_err(|e| format!("Failed to list series: {}", e))?;
@@ -49,11 +47,15 @@ pub async fn series_list(
 }
 
 #[tauri::command]
-pub async fn series_get(
-    series_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<SeriesDetail, String> {
-    let pool = state.db_manager.pool();
+pub async fn series_list(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<SeriesSummary>, String> {
+    series_list_impl(&engine).await
+}
+
+async fn series_get_impl(engine: &Engine, series_id: String) -> Result<SeriesDetail, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     let series = MeetingSeriesRepository::get_series(pool, &series_id)
         .await
         .map_err(|e| format!("Failed to load series {}: {}", series_id, e))?
@@ -95,11 +97,19 @@ pub async fn series_get(
 }
 
 #[tauri::command]
-pub async fn series_for_meeting(
+pub async fn series_get(
+    series_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<SeriesDetail, String> {
+    series_get_impl(&engine, series_id).await
+}
+
+async fn series_for_meeting_impl(
+    engine: &Engine,
     meeting_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Option<SeriesForMeeting>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let series = match MeetingSeriesRepository::series_for_meeting(pool, &meeting_id)
         .await
         .map_err(|e| format!("Failed to find series for meeting {}: {}", meeting_id, e))?
@@ -138,21 +148,29 @@ pub async fn series_for_meeting(
     }))
 }
 
+#[tauri::command]
+pub async fn series_for_meeting(
+    meeting_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Option<SeriesForMeeting>, String> {
+    series_for_meeting_impl(&engine, meeting_id).await
+}
+
 /// Manually create a new (empty) meeting series. Returns the new series id.
 /// Rejects a blank/whitespace-only title — No-Fake-State (no untitled ghost series).
 /// The created series has no `series_key` (manual, not calendar-derived) and no owner.
-#[tauri::command]
-pub async fn series_create(
+async fn series_create_impl(
+    engine: &Engine,
     title: String,
     detected_type: Option<String>,
     cadence: Option<String>,
-    state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let title = title.trim();
     if title.is_empty() {
         return Err("Series title cannot be empty".to_string());
     }
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -173,12 +191,22 @@ pub async fn series_create(
 }
 
 #[tauri::command]
-pub async fn series_link_meeting(
+pub async fn series_create(
+    title: String,
+    detected_type: Option<String>,
+    cadence: Option<String>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<String, String> {
+    series_create_impl(&engine, title, detected_type, cadence).await
+}
+
+async fn series_link_meeting_impl(
+    engine: &Engine,
     meeting_id: String,
     series_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let now = chrono::Utc::now().to_rfc3339();
 
     // Use the meeting's created_at as the occurrence time so manual members sort with the
@@ -202,12 +230,22 @@ pub async fn series_link_meeting(
 }
 
 #[tauri::command]
-pub async fn series_unlink_meeting(
+pub async fn series_link_meeting(
     meeting_id: String,
     series_id: String,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<(), String> {
-    MeetingSeriesRepository::remove_member(state.db_manager.pool(), &series_id, &meeting_id)
+    series_link_meeting_impl(&engine, meeting_id, series_id).await
+}
+
+async fn series_unlink_meeting_impl(
+    engine: &Engine,
+    meeting_id: String,
+    series_id: String,
+) -> Result<(), String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
+    MeetingSeriesRepository::remove_member(pool, &series_id, &meeting_id)
         .await
         .map_err(|e| {
             format!(
@@ -218,14 +256,23 @@ pub async fn series_unlink_meeting(
 }
 
 #[tauri::command]
-pub async fn series_update_meta(
+pub async fn series_unlink_meeting(
+    meeting_id: String,
+    series_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<(), String> {
+    series_unlink_meeting_impl(&engine, meeting_id, series_id).await
+}
+
+async fn series_update_meta_impl(
+    engine: &Engine,
     series_id: String,
     title: String,
     detected_type: Option<String>,
     cadence: Option<String>,
-    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     // Preserve the existing owner_person_id — this command only edits title/type/cadence.
     let existing = MeetingSeriesRepository::get_series(pool, &series_id)
         .await
@@ -246,29 +293,45 @@ pub async fn series_update_meta(
     .map_err(|e| format!("Failed to update series {}: {}", series_id, e))
 }
 
+#[tauri::command]
+pub async fn series_update_meta(
+    series_id: String,
+    title: String,
+    detected_type: Option<String>,
+    cadence: Option<String>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<(), String> {
+    series_update_meta_impl(&engine, series_id, title, detected_type, cadence).await
+}
+
 /// Heuristic (non-calendar) series detection: cluster meetings not in any series by
 /// normalized title and form series from clusters of 2+. Returns the number of NEW series
 /// created. Idempotent — re-running detects nothing new.
-#[tauri::command]
-pub async fn series_rescan_heuristic(
-    state: tauri::State<'_, AppState>,
-) -> Result<usize, String> {
-    let pool = state.db_manager.pool();
+async fn series_rescan_heuristic_impl(engine: &Engine) -> Result<usize, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     crate::meeting_series::detection::rescan_heuristic_series(pool)
         .await
         .map_err(|e| format!("Failed to rescan heuristic series: {}", e))
 }
 
+#[tauri::command]
+pub async fn series_rescan_heuristic(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<usize, String> {
+    series_rescan_heuristic_impl(&engine).await
+}
+
 /// F9 template inheritance: remember the summary template a meeting's series settled on, so
 /// future occurrences inherit it instead of re-classifying. No-op (Ok) if the meeting isn't
 /// in any series.
-#[tauri::command]
-pub async fn series_set_template(
+async fn series_set_template_impl(
+    engine: &Engine,
     meeting_id: String,
     template_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let series = MeetingSeriesRepository::series_for_meeting(pool, &meeting_id)
         .await
         .map_err(|e| format!("Failed to find series for meeting {}: {}", meeting_id, e))?;
@@ -282,22 +345,40 @@ pub async fn series_set_template(
         .map_err(|e| format!("Failed to set template for series {}: {}", series.id, e))
 }
 
+#[tauri::command]
+pub async fn series_set_template(
+    meeting_id: String,
+    template_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<(), String> {
+    series_set_template_impl(&engine, meeting_id, template_id).await
+}
+
 /// Recompute the rolling series ledger for the series that `meeting_id` belongs to.
 ///
 /// Delegates to `meeting_series::ledger::rebuild_ledger_for_meeting`, which folds this
 /// meeting's finished summary into the rolling `series_ledger` via one bounded LLM reduce.
 /// Returns `Ok(())` quickly (no LLM work) when the meeting isn't in any series or has no
 /// finished summary — see the No-Fake-State gating inside the ledger module.
+async fn series_update_ledger_impl(
+    engine: &Engine,
+    app: &tauri::AppHandle,
+    meeting_id: String,
+) -> Result<(), String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
+    crate::meeting_series::ledger::rebuild_ledger_for_meeting(app, pool, &meeting_id)
+        .await
+        .map_err(|e| format!("Failed to update series ledger for meeting {}: {}", meeting_id, e))
+}
+
 #[tauri::command]
 pub async fn series_update_ledger(
     meeting_id: String,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<(), String> {
-    let pool = state.db_manager.pool();
-    crate::meeting_series::ledger::rebuild_ledger_for_meeting(&app, pool, &meeting_id)
-        .await
-        .map_err(|e| format!("Failed to update series ledger for meeting {}: {}", meeting_id, e))
+    series_update_ledger_impl(&engine, &app, meeting_id).await
 }
 
 /// Rebuild a series' ledger from scratch by folding every member meeting's EXISTING finished
@@ -310,14 +391,23 @@ pub async fn series_update_ledger(
 /// Returns the rebuilt ledger markdown, or `None` when NO member has a usable summary yet —
 /// in which case any existing ledger is left untouched (No-Fake-State: we never fabricate or
 /// blank a ledger).
+async fn series_rebuild_ledger_impl(
+    engine: &Engine,
+    app: &tauri::AppHandle,
+    series_id: String,
+) -> Result<Option<String>, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
+    crate::meeting_series::ledger::rebuild_ledger_for_series(app, pool, &series_id)
+        .await
+        .map_err(|e| format!("Failed to rebuild series ledger for {}: {}", series_id, e))
+}
+
 #[tauri::command]
 pub async fn series_rebuild_ledger(
     series_id: String,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<Option<String>, String> {
-    let pool = state.db_manager.pool();
-    crate::meeting_series::ledger::rebuild_ledger_for_series(&app, pool, &series_id)
-        .await
-        .map_err(|e| format!("Failed to rebuild series ledger for {}: {}", series_id, e))
+    series_rebuild_ledger_impl(&engine, &app, series_id).await
 }

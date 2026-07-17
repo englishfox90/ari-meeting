@@ -37,7 +37,7 @@ use crate::database::repositories::person::PersonRepository;
 use crate::database::repositories::speaker::SpeakerRepository;
 use crate::diarization::tuning::{self, SpeakerCountMode};
 use crate::diarization::{engine, labeling, matching, postprocess};
-use crate::state::AppState;
+use crate::engine::Engine;
 
 /// One resolved per-line speaker label: which transcript row maps to which speaker
 /// name. Rows whose speaker is unknown are simply absent from the list (no fabricated
@@ -53,12 +53,12 @@ pub struct TranscriptSpeakerLabel {
 /// Wraps [`labeling::resolve_meeting_speaker_labels`]. Honest — returns entries only
 /// for transcript rows whose `speaker_id` resolves to a real name; unlabeled rows are
 /// omitted. Names are resolved once per meeting (no per-line DB fan-out).
-#[tauri::command]
-pub async fn meeting_speaker_labels(
+pub async fn meeting_speaker_labels_impl(
+    engine: &Engine,
     meeting_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<TranscriptSpeakerLabel>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let pairs = labeling::resolve_meeting_speaker_labels(pool, &meeting_id)
         .await
         .map_err(|e| format!("failed to resolve speaker labels for meeting {meeting_id}: {e}"))?;
@@ -69,6 +69,14 @@ pub async fn meeting_speaker_labels(
             speaker_name,
         })
         .collect())
+}
+
+#[tauri::command]
+pub async fn meeting_speaker_labels(
+    meeting_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<TranscriptSpeakerLabel>, String> {
+    meeting_speaker_labels_impl(&engine, meeting_id).await
 }
 
 /// Honest summary of a single [`diarize_meeting`] run. Every field is a real count
@@ -110,13 +118,13 @@ pub struct MeetingSpeakerRow {
 /// can't be un-folded), so re-running still re-folds the owner sample.
 ///
 /// Off the hot path; safe to spawn fire-and-forget. Returns an honest summary.
-#[tauri::command]
-pub async fn diarize_meeting(
+pub async fn diarize_meeting_impl(
+    engine: &Engine,
     meeting_id: String,
-    state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<DiarizeMeetingSummary, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     // 1. Resolve the meeting folder.
     let meeting = MeetingsRepository::get_meeting_metadata(pool, &meeting_id)
@@ -165,6 +173,15 @@ pub async fn diarize_meeting(
     let _ = tokio::fs::remove_dir_all(&scratch).await;
 
     result
+}
+
+#[tauri::command]
+pub async fn diarize_meeting(
+    meeting_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    app: AppHandle,
+) -> Result<DiarizeMeetingSummary, String> {
+    diarize_meeting_impl(&engine, meeting_id, app).await
 }
 
 /// Inner body so the scratch dir is always cleaned up regardless of outcome.
@@ -972,11 +989,11 @@ pub struct ResetOwnerVoiceprintResult {
 /// is rebuilt from that meeting's mic. For the cleanest rebuild, re-identify speakers on a
 /// recording where the owner is the main speaker. No-op (all zeros) if no owner voiceprint
 /// exists yet.
-#[tauri::command]
-pub async fn speaker_reset_owner_voiceprint(
-    state: tauri::State<'_, AppState>,
+pub async fn speaker_reset_owner_voiceprint_impl(
+    engine: &Engine,
 ) -> Result<ResetOwnerVoiceprintResult, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let owner = PersonRepository::get_owner(pool)
         .await
         .map_err(|e| format!("failed to load owner: {e}"))?
@@ -995,14 +1012,21 @@ pub async fn speaker_reset_owner_voiceprint(
     })
 }
 
+#[tauri::command]
+pub async fn speaker_reset_owner_voiceprint(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<ResetOwnerVoiceprintResult, String> {
+    speaker_reset_owner_voiceprint_impl(&engine).await
+}
+
 /// Read command: speakers appearing in a meeting, with enrollment status + segment
 /// counts. Feeds the later "who spoke" chips UI. Honest counts only.
-#[tauri::command]
-pub async fn speaker_list_for_meeting(
+pub async fn speaker_list_for_meeting_impl(
+    engine: &Engine,
     meeting_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<MeetingSpeakerRow>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     let speakers = SpeakerRepository::list_for_meeting(pool, &meeting_id)
         .await
@@ -1044,6 +1068,14 @@ pub async fn speaker_list_for_meeting(
     Ok(rows)
 }
 
+#[tauri::command]
+pub async fn speaker_list_for_meeting(
+    meeting_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<MeetingSpeakerRow>, String> {
+    speaker_list_for_meeting_impl(&engine, meeting_id).await
+}
+
 /// Manually reassign one transcript line's speaker (user-driven correction, e.g. a
 /// merged/mis-attributed line, or a diarized cluster that got the wrong identity).
 /// This is the per-LINE counterpart to [`speaker_assign_to_person`] (which relabels
@@ -1053,14 +1085,14 @@ pub async fn speaker_list_for_meeting(
 ///
 /// `speaker_id`, when present, must reference a speaker that exists (any enrollment
 /// state — provisional/confirmed/owner) so a typo'd id can't silently no-op.
-#[tauri::command]
-pub async fn speaker_reassign_transcript_line(
+pub async fn speaker_reassign_transcript_line_impl(
+    engine: &Engine,
     meeting_id: String,
     transcript_id: String,
     speaker_id: Option<String>,
-    state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     if let Some(id) = &speaker_id {
         match SpeakerRepository::get(pool, id).await {
@@ -1078,6 +1110,16 @@ pub async fn speaker_reassign_transcript_line(
     )
     .await
     .map_err(|e| format!("failed to reassign transcript {transcript_id}: {e}"))
+}
+
+#[tauri::command]
+pub async fn speaker_reassign_transcript_line(
+    meeting_id: String,
+    transcript_id: String,
+    speaker_id: Option<String>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<bool, String> {
+    speaker_reassign_transcript_line_impl(&engine, meeting_id, transcript_id, speaker_id).await
 }
 
 /// Cap on how many historical provisional speakers a single assign may retroactively
@@ -1104,13 +1146,13 @@ const RETRO_RELABEL_LIMIT: i64 = 200;
 ///
 /// Also links the person as a participant of every meeting the (canonical) voice
 /// appears in (best-effort: a single link failure is logged, not fatal).
-#[tauri::command]
-pub async fn speaker_assign_to_person(
+pub async fn speaker_assign_to_person_impl(
+    engine: &Engine,
     speaker_id: String,
     person_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<SpeakerAssignResult, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let cfg = matching::MatchConfig::default();
 
     let subject = SpeakerRepository::get(pool, &speaker_id)
@@ -1174,6 +1216,15 @@ pub async fn speaker_assign_to_person(
         speaker_id: canonical_id,
         retro_relabeled,
     })
+}
+
+#[tauri::command]
+pub async fn speaker_assign_to_person(
+    speaker_id: String,
+    person_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<SpeakerAssignResult, String> {
+    speaker_assign_to_person_impl(&engine, speaker_id, person_id).await
 }
 
 /// Fold one speaker's voiceprint into another and repoint all its references, then
@@ -1362,12 +1413,12 @@ pub struct SpeakerMatchSuggestion {
 /// keeping each person's best score. Weak matches (score < 0.3) are dropped as noise,
 /// but the single best candidate is always kept if any exist. Top ~5 returned, sorted
 /// by descending similarity.
-#[tauri::command]
-pub async fn speaker_match_suggestions(
+pub async fn speaker_match_suggestions_impl(
+    engine: &Engine,
     speaker_id: String,
-    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<SpeakerMatchSuggestion>, String> {
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     let cfg = matching::MatchConfig::default();
 
     // Subject speaker + its centroid.
@@ -1445,6 +1496,14 @@ pub async fn speaker_match_suggestions(
     }
 
     Ok(suggestions)
+}
+
+#[tauri::command]
+pub async fn speaker_match_suggestions(
+    speaker_id: String,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<Vec<SpeakerMatchSuggestion>, String> {
+    speaker_match_suggestions_impl(&engine, speaker_id).await
 }
 
 /// Classify a raw cosine into the matcher's tier labels using the shared thresholds.
