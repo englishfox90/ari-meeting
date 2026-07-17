@@ -97,6 +97,24 @@ Approach: parallel Sonnet agents in the **main tree** (not worktrees — `isolat
 - **Remaining before Stage B (crate extraction):** the host-capability **seams** the headless crate can't hold — `Notifier` (the `NotificationManagerState`), the **Tauri-store** (onboarding `app.store`), and `app_config`'s `app_config_dir` Paths seam. Naturally resolved AS the crate is carved (Stage B forces them), so they travel with Stage B rather than as separate Stage-A steps.
 - **Build-test points:** recording path validated at runtime after the audio emit sweep (✅ 2026-07-17, twice). The AppState retirement changed DB-init/shutdown wiring — a launch→record→quit sanity pass is worth doing before Stage B.
 
+#### Stage B pre-flight — exact seam map (grepped 2026-07-17)
+
+The three host-capability seams, with every real call site pinned so B1 starts from coordinates, not a re-grep. (Atomic `.store()` calls are noise — the store *plugin* is `tauri_plugin_store::StoreExt` / `app.store("*.json")`.)
+
+**Seam 1 — Tauri store plugin (`app.store`).** Five JSON stores, split by owner:
+  - **Engine-side (need a headless home — a `Paths`-based JSON the engine owns):**
+    - `onboarding.rs` — `onboarding-status.json` (load/save/reset onboarding status; 5 call sites).
+    - `audio/recording_preferences.rs` — `recording_preferences.json` (load/save recording prefs).
+  - **Host-side (stay in the host — window/menu/notch concerns):**
+    - `tray.rs` — `app-preferences.json` (`menu_bar_enabled`); menu-bar is host UI.
+    - `notch/bridge.rs:773` — `settings.json` (`showNotch` read); notch is host UI.
+  - **Dead — delete, don't port:** `api/api.rs:440` `get_auth_token` → `store.json`/`authToken` is `#[allow(dead_code)]`, a vestigial HTTP-era leftover. Remove during the carve.
+
+**Seam 2 — `Notifier` (`NotificationManagerState<R>`).** Runtime-generic, stays host-managed (it holds `NotificationManager<tauri::Wry>`). Consumers:
+  - `lib.rs` (recording start/stop notifications — host setup block, lines ~131/193/371/440–479) and `notch/scheduler.rs:305/323` (meeting-reminder path). The engine can't hold `<R: Runtime>` — Stage B needs a thin `Notifier` trait (engine-side) whose Tauri impl lives host-side and is injected, same shape as `EventSink`/`TauriEventSink`.
+
+**Seam 3 — `app_config_dir` / `app_data_dir` Paths.** Mostly already centralized: `engine/paths.rs` replaces ~25 scattered calls, and the recall/summary/api hot paths already read `engine.paths().app_data`. Raw `app.path().app_data_dir()` **holdouts** still to route through `Paths` in Stage B: `summary/service.rs:474`, `whisper_engine/commands.rs:16`, `parakeet_engine/commands.rs:18`, `persons/commands.rs:443/473`, `diarization/engine.rs:419` + `diarization/tuning.rs:132`, `database/commands.rs:87/239/250`, `database/manager.rs` (init/migrate paths), `meeting_series/ledger.rs:474`. Host-only (`app_config_dir` in `app_config.rs:37`, `app_log_dir` in `lib.rs:464`, `tray.rs` data-dir) stay host-side.
+
 ### Stage B — Extract the `ari-engine` library crate
 
 B1. Create `ari-engine` lib crate; move the decoupled engine modules into it (audio, transcription engines, summary, recall, calendar, persons, series, diarization, database, providers, notch/apple bridges, config). The `#[tauri::command]` shims stay behind in the host.
