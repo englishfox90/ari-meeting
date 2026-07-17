@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "ari-protocol",
+    "ari-engine",
     "frontend/src-tauri",
     "llama-helper"
 ]
