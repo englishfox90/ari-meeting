@@ -454,11 +454,30 @@ pub fn run() {
             // still use the legacy `AppState`/managed states until each service
             // migrates onto `&Engine`, so this changes no runtime behavior.
             {
+                use tauri::Manager as _;
                 let paths = engine::Paths::from_tauri(_app.handle())
                     .expect("Failed to resolve engine paths");
                 let events: std::sync::Arc<dyn engine::EventSink> =
                     std::sync::Arc::new(engine::TauriEventSink::new(_app.handle().clone()));
-                _app.manage(std::sync::Arc::new(engine::Engine::new(paths, events)));
+                // Share the SAME inner Arcs as the separately-managed sub-states
+                // (managed above in the builder chain), so startup init that
+                // writes through the managed state is visible via engine.*().
+                let parallel = _app.state::<whisper_engine::parallel_commands::ParallelProcessorState>();
+                let summary_models = _app.state::<summary::summary_engine::ModelManagerState>();
+                let embed_models = _app.state::<recall::embed_models::EmbedModelManagerState>();
+                let shared_parallel = whisper_engine::parallel_commands::ParallelProcessorState {
+                    processor: parallel.processor.clone(),
+                    system_monitor: parallel.system_monitor.clone(),
+                };
+                let shared_summary = summary::summary_engine::ModelManagerState(summary_models.0.clone());
+                let shared_embed = recall::embed_models::EmbedModelManagerState(embed_models.0.clone());
+                _app.manage(std::sync::Arc::new(engine::Engine::new(
+                    paths,
+                    events,
+                    shared_parallel,
+                    shared_summary,
+                    shared_embed,
+                )));
             }
 
             // Enforce the rolling log-retention window on startup.

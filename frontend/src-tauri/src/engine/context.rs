@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 use crate::database::manager::DatabaseManager;
 use crate::recall::embed_models::EmbedModelManagerState;
@@ -41,14 +41,27 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(paths: Paths, events: Arc<dyn EventSink>) -> Self {
+    /// Construct the engine context. The three manager sub-states must be
+    /// **shared clones** (same inner `Arc`s) of the instances the host still
+    /// `.manage()`s during Stage A, so startup init that writes through the
+    /// managed state is visible via [`Engine::summary_models`] et al. — the
+    /// manager-state analog of [`Engine::set_db`] seeding. Once every consumer
+    /// has migrated off `tauri::State` (Stage A exit), the host stops managing
+    /// them separately and the engine owns them outright.
+    pub fn new(
+        paths: Paths,
+        events: Arc<dyn EventSink>,
+        parallel: ParallelProcessorState,
+        summary_models: ModelManagerState,
+        embed_models: EmbedModelManagerState,
+    ) -> Self {
         Self {
             db: RwLock::new(None),
             paths,
             events,
-            parallel: ParallelProcessorState::new(),
-            summary_models: ModelManagerState(Arc::new(Mutex::new(None))),
-            embed_models: EmbedModelManagerState::new(),
+            parallel,
+            summary_models,
+            embed_models,
         }
     }
 
