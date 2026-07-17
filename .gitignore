@@ -5,6 +5,9 @@
 # dependencies
 /node_modules
 **/models
+# AriKit source module 'Models/' collides with the **/models weights ignore
+# (case-insensitive FS) — keep the Swift source tracked.
+!AriKit/Sources/AriKit/Models/
 /.pnp
 .pnp.*
 .yarn/*

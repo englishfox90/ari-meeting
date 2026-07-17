@@ -1,9 +1,11 @@
 //
 //  AriKit.swift — package anchor.
 //
-//  Placeholder so the package compiles and the Swift tooling has a target. Real domain
-//  code (Models / Store / Recall / Context) arrives phase by phase per
-//  plans/swift-migration-plan.md — do not port engine code here ahead of its Phase-0 gate.
+//  Real domain code (Models / Store / Recall / Context / Engine) arrives phase by phase
+//  per plans/swift-migration-plan.md — see the doc comment at the top of each module's
+//  namespace file for what's scoped there and why it's still empty. DesignSystem is the
+//  one module that IS live today: it's needed by the very first SwiftUI screen, not
+//  gated behind a Phase-0 spike.
 //
 
 /// Namespace for the shared Ari domain layer.
