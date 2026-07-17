@@ -1,0 +1,16 @@
+{
+  "productName": "Ari Meeting QA Minimum",
+  "identifier": "com.meetily.improved.qa.minimum",
+  "app": {
+    "windows": [
+      {
+        "title": "Ari Meeting QA Minimum",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 1100,
+        "minHeight": 720,
+        "resizable": true
+      }
+    ]
+  }
+}

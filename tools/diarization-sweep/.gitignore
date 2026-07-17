@@ -1,0 +1,8 @@
+# Audio-derived / regenerable artifacts — never commit these.
+work/
+hypotheses/
+results/
+__pycache__/
+
+# The committed artifacts are references/*.rttm + manifest.json (timings +
+# opaque speaker-id labels only, no transcript text — see README).

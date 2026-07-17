@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
+  <!-- Menu-bar template icon: the Arivo crescent ring, drawn in solid black so
+       macOS can tint it per menu-bar appearance. Reference art for the raw
+       tray-icon-template.rgba (44x44) rendered by scripts/gen-tray.mjs. -->
+  <circle cx="21.5" cy="21.5" r="13" fill="none" stroke="#000"
+    stroke-width="3.5" stroke-linecap="round"
+    stroke-dasharray="66 26" transform="rotate(-125 21.5 21.5)"/>
+</svg>

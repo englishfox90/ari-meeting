@@ -1,0 +1,11 @@
+-- Speaker Diarization P1 (voiceprint lifecycle). Additive.
+-- Track the total speech seconds folded into each voiceprint centroid so the
+-- centroid fold can be DURATION-WEIGHTED (a 90s cluster should move the centroid
+-- more than a 6s one) and, once mature, behave as an exponential moving average
+-- (the stored weight is capped at 600s when used as a fold weight — see
+-- `diarization::matching::fold_centroid_weighted`).
+--
+-- Distinct from `samples` (kept as a raw count for display): `samples` counts how
+-- many clusters were folded in; `total_speech_secs` accumulates their real speech
+-- duration.
+ALTER TABLE speakers ADD COLUMN total_speech_secs REAL NOT NULL DEFAULT 0;

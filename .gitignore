@@ -1,0 +1,116 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+/experiments
+
+# dependencies
+/node_modules
+**/models
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+*.mp4
+
+# testing
+/coverage
+/dist
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# Audio files
+*.wav
+
+# Large media files
+docs/demo.mov
+docs/demo.gif
+
+
+meeting_minutes.db
+
+# Added by Task Master AI
+# Logs
+logs
+*.log
+dev-debug.log
+# Dependency directories
+node_modules/
+# Environment variables
+.env
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+experiments/
+.cursor/
+target/
+worktrees/
+
+frontend/src-tauri/binaries/
+
+# --- Private meeting-derived data + regenerable eval outputs (NEVER commit) ---
+# These hold real transcript text, generated summaries, and meeting titles pulled
+# from the local app DB. All regenerate from the DB via each tool's extract script.
+tools/stt-eval/results/
+tools/prompt-harness/runs/
+tools/prompt-harness/fixtures/cache/
+tools/prompt-harness/fixtures/manifest.json
+tools/diarization-sweep/work/
+tools/diarization-sweep/hypotheses/
+tools/diarization-sweep/results/
+tools/diarization-sweep/references/
+spikes/*/prompts/
+spikes/*/results/
+
+# Any .env-shaped file (not just exactly ".env") — e.g. archive/*/temp.env
+*.env
+!*.env.example
+
+# Large demo media (inherited, regenerable)
+docs/*.gif
+docs/*.mov
+
+# Third-party reference sample projects (Apple docs samples, vendor examples).
+# Read-only reference for patterns during the Swift migration — never built or shipped.
+# The README is tracked so the convention is documented; everything else is ignored.
+/samples/*
+!/samples/README.md
+
+# Swift / Xcode (AriKit package + sidecars + future app targets)
+.build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+.swiftpm/
+# Package.resolved IS committed (reproducible dependency pins) — do not ignore it.

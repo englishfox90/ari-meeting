@@ -1,0 +1,51 @@
+{
+  "name": "Project Sync / Status Update",
+  "description": "Weekly or bi-weekly project status meeting focusing on milestones and risks.",
+  "sections": [
+    {
+      "title": "Meeting Date & Time",
+      "instruction": "Extract the meeting date, start/end time, and facilitator name only if explicitly stated in the transcript; otherwise leave blank.",
+      "format": "string"
+    },
+    {
+      "title": "Attendees",
+      "instruction": "List each attendee named in the transcript along with their role, only if the role was stated.",
+      "format": "list"
+    },
+    {
+      "title": "Milestones & Status",
+      "instruction": "List each project milestone discussed, with its current status and estimated completion date, using only what was stated.",
+      "format": "list",
+      "item_format": "| **Milestone** | **Status** | **ETA** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "Progress Summary",
+      "instruction": "Write a short paragraph summarizing progress made since the last sync, based only on what was discussed.",
+      "format": "paragraph"
+    },
+    {
+      "title": "Top Risks & Mitigations",
+      "instruction": "List the top risks raised, with impact level, mitigation plan, and owner, only where each was actually stated; otherwise leave the cell blank.",
+      "format": "list",
+      "item_format": "| **Risk** | **Impact** | **Mitigation** | **Owner** |\n| --- | --- | --- | --- |"
+    },
+    {
+      "title": "Key Decisions",
+      "instruction": "List the decisions made in this meeting with their rationale if stated. In the Ref column, cite the moment the decision was made as @ref(MM:SS) — for example @ref(01:05) — whenever that moment is identifiable in the transcript; otherwise leave the cell blank.",
+      "format": "list",
+      "item_format": "| **Decision** | **Rationale** | **Ref** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "Action Items",
+      "instruction": "List assigned tasks with owner, due date, priority, and status. Only include a field if it was actually stated; otherwise leave the cell blank (do not write 'None'). In the Ref column, cite the moment the task was assigned as @ref(MM:SS) — for example @ref(01:05) — whenever clearly identifiable; otherwise leave blank.",
+      "format": "list",
+      "item_format": "| **Owner** | **Task** | **Due Date** | **Priority** | **Status** | **Ref** |\n| --- | --- | --- | --- | --- | --- |"
+    },
+    {
+      "title": "Related Documents",
+      "instruction": "List any documents, tickets, or designs referenced by name or link in the transcript, with their type (e.g. doc, ticket, design). Only include documents actually mentioned.",
+      "format": "list",
+      "item_format": "| **Document Title** | **URL** | **Type** |\n| --- | --- | --- |"
+    }
+  ]
+}

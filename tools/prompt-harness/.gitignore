@@ -1,0 +1,5 @@
+# Real meeting content and model outputs never get committed.
+fixtures/cache/
+runs/
+*.ratings.json
+node_modules/

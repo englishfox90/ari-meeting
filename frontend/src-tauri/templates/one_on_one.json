@@ -1,0 +1,55 @@
+{
+  "name": "1:1 Meeting",
+  "description": "One-on-one between a manager and a team member: check-in, discussion, feedback, growth, and follow-ups.",
+  "sections": [
+    {
+      "title": "Meeting Metadata",
+      "instruction": "Extract the meeting date and participant names, plus their roles (e.g. manager and team member), only if explicitly stated in the transcript; otherwise leave blank",
+      "format": "string"
+    },
+    {
+      "title": "Check-in",
+      "instruction": "Summarize the opening check-in: how the person said they are doing and any mood, workload, or wellbeing signals they explicitly expressed. Capture only what was actually said, not inferred",
+      "format": "paragraph"
+    },
+    {
+      "title": "Discussion Topics",
+      "instruction": "Summarize each topic discussed, capturing the key points for each",
+      "format": "list",
+      "item_format": "| **Topic** | **Key Points** |\n| --- | --- |"
+    },
+    {
+      "title": "Wins & Progress",
+      "instruction": "Capture accomplishments, progress, and positives the person shared since the last conversation",
+      "format": "list"
+    },
+    {
+      "title": "Challenges & Blockers",
+      "instruction": "Capture difficulties, blockers, or concerns the person raised, with the support they asked for if stated",
+      "format": "list",
+      "item_format": "| **Challenge** | **Support Needed** |\n| --- | --- |"
+    },
+    {
+      "title": "Feedback Exchanged",
+      "instruction": "Summarize feedback given in either direction (manager to team member or team member to manager). Attribute who gave the feedback. Include only feedback actually voiced in the conversation",
+      "format": "list",
+      "item_format": "| **From** | **Feedback** |\n| --- | --- |"
+    },
+    {
+      "title": "Growth & Development",
+      "instruction": "Capture any discussion of career goals, skills, learning, or development the person wants to pursue",
+      "format": "paragraph"
+    },
+    {
+      "title": "Action Items",
+      "instruction": "List agreed follow-up tasks with their owner and due date. Only include an owner or due date if it was actually stated; otherwise leave the cell blank (do not write 'None'). In the Ref column, cite the moment the task was agreed as @ref(MM:SS) — for example @ref(01:05) — whenever clearly identifiable in the transcript; otherwise leave the cell blank",
+      "format": "list",
+      "item_format": "| **Owner** | **Task** | **Due Date** | **Ref** |\n| --- | --- | --- | --- |"
+    },
+    {
+      "title": "Follow-ups for Next 1:1",
+      "instruction": "Note topics or open threads to revisit at the next one-on-one",
+      "format": "list"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "name": "Client / Sales Meeting",
+  "description": "Capture client goals, deliverables, and next steps.",
+  "sections": [
+    {
+      "title": "Meeting Metadata",
+      "instruction": "Extract the meeting date, time, location/modality, and account manager name only if explicitly stated in the transcript; otherwise leave blank",
+      "format": "string"
+    },
+    {
+      "title": "Attendees",
+      "instruction": "List client and vendor attendees named in the transcript, with their roles if stated",
+      "format": "list"
+    },
+    {
+      "title": "Client Goals & Success Criteria",
+      "instruction": "Summarize what the client said they want to achieve and how they said success will be measured, based only on what was stated",
+      "format": "paragraph"
+    },
+    {
+      "title": "Agreed Deliverables",
+      "instruction": "List deliverables discussed, with owner and due date only if actually stated; otherwise leave the cell blank",
+      "format": "list",
+      "item_format": "| **Deliverable** | **Owner** | **Due Date** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "Commercial Terms Discussed",
+      "instruction": "Summarize any pricing, SLAs, payment terms, or contract items discussed, based only on what was stated",
+      "format": "paragraph"
+    },
+    {
+      "title": "Risks & Concerns",
+      "instruction": "List client concerns, blockers, or escalation items raised, with impact and owner only if actually stated; otherwise leave the cell blank",
+      "format": "list",
+      "item_format": "| **Concern** | **Impact** | **Owner** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "Next Steps",
+      "instruction": "List agreed next-step actions with owner and due date, only where each was actually stated; otherwise leave the cell blank (do not write 'None'). In the Ref column, cite the moment the action was agreed as @ref(MM:SS) — for example @ref(01:05) — whenever clearly identifiable in the transcript; otherwise leave the cell blank",
+      "format": "list",
+      "item_format": "| **Owner** | **Action** | **Due Date** | **Ref** |\n| --- | --- | --- | --- |"
+    }
+  ]
+}

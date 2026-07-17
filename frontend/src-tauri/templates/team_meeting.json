@@ -1,0 +1,45 @@
+{
+  "name": "Team Meeting",
+  "description": "General recurring team meeting: agenda topics, decisions, action items, and blockers.",
+  "sections": [
+    {
+      "title": "Summary",
+      "instruction": "Provide a brief, one-paragraph executive summary of the meeting and its main outcomes",
+      "format": "paragraph"
+    },
+    {
+      "title": "Attendees",
+      "instruction": "List the participants present, and their roles if stated",
+      "format": "list"
+    },
+    {
+      "title": "Agenda & Topics Discussed",
+      "instruction": "Summarize each topic discussed, capturing the key points and arguments raised for each",
+      "format": "list",
+      "item_format": "| **Topic** | **Key Points** |\n| --- | --- |"
+    },
+    {
+      "title": "Key Decisions",
+      "instruction": "List the important decisions made, with the rationale if it was stated. In the Ref column, cite the moment the decision was made as @ref(MM:SS) — for example @ref(01:05) — whenever clearly identifiable in the transcript; otherwise leave the cell blank",
+      "format": "list",
+      "item_format": "| **Decision** | **Rationale** | **Ref** |\n| --- | --- | --- |"
+    },
+    {
+      "title": "Action Items",
+      "instruction": "List all assigned tasks with their owner and due date. Only include an owner or due date if it was actually stated; otherwise leave the cell blank (do not write 'None'). In the Ref column, cite the moment the task was assigned as @ref(MM:SS) — for example @ref(01:05) — whenever clearly identifiable in the transcript; otherwise leave the cell blank",
+      "format": "list",
+      "item_format": "| **Owner** | **Task** | **Due Date** | **Ref** |\n| --- | --- | --- | --- |"
+    },
+    {
+      "title": "Risks & Blockers",
+      "instruction": "List any impediments, risks, or open concerns raised, with the owner if known",
+      "format": "list",
+      "item_format": "| **Risk / Blocker** | **Owner** |\n| --- | --- |"
+    },
+    {
+      "title": "Announcements & FYIs",
+      "instruction": "Capture any announcements, informational updates, or notes that did not require a decision",
+      "format": "paragraph"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"type":"summarize","text":"Alice: Let's ship the release on Friday. Bob: I'll finish the API by Thursday. Alice: Great, I'll handle the changelog.","instruction":"Summarize the key decisions and action items from this meeting transcript.","maxTokens":512}

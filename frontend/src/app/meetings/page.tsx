@@ -1,0 +1,359 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { ArrowRightIcon, ArrowUpTrayIcon, CalendarDaysIcon, MagnifyingGlassIcon, MicrophoneIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { useRouter } from 'next/navigation';
+import { AppState } from '@/components/app-shell/AppState';
+import { PageHeader } from '@/components/app-shell/PageHeader';
+import { Surface } from '@/components/app-shell/Surface';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { useConfig } from '@/contexts/ConfigContext';
+import { useImportDialog } from '@/contexts/ImportDialogContext';
+import { useSeries } from '@/contexts/SeriesContext';
+import { seriesService } from '@/services/seriesService';
+import {
+  createMeetingRow,
+  deriveMeetingHistoryViewState,
+  filterMeetingRows,
+  groupBySeries,
+  type MeetingSeriesRef,
+  type MeetingSortOrder,
+  type SavedMeeting,
+  type SavedMeetingMetadata,
+  type SavedMeetingRow,
+  sortMeetingRows,
+  type TranscriptSearchHit,
+} from '@/lib/meeting-history';
+
+function formatMeetingDate(value: string | null): string {
+  if (!value) return 'Date unavailable';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+  }).format(date);
+}
+
+export default function MeetingsPage() {
+  const router = useRouter();
+  const { betaFeatures } = useConfig();
+  const { openImportDialog } = useImportDialog();
+  const [rows, setRows] = useState<SavedMeetingRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [metadataFailureCount, setMetadataFailureCount] = useState(0);
+  const [query, setQuery] = useState('');
+  const [transcriptHits, setTranscriptHits] = useState<TranscriptSearchHit[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<MeetingSortOrder>('newest');
+  const searchSequence = useRef(0);
+
+  // Optional "group by series" view. Default OFF, so the flat list is unchanged
+  // unless the user opts in. The per-series member fetch is gated behind the
+  // toggle: it only runs once the user turns grouping on.
+  const { series } = useSeries();
+  const [groupBySeriesEnabled, setGroupBySeriesEnabled] = useState(false);
+  const [membership, setMembership] = useState<Map<string, MeetingSeriesRef> | null>(null);
+  const [isLoadingMembership, setIsLoadingMembership] = useState(false);
+  const [membershipError, setMembershipError] = useState<string | null>(null);
+
+  // Invalidate the cached membership map whenever the series list changes so a
+  // newly-formed (or removed) series is reflected on the next grouping.
+  useEffect(() => {
+    setMembership(null);
+  }, [series]);
+
+  // Build the meetingId → series map only when grouping is enabled (and not
+  // already cached). One series_get per series, run in parallel, non-blocking.
+  useEffect(() => {
+    if (!groupBySeriesEnabled || membership || !seriesService.isAvailable()) return;
+    let cancelled = false;
+    setIsLoadingMembership(true);
+    setMembershipError(null);
+    (async () => {
+      try {
+        const details = await Promise.all(series.map((s) => seriesService.get(s.id)));
+        if (cancelled) return;
+        const map = new Map<string, MeetingSeriesRef>();
+        details.forEach((detail) => {
+          detail.members.forEach((member) => {
+            map.set(member.meetingId, { seriesId: detail.id, seriesTitle: detail.title });
+          });
+        });
+        setMembership(map);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load series membership for grouping:', error);
+        setMembership(null);
+        setMembershipError('Series grouping is unavailable. Showing the flat list.');
+      } finally {
+        if (!cancelled) setIsLoadingMembership(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [groupBySeriesEnabled, membership, series]);
+
+  const loadMeetings = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+
+    try {
+      const meetings = await invoke<SavedMeeting[]>('api_get_meetings');
+      const metadataResults = await Promise.allSettled(
+        meetings.map((meeting) => invoke<SavedMeetingMetadata>('api_get_meeting_metadata', {
+          meetingId: meeting.id,
+        })),
+      );
+      const hydratedRows = meetings.map((meeting, index) => createMeetingRow(
+        meeting,
+        metadataResults[index].status === 'fulfilled'
+          ? metadataResults[index].value
+          : null,
+      ));
+
+      setRows(hydratedRows);
+      setMetadataFailureCount(metadataResults.filter((result) => result.status === 'rejected').length);
+    } catch (error) {
+      console.error('Failed to load saved meetings:', error);
+      setRows([]);
+      setMetadataFailureCount(0);
+      setLoadError('Ari Meeting could not read the saved-meeting list from the local database.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMeetings();
+  }, [loadMeetings]);
+
+  useEffect(() => {
+    const normalizedQuery = query.trim();
+    const sequence = ++searchSequence.current;
+    setSearchError(null);
+
+    if (!normalizedQuery) {
+      setTranscriptHits([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const timeout = window.setTimeout(async () => {
+      try {
+        const results = await invoke<TranscriptSearchHit[]>('api_search_transcripts', {
+          query: normalizedQuery,
+        });
+        if (sequence === searchSequence.current) setTranscriptHits(results);
+      } catch (error) {
+        console.error('Failed to search saved transcripts:', error);
+        if (sequence === searchSequence.current) {
+          setTranscriptHits([]);
+          setSearchError('Transcript search is unavailable. Title matches are still shown.');
+        }
+      } finally {
+        if (sequence === searchSequence.current) setIsSearching(false);
+      }
+    }, 220);
+
+    return () => window.clearTimeout(timeout);
+  }, [query]);
+
+  const visibleRows = useMemo(
+    () => sortMeetingRows(filterMeetingRows(rows, query, transcriptHits), sortOrder),
+    [query, rows, sortOrder, transcriptHits],
+  );
+
+  const isGrouped = groupBySeriesEnabled && membership !== null;
+  const groups = useMemo(
+    () => (isGrouped && membership ? groupBySeries(visibleRows, membership) : []),
+    [isGrouped, membership, visibleRows],
+  );
+
+  const hasQuery = query.trim().length > 0;
+  const viewState = deriveMeetingHistoryViewState({
+    isLoading,
+    hasLoadError: Boolean(loadError),
+    totalRows: rows.length,
+    visibleRows: visibleRows.length,
+    isSearching,
+  });
+
+  const renderRow = (meeting: SavedMeetingRow) => (
+    <button
+      key={meeting.id}
+      type="button"
+      onClick={() => router.push(`/meeting-details?id=${meeting.id}`)}
+      className="group flex min-h-[4.75rem] w-full items-start justify-between gap-5 px-5 py-4 text-left transition-[background,transform] hover:bg-secondary/70 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold tracking-[-0.01em]">{meeting.title}</span>
+        {meeting.matchContext ? (
+          <span className="mt-1 block line-clamp-1 text-xs leading-5 text-muted-foreground">
+            {meeting.matchContext}
+          </span>
+        ) : (
+          <span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <CalendarDaysIcon className="size-3.5" aria-hidden="true" />
+            {formatMeetingDate(meeting.updatedAt || meeting.createdAt)}
+          </span>
+        )}
+      </span>
+      <ArrowRightIcon className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" aria-hidden="true" />
+    </button>
+  );
+
+  return (
+    <div className="app-page">
+      <PageHeader
+        eyebrow="Library"
+        title="Saved meetings"
+        description="Revisit transcripts and notes stored in your local Ari Meeting database."
+      />
+      <section aria-label="Saved meeting list" className="mt-7">
+        {viewState === 'loading' ? (
+          <AppState
+            kind="loading"
+            title="Loading saved meetings"
+            description="Reading meeting titles and dates from your local database."
+          />
+        ) : viewState === 'error' ? (
+          <AppState
+            kind="error"
+            title="Saved meetings could not be loaded"
+            description={loadError || 'Ari Meeting could not read the saved-meeting list from the local database.'}
+            action={<Button variant="outline" onClick={() => void loadMeetings()}>Try again</Button>}
+          />
+        ) : viewState === 'empty' ? (
+          <AppState
+            kind="empty"
+            title="Nothing saved yet"
+            description={betaFeatures.importAndRetranscribe
+              ? 'Complete a recording or import audio to create your first saved meeting.'
+              : 'Complete a recording to create your first saved meeting.'}
+            action={(
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button onClick={() => router.push('/new-meeting')}><MicrophoneIcon />Open recorder</Button>
+                {betaFeatures.importAndRetranscribe && (
+                  <Button variant="outline" onClick={() => openImportDialog()}><ArrowUpTrayIcon />Import audio</Button>
+                )}
+              </div>
+            )}
+          />
+        ) : (
+          <div className="space-y-4">
+            <Surface className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative min-w-0 flex-1">
+                <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                <Input
+                  type="text"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search titles and transcripts"
+                  aria-label="Search saved meeting titles and transcripts"
+                  className="h-10 bg-background pl-9 pr-9"
+                />
+                {hasQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery('')}
+                    className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label="Clear search"
+                  >
+                    <XMarkIcon className="size-4" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {series.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setGroupBySeriesEnabled((value) => !value)}
+                    aria-pressed={groupBySeriesEnabled}
+                    className={groupBySeriesEnabled ? 'border-accent text-foreground' : undefined}
+                  >
+                    {groupBySeriesEnabled ? 'Grouped by series' : 'Group by series'}
+                  </Button>
+                )}
+                <div className="flex items-center gap-1 rounded-lg bg-secondary p-1" aria-label="Sort saved meetings">
+                  {(['newest', 'oldest'] as const).map((order) => (
+                    <button
+                      key={order}
+                      type="button"
+                      onClick={() => setSortOrder(order)}
+                      aria-pressed={sortOrder === order}
+                      className={`h-8 rounded-md px-3 text-xs font-medium capitalize transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${sortOrder === order ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    >
+                      {order}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </Surface>
+
+            {metadataFailureCount > 0 && (
+              <p className="px-1 text-xs text-muted-foreground" role="status">
+                {metadataFailureCount === 1
+                  ? 'One meeting date is unavailable. The meeting can still be opened.'
+                  : `${metadataFailureCount} meeting dates are unavailable. Those meetings can still be opened.`}
+              </p>
+            )}
+            {searchError && <p className="px-1 text-xs text-destructive" role="alert">{searchError}</p>}
+            {membershipError && <p className="px-1 text-xs text-destructive" role="alert">{membershipError}</p>}
+
+            {viewState === 'no-results' ? (
+              <AppState
+                kind="empty"
+                title="No saved meetings found"
+                description={`Nothing in local titles or transcripts matches “${query.trim()}”. Try a different phrase.`}
+                action={<Button variant="outline" onClick={() => setQuery('')}>Clear search</Button>}
+              />
+            ) : groupBySeriesEnabled && !membership && isLoadingMembership ? (
+              <AppState
+                kind="loading"
+                title="Grouping by series"
+                description="Reading series membership from your local database."
+              />
+            ) : isGrouped ? (
+              <div className="space-y-6">
+                {groups.map((group) => (
+                  <div key={group.key} className="space-y-2">
+                    <div className="flex items-baseline justify-between gap-3 px-1">
+                      <h3 className="truncate text-sm font-semibold tracking-[-0.01em]">{group.title}</h3>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {group.rows.length} {group.rows.length === 1 ? 'meeting' : 'meetings'}
+                      </span>
+                    </div>
+                    <Surface className="divide-y divide-border/70 overflow-hidden p-0">
+                      {group.rows.map(renderRow)}
+                    </Surface>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Surface className="divide-y divide-border/70 overflow-hidden p-0">
+                {visibleRows.map(renderRow)}
+                {isSearching && (
+                  <div className="px-5 py-3 text-xs text-muted-foreground" role="status">
+                    Searching local transcripts…
+                  </div>
+                )}
+              </Surface>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}

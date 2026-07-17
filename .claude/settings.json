@@ -1,0 +1,62 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(pnpm install)",
+      "Bash(pnpm run:*)",
+      "Bash(pnpm lint:*)",
+      "Bash(pnpm build)",
+      "Bash(pnpm dlx:*)",
+      "Bash(node --test:*)",
+      "Bash(npx tsc:*)",
+      "Bash(cmake:*)",
+      "Bash(xcrun:*)",
+      "Bash(node scripts/:*)",
+      "Bash(swift build:*)",
+      "Bash(swift test:*)",
+      "Bash(swift package:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(xcode-select -p)",
+      "Bash(swiftformat:*)",
+      "Bash(swiftlint:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(rg:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/swift-postedit.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/swift-session-start.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

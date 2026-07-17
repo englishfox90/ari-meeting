@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Ari Meeting app icon: the Arivo amber crescent-ring mark (opening upper-right,
+       matching ArivoMark.tsx) on the deep-navy rail. Canonical vector twin of the
+       rasterized assets produced by frontend/scripts/gen-app-icon.mjs. -->
+  <defs>
+    <linearGradient id="ring" x1="205" y1="819" x2="819" y2="205" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E8A020"/>
+      <stop offset="0.55" stop-color="#B4741A"/>
+      <stop offset="1" stop-color="#5A3A12"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="230" fill="#0B1522"/>
+  <circle cx="512" cy="512" r="307"
+    fill="none" stroke="url(#ring)" stroke-width="59" stroke-linecap="round"
+    stroke-dasharray="1621 308"/>
+</svg>

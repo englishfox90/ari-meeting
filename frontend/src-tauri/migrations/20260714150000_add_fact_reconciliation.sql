@@ -1,0 +1,16 @@
+-- Fact reconciliation (F2 follow-up). Additive-only: one new nullable column on the
+-- existing `profile_facts` table, no new tables needed.
+--
+-- `last_confirmed_at` tracks the last time a fact was reaffirmed — either explicitly by
+-- the user (`profile_fact_confirm`) or implicitly by the reconciliation agent choosing to
+-- "keep" it after seeing fresh transcript evidence. NULL means "never reconfirmed since
+-- creation"; staleness queries fall back to `created_at` in that case via
+-- `COALESCE(last_confirmed_at, created_at)`.
+--
+-- `status` keeps its existing free-text values ('pending'|'active'|'superseded'|'rejected')
+-- plus a new value used ONLY by automated reconciliation/cap-enforcement: 'removed'. This is
+-- kept distinct from the user-driven 'rejected' (set by `profile_fact_reject`) so provenance
+-- stays honest: 'rejected' = a human said no, 'removed' = the reconciliation agent or the
+-- active-fact cap pruned it. No CHECK constraint exists on `status` today, so this needs no
+-- schema change beyond documentation here.
+ALTER TABLE profile_facts ADD COLUMN last_confirmed_at TEXT;

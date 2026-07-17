@@ -1,0 +1,45 @@
+{
+  "name": "Retrospective (Agile)",
+  "description": "Sprint retrospective template for continuous improvement.",
+  "sections": [
+    {
+      "title": "Sprint",
+      "instruction": "Extract the sprint name/number and date range only if explicitly stated in the transcript; otherwise leave blank",
+      "format": "string"
+    },
+    {
+      "title": "Attendance",
+      "instruction": "List each participant named in the transcript",
+      "format": "list"
+    },
+    {
+      "title": "Start Doing",
+      "instruction": "List actions or experiments the team proposed to start next sprint, with the proposer if stated",
+      "format": "list",
+      "item_format": "| **Idea** | **Proposer** |\n| --- | --- |"
+    },
+    {
+      "title": "Stop Doing",
+      "instruction": "List practices the team proposed to stop, with the reason if stated",
+      "format": "list",
+      "item_format": "| **Practice** | **Reason** |\n| --- | --- |"
+    },
+    {
+      "title": "Continue Doing",
+      "instruction": "List practices the team agreed to keep, with supporting notes if stated",
+      "format": "list",
+      "item_format": "| **Practice** | **Notes** |\n| --- | --- |"
+    },
+    {
+      "title": "Action Items",
+      "instruction": "List concrete follow-up experiments with owner, due date, and success metric, only where each was actually stated; otherwise leave the cell blank (do not write 'None'). In the Ref column, cite the moment the item was agreed as @ref(MM:SS) — for example @ref(01:05) — whenever clearly identifiable in the transcript; otherwise leave the cell blank",
+      "format": "list",
+      "item_format": "| **Owner** | **Task** | **Due Date** | **Success Metric** | **Ref** |\n| --- | --- | --- | --- | --- |"
+    },
+    {
+      "title": "Notes & Votes",
+      "instruction": "Summarize the discussion and note any top-voted items, based only on what was said",
+      "format": "paragraph"
+    }
+  ]
+}

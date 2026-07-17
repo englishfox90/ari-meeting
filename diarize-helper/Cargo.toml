@@ -1,0 +1,45 @@
+[package]
+name = "diarize-helper"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone sherpa-onnx speaker diarization + embedding sidecar for the Ari Meeting app (NDJSON over stdin/stdout)."
+
+# ---------------------------------------------------------------------------
+# ISOLATION: this empty [workspace] table makes diarize-helper its OWN Cargo
+# workspace root. The repo-root Cargo.toml lists workspace members explicitly
+# (frontend/src-tauri, llama-helper) and nothing path-depends on this crate,
+# so the parent workspace never compiles it. That keeps sherpa-onnx's bundled
+# ONNX Runtime entirely out of the main app's link graph (the app already
+# links `ort` 2.0.0-rc.10 for Parakeet). Build this crate explicitly from its
+# own directory: `cd diarize-helper && cargo build --release`.
+# ---------------------------------------------------------------------------
+[workspace]
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Pure-Rust WAV reader — used to load the 16 kHz mono PCM the models expect.
+# Deliberately avoids sherpa-onnx's own Wave loader so the only sherpa surface
+# we depend on is the diarization/embedding API confirmed against docs.rs.
+hound = "3.5"
+
+# sherpa-onnx safe bindings. `static` (default) links the sherpa-onnx C library
+# and its bundled ONNX Runtime statically; the sherpa-onnx-sys build script
+# downloads a matching prebuilt -lib archive from k2-fsa GitHub releases when
+# SHERPA_ONNX_LIB_DIR is unset. Static linking is what isolates ORT symbols in
+# this binary. Use the `shared` feature only if you want dynamic linking.
+[dependencies.sherpa-onnx]
+version = "1.13.4"
+default-features = false
+features = ["static"]
+
+[features]
+default = ["static"]
+static = ["sherpa-onnx/static"]
+shared = ["sherpa-onnx/shared"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"

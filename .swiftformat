@@ -1,0 +1,27 @@
+# SwiftFormat config for the Ari Swift tree.
+#
+# Install with: brew install swiftformat
+# The PostToolUse hook (.claude/hooks/swift-postedit.sh) formats each edited *.swift file
+# in place. Kept aligned with the SwiftLint config so the two never fight.
+
+--swiftversion 6.0
+
+# Scope — the shared package and the Swift sidecars. .build is skipped automatically.
+--exclude **/.build,**/*.generated.swift
+
+# Style: Apple-ish defaults, minimal surprises.
+--indent 4
+--maxwidth 120
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--closingparen balanced
+--commas inline
+--trimwhitespace always
+--stripunusedargs closure-only
+--self remove
+--importgrouping testable-bottom
+
+# Rules we deliberately disable (leave these to the author / other tools):
+#   wrapMultilineStatementBraces — noisy with SwiftUI view builders
+--disable wrapMultilineStatementBraces, blankLinesAtStartOfScope

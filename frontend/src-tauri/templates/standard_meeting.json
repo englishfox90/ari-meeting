@@ -1,0 +1,27 @@
+{
+  "name": "Standard Meeting Notes",
+  "description": "A standard template for general meetings, focusing on key outcomes and actions.",
+  "sections": [
+    {
+      "title": "Summary",
+      "instruction": "Provide a brief, one-paragraph executive summary of the entire meeting.",
+      "format": "paragraph"
+    },
+    {
+      "title": "Key Decisions",
+      "instruction": "List the most important decisions made during the meeting.",
+      "format": "list"
+    },
+    {
+      "title": "Action Items",
+      "instruction": "List all assigned tasks with their owner and due date. Only include an owner or due date if it was actually stated; otherwise leave the cell blank (do not write 'None'). In the Ref column, cite the moment the task was assigned as @ref(MM:SS) — for example @ref(01:05) — whenever that moment is identifiable in the transcript; otherwise leave the cell blank.",
+      "format": "list",
+      "item_format": "| **Owner** | Task | Due | Ref |\n| --- | --- | --- | --- |"
+    },
+    {
+      "title": "Discussion Highlights",
+      "instruction": "Summarize the main topics of discussion, key arguments, and important insights.",
+      "format": "paragraph"
+    }
+  ]
+}

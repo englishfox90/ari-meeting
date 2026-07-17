@@ -1,0 +1,39 @@
+{
+  "name": "Daily Standup",
+  "description": "Time-boxed daily updates for engineering/product teams.",
+  "sections": [
+    {
+      "title": "Date",
+      "instruction": "Extract the meeting date in YYYY-MM-DD format only if explicitly stated in the transcript; otherwise leave blank",
+      "format": "string"
+    },
+    {
+      "title": "Attendees",
+      "instruction": "List each participant named in the transcript",
+      "format": "list"
+    },
+    {
+      "title": "Yesterday",
+      "instruction": "For each participant, list what they said they completed yesterday, as short bullets",
+      "format": "list",
+      "example_item_format": "| **Owner** | **Completed Work** |\n| --- | --- |"
+    },
+    {
+      "title": "Today",
+      "instruction": "For each participant, list the work they said they plan to do today, as short bullets",
+      "format": "list",
+      "example_item_format": "| **Owner** | **Planned Work** |\n| --- | --- |"
+    },
+    {
+      "title": "Blockers",
+      "instruction": "List any impediments raised, with the owner and impact only if actually stated; otherwise leave the cell blank",
+      "format": "list",
+      "item_format": "| **Owner** | **Blocker** | Impact |\n| --- | --- | --- |"
+    },
+    {
+      "title": "Notes",
+      "instruction": "Capture any announcements or quick notes mentioned that don't fit the sections above; leave blank if none",
+      "format": "paragraph"
+    }
+  ]
+}

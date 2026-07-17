@@ -1,0 +1,53 @@
+# SwiftLint config for the Ari Swift tree.
+#
+# Applies to the shared AriKit package and the Swift sidecars (apple-helper,
+# ari-notch, diarize-helper). Install with: brew install swiftlint
+# The PostToolUse hook (.claude/hooks/swift-postedit.sh) runs this per-file on edits;
+# it degrades to a no-op note if swiftlint is absent, so this file is advisory until installed.
+
+included:
+  - AriKit/Sources
+  - AriKit/Tests
+  - apple-helper/Sources
+  - ari-notch/Sources
+  - diarize-helper/Sources
+
+excluded:
+  - "**/.build"
+  - "**/Package.swift"
+
+# Keep the ruleset calm and signal-heavy — this is a solo, agent-driven codebase; noisy
+# style nits waste the loop. Opt into a few high-value opt-in rules, disable the pedantic ones.
+disabled_rules:
+  - todo                       # TODOs are tracked in plans/, not linted
+  - trailing_comma             # SwiftFormat owns comma/whitespace style
+
+opt_in_rules:
+  - empty_count                # `.isEmpty` over `.count == 0`
+  - force_unwrapping           # surface `!` — real crash risk in a background engine
+  - first_where
+  - contains_over_first_not_nil
+  - redundant_nil_coalescing
+  - unavailable_function
+  - explicit_init
+
+line_length:
+  warning: 120
+  error: 160
+  ignores_comments: true
+  ignores_urls: true
+
+type_body_length:
+  warning: 400
+  error: 600
+
+function_body_length:
+  warning: 80
+  error: 140
+
+identifier_name:
+  min_length: 2
+  excluded: [id, db, x, y, i, to, up]
+
+force_cast: error
+force_try: error

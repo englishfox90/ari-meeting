@@ -1,0 +1,450 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Arivo brand typography — Space Grotesk, bundled locally for offline use. */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("/fonts/SpaceGrotesk-Variable.woff2") format("woff2");
+}
+
+@keyframes vibrate {
+  0% {
+    transform: translate(0);
+  }
+
+  20% {
+    transform: translate(-2px, 2px);
+  }
+
+  40% {
+    transform: translate(-2px, -2px);
+  }
+
+  60% {
+    transform: translate(2px, 2px);
+  }
+
+  80% {
+    transform: translate(2px, -2px);
+  }
+
+  100% {
+    transform: translate(0);
+  }
+}
+
+.animate-vibrate {
+  animation: vibrate 0.3s linear;
+}
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s ease-out forwards;
+}
+
+/* Ask "thinking" indicator: three dots that pulse in sequence. Defined outside
+   @layer so it is never purged (see Tailwind @layer purge gotcha), and staggered
+   per-dot via inline animation-delay at the call site. */
+@keyframes ask-thinking {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.ask-thinking-dot {
+  animation: ask-thinking 1.4s ease-in-out infinite both;
+}
+
+.delay-75 {
+  animation-delay: 75ms;
+}
+
+.delay-100 {
+  animation-delay: 100ms;
+}
+
+.delay-150 {
+  animation-delay: 150ms;
+}
+
+@layer base {
+  /*
+   * Arivo Design System palette — golden amber (#E8A020) accent, deep navy
+   * (#1A2B4A) ink, warm cream canvas. See paul-style brand guide.
+   */
+  :root {
+    --background: 38 30% 94%;
+    --foreground: 219 45% 18%;
+    --card: 40 30% 98%;
+    --card-foreground: 219 45% 18%;
+    --popover: 40 30% 98%;
+    --popover-foreground: 219 45% 18%;
+    --primary: 219 48% 20%;
+    --primary-foreground: 40 30% 96%;
+    --secondary: 38 24% 90%;
+    --secondary-foreground: 219 45% 18%;
+    --muted: 38 22% 90%;
+    --muted-foreground: 218 16% 40%;
+    --accent: 38 81% 52%;
+    --accent-foreground: 219 52% 14%;
+    --accent-soft: 36 80% 91%;
+    --destructive: 0 47% 47%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 154 39% 27%;
+    --warning: 37 77% 40%;
+    --info: 212 48% 42%;
+    --border: 38 17% 82%;
+    --input: 38 15% 75%;
+    --ring: 38 81% 52%;
+    --radius: 0.625rem;
+    --sidebar: 38 24% 89%;
+    --sidebar-hover: 38 22% 84%;
+    --sidebar-selection: 38 81% 52%;
+    --sidebar-foreground: 219 45% 18%;
+    --sidebar-muted: 218 15% 42%;
+    --sidebar-border: 38 17% 80%;
+    --shadow-color: 219 45% 18%;
+    --chart-1: 38 81% 52%;
+    --chart-2: 219 48% 30%;
+    --chart-3: 154 39% 27%;
+    --chart-4: 37 77% 44%;
+    --chart-5: 0 47% 47%;
+  }
+
+  .dark {
+    --background: 216 52% 11%;
+    --foreground: 40 30% 92%;
+    --card: 219 44% 16%;
+    --card-foreground: 40 30% 92%;
+    --popover: 219 44% 17%;
+    --popover-foreground: 40 30% 92%;
+    --primary: 40 30% 92%;
+    --primary-foreground: 219 50% 14%;
+    --secondary: 219 32% 20%;
+    --secondary-foreground: 40 30% 92%;
+    --muted: 219 28% 20%;
+    --muted-foreground: 37 18% 72%;
+    --accent: 38 85% 56%;
+    --accent-foreground: 219 52% 12%;
+    --accent-soft: 38 38% 20%;
+    --destructive: 0 55% 56%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 154 42% 45%;
+    --warning: 38 78% 55%;
+    --info: 212 58% 62%;
+    --border: 219 26% 24%;
+    --input: 219 24% 30%;
+    --ring: 38 85% 56%;
+    --sidebar: 216 50% 9%;
+    --sidebar-hover: 219 34% 16%;
+    --sidebar-selection: 38 85% 56%;
+    --sidebar-foreground: 40 28% 90%;
+    --sidebar-muted: 37 15% 68%;
+    --sidebar-border: 219 26% 22%;
+    --chart-1: 38 85% 56%;
+    --chart-2: 219 55% 55%;
+    --chart-3: 154 45% 48%;
+    --chart-4: 37 80% 55%;
+    --chart-5: 0 60% 62%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    height: 100%;
+    min-width: 1100px;
+  }
+
+  /* html, */
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Space Grotesk", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
+    font-feature-settings: "kern" 1, "liga" 1, "tnum" 1, "calt" 1;
+    font-kerning: normal;
+    overflow: hidden;
+    height: 100%;
+  }
+
+  /*
+   * Keyboard focus per DESIGN.md: a solid amber outline paired with a soft
+   * halo — not the harsh detached ring the Tailwind `ring-2 + ring-offset-2`
+   * utilities produced (a 2px amber band floating over a background-colored
+   * gap). A hugging 2px outline (1px offset) plus the translucent halo reads
+   * far calmer while staying on the amber-focus brand.
+   */
+  button,
+  a,
+  input,
+  textarea,
+  select,
+  [tabindex] {
+    @apply focus-visible:outline-none;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 1px;
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.18);
+  }
+
+  button:not(:disabled):active {
+    transform: translateY(1px);
+  }
+
+  ::selection {
+    background: hsl(var(--accent-soft));
+    color: hsl(var(--foreground));
+  }
+
+  /* Make the window draggable */
+  .titlebar {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+
+  /* Custom scrollbar styles */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+
+  /* Firefox scrollbar */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  /* BlockNote Editor - Override fixed dimensions for responsive layout */
+  .bn-container {
+    width: 100% !important;
+    max-width: none !important;
+    overflow: visible !important;
+  }
+
+  .bn-editor {
+    width: 100% !important;
+    max-width: none !important;
+    overflow: visible !important;
+  }
+
+  /* Disable internal scrolling - let parent handle all scrolling */
+  .ProseMirror {
+    overflow: visible !important;
+  }
+
+  /* Ensure BlockNote content area is responsive */
+  .bn-block-outer {
+    max-width: 100% !important;
+  }
+
+  .bn-default-styles {
+    max-width: none !important;
+    font-family: inherit !important;
+  }
+
+  .bn-container,
+  .bn-editor,
+  .bn-default-styles {
+    background: transparent !important;
+    color: hsl(var(--foreground)) !important;
+  }
+
+  /* BlockNote's shadcn theme has a more specific editor background rule. */
+  .bn-container.bn-shadcn,
+  .bn-container .bn-shadcn,
+  .bn-shadcn.dark,
+  .bn-shadcn .bn-editor {
+    background-color: transparent !important;
+  }
+
+  /* Disable scrolling on any BlockNote wrapper elements */
+  [data-node-type] {
+    overflow: visible !important;
+  }
+}
+
+@layer components {
+  .app-page {
+    @apply mx-auto w-full max-w-[96rem] px-7 pb-16 pt-9 sm:px-10 xl:px-14;
+  }
+
+  .app-surface {
+    @apply rounded-[10px] border border-border bg-card text-card-foreground;
+  }
+
+  .settings-card {
+    @apply border-b border-border bg-card px-6 py-6 sm:px-8;
+  }
+
+  .settings-inset {
+    @apply rounded-[8px] border border-border bg-secondary/45 p-4;
+  }
+
+  .app-eyebrow {
+    @apply font-mono text-[0.6875rem] font-medium uppercase tracking-[0.09em] text-muted-foreground;
+  }
+
+  .app-display {
+    @apply text-[2rem] font-semibold leading-[1.08] tracking-[-0.04em] text-balance;
+  }
+
+  .app-rail-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--sidebar-hover));
+  }
+
+  .app-rail-scrollbar {
+    scrollbar-color: hsl(var(--sidebar-hover)) transparent;
+  }
+
+  .skip-link {
+    @apply fixed left-3 top-3 z-50 -translate-y-20 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-transform;
+  }
+
+  .skip-link:focus {
+    @apply translate-y-0;
+  }
+
+  /* Hides the raw "@ref(...)" / "[...]" timestamp token text that the inline
+     ref-badge ProseMirror plugin (summary-ref-badge-plugin.ts) overlays with a
+     clickable badge widget. Decoration-only — the token remains in the actual
+     document/markdown, only its rendering is suppressed. */
+  .ref-token-hidden {
+    display: none;
+  }
+}
+
+@layer utilities {
+  /*
+   * Route migration bridge: behavior-heavy upstream components still contain
+   * literal Tailwind color utilities. Normalize those outputs to the global
+   * system until each component can be reduced to shared primitives.
+   */
+  .bg-white { background-color: hsl(var(--card)) !important; }
+  .bg-gray-50, .bg-slate-50 { background-color: hsl(var(--background)) !important; }
+  .bg-gray-100, .bg-slate-100 { background-color: hsl(var(--secondary)) !important; }
+  .bg-gray-200, .bg-slate-200 { background-color: hsl(var(--muted)) !important; }
+  .bg-gray-900, .bg-slate-900 { background-color: hsl(var(--primary)) !important; }
+  .bg-blue-50 { background-color: hsl(var(--accent-soft)) !important; }
+  .bg-blue-100 { background-color: hsl(var(--accent-soft)) !important; }
+  .bg-blue-500, .bg-blue-600, .bg-blue-700 { background-color: hsl(var(--primary)) !important; }
+  .bg-gradient-to-r { background-image: none !important; }
+
+  .text-gray-900, .text-slate-900 { color: hsl(var(--foreground)) !important; }
+  .text-gray-700, .text-slate-700 { color: hsl(var(--foreground)) !important; }
+  .text-gray-600, .text-gray-500, .text-gray-400, .text-slate-600, .text-slate-500 { color: hsl(var(--muted-foreground)) !important; }
+  .text-blue-800, .text-blue-700, .text-blue-600 { color: hsl(var(--info)) !important; }
+  .text-orange-700 { color: hsl(var(--warning)) !important; }
+
+  .border-gray-100, .border-gray-200, .border-gray-300, .border-slate-200 { border-color: hsl(var(--border)) !important; }
+  .border-blue-100, .border-blue-200, .border-blue-500 { border-color: hsl(var(--ring)) !important; }
+  .ring-blue-300, .ring-blue-500 { --tw-ring-color: hsl(var(--ring) / 0.25) !important; }
+
+  .hover\:bg-gray-50:hover, .hover\:bg-gray-100:hover, .hover\:bg-gray-200:hover, .hover\:bg-slate-100:hover { background-color: hsl(var(--secondary)) !important; }
+  .hover\:bg-blue-700:hover, .hover\:bg-blue-600:hover { background-color: hsl(var(--primary) / 0.88) !important; }
+  .hover\:text-gray-700:hover, .hover\:text-gray-600:hover, .hover\:text-blue-700:hover { color: hsl(var(--foreground)) !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Meeting audio scrubber — themed thumb for the native range input. */
+.ari-audio-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background-color: hsl(var(--accent));
+  border: 2px solid hsl(var(--card));
+  box-shadow: 0 1px 2px hsl(var(--shadow-color) / 0.25);
+  cursor: pointer;
+}
+.ari-audio-scrubber::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background-color: hsl(var(--accent));
+  border: 2px solid hsl(var(--card));
+  cursor: pointer;
+}
+.ari-audio-scrubber:disabled::-webkit-slider-thumb,
+.ari-audio-scrubber:disabled::-moz-range-thumb {
+  background-color: hsl(var(--muted-foreground));
+}
+.ari-audio-scrubber:focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: 2px;
+}
