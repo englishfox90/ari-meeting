@@ -76,9 +76,6 @@ pub use system_detector::{
     new_system_audio_callback
 };
 
-// Export system audio commands
-pub use system_audio_commands::init_system_audio_state;
-
 // Export new simplified components
 pub use recording_state::{RecordingState, AudioChunk, ProcessedAudioChunk, AudioError, DeviceType as RecordingDeviceType};
 pub use pipeline::{AudioPipelineManager};

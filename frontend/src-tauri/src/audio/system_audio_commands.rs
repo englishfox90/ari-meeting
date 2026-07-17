@@ -1,13 +1,6 @@
-use crate::audio::SystemAudioDetector;
-use std::sync::{Arc, Mutex};
-
-// Global state for system audio detector
-type SystemAudioDetectorState = Arc<Mutex<Option<SystemAudioDetector>>>;
-
-/// Initialize the system audio detector state in Tauri app
-pub fn init_system_audio_state() -> SystemAudioDetectorState {
-    Arc::new(Mutex::new(None))
-}
+// (The former `SystemAudioDetectorState` + `init_system_audio_state()` were
+// removed with the ari-engine carve's state retirement — the state was dead
+// (no consumer commands after the Phase-1.5 prune, and no longer `.manage()`d).
 
 // Event payload types for frontend
 #[derive(serde::Serialize, Clone)]

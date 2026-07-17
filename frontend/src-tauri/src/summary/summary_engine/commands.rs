@@ -403,12 +403,11 @@ pub async fn builtin_ai_get_available_summary_model(
 pub async fn init_model_manager_at_startup<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<(), String> {
-    let models_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?
-        .join("models")
-        .join("summary");
+    // The engine owns the summary ModelManagerState now; write into it (and take
+    // the models dir from the engine's resolved Paths) rather than a separately
+    // managed state.
+    let engine = app.state::<std::sync::Arc<crate::engine::Engine>>();
+    let models_dir = engine.paths().summary_models();
 
     let manager = ModelManager::new_with_models_dir(Some(models_dir))
         .map_err(|e| format!("Failed to create ModelManager: {}", e))?;
@@ -418,8 +417,7 @@ pub async fn init_model_manager_at_startup<R: Runtime>(
         .await
         .map_err(|e| format!("Failed to initialize ModelManager: {}", e))?;
 
-    let state: State<ModelManagerState> = app.state();
-    let mut manager_lock = state.0.lock().await;
+    let mut manager_lock = engine.summary_models().0.lock().await;
     *manager_lock = Some(Arc::new(manager));
 
     log::info!("ModelManager initialized at startup");
