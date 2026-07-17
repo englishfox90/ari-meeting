@@ -45,6 +45,7 @@ pub mod config;
 pub mod console_utils;
 pub mod database;
 pub mod diarization;
+pub mod engine;
 pub mod logging;
 pub mod meeting_series;
 pub mod meeting_time;
@@ -445,6 +446,20 @@ pub fn run() {
         .manage(recall::embed_models::EmbedModelManagerState::new())
         .setup(|_app| {
             log::info!("Application setup complete");
+
+            // Build the headless-engine context (Stage A of the ari-engine
+            // carve — docs/plans/ari-engine-carve.md). Managed here, before the
+            // DB init block_on below, so `State<'_, Arc<Engine>>` is available
+            // to every command. It is *live but not yet consumed* — commands
+            // still use the legacy `AppState`/managed states until each service
+            // migrates onto `&Engine`, so this changes no runtime behavior.
+            {
+                let paths = engine::Paths::from_tauri(_app.handle())
+                    .expect("Failed to resolve engine paths");
+                let events: std::sync::Arc<dyn engine::EventSink> =
+                    std::sync::Arc::new(engine::TauriEventSink::new(_app.handle().clone()));
+                _app.manage(std::sync::Arc::new(engine::Engine::new(paths, events)));
+            }
 
             // Enforce the rolling log-retention window on startup.
             if let Ok(log_dir) = _app.handle().path().app_log_dir() {

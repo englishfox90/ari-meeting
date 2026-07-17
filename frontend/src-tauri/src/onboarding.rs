@@ -4,8 +4,8 @@ use tauri_plugin_store::StoreExt;
 use log::{info, warn, error};
 use anyhow::Result;
 
-use crate::state::AppState;
 use crate::database::repositories::setting::SettingsRepository;
+use crate::engine::Engine;
 
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -158,14 +158,20 @@ pub async fn save_onboarding_status_cmd<R: Runtime>(
         .map_err(|e| format!("Failed to save onboarding status: {}", e))
 }
 
-#[tauri::command]
-pub async fn complete_onboarding<R: Runtime>(
-    app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+/// Pure engine logic for completing onboarding — takes `&Engine` for DB access
+/// (the Stage-A carve pattern: a `#[tauri::command]` shim unwraps managed state
+/// and calls this). See `docs/plans/ari-engine-carve.md`.
+///
+/// DEFERRED SEAM: onboarding status is persisted through the Tauri **store
+/// plugin** (`app.store(...)` in `load_/save_onboarding_status`), so this fn
+/// still needs an `AppHandle`. The store is a host concern with no headless
+/// home yet — it must become a `Paths`-based JSON file (or a host capability)
+/// before this fn can move to the `ari-engine` crate in Stage B. DB access,
+/// though, already flows through the engine context.
+pub async fn complete_onboarding_impl<R: Runtime>(
+    engine: &Engine,
+    app: &AppHandle<R>,
     model: String,
-    // Optional tier-driven overrides. Tauri maps camelCase → snake_case; when a
-    // key is absent the arg is `None`, so older callers (which pass only `model`)
-    // keep the historical builtin-ai / parakeet defaults below.
     summary_provider: Option<String>,
     transcription_provider: Option<String>,
     transcription_model: Option<String>,
@@ -181,8 +187,10 @@ pub async fn complete_onboarding<R: Runtime>(
         summary_provider, model, transcription_provider, transcription_model
     );
 
-    // Step 1: Save model configuration to SQLite database FIRST
-    let pool = state.db_manager.pool();
+    // Step 1: Save model configuration to SQLite database FIRST.
+    // DB now flows through the engine context (deferred-init DB manager).
+    let db = engine.db().await?;
+    let pool = db.pool();
 
     if let Err(e) = SettingsRepository::save_model_config(
         pool,
@@ -208,7 +216,7 @@ pub async fn complete_onboarding<R: Runtime>(
     info!("Saved transcription model config: provider={}, model={}", transcription_provider, transcription_model);
 
     // Step 2: Only NOW mark onboarding as complete (after DB operations succeed)
-    let mut status = load_onboarding_status(&app)
+    let mut status = load_onboarding_status(app)
         .await
         .map_err(|e| format!("Failed to load onboarding status: {}", e))?;
 
@@ -218,12 +226,38 @@ pub async fn complete_onboarding<R: Runtime>(
     status.model_status.summary = "downloaded".to_string();
     status.model_status.selected_summary_model = Some(model.clone());
 
-    save_onboarding_status(&app, &status)
+    save_onboarding_status(app, &status)
         .await
         .map_err(|e| format!("Failed to save completed onboarding status: {}", e))?;
 
     info!("Onboarding completed successfully with model: {}", model);
     Ok(())
+}
+
+/// Thin Tauri-command shim: unwraps the managed `Arc<Engine>` and forwards to
+/// [`complete_onboarding_impl`]. Registered unchanged in `lib.rs`, so the
+/// frontend IPC contract is identical. The `summary_provider` /
+/// `transcription_*` optionals keep Tauri's camelCase→snake_case mapping; an
+/// absent key stays `None`, preserving the historical builtin-ai/parakeet
+/// defaults inside the impl.
+#[tauri::command]
+pub async fn complete_onboarding<R: Runtime>(
+    app: AppHandle<R>,
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+    model: String,
+    summary_provider: Option<String>,
+    transcription_provider: Option<String>,
+    transcription_model: Option<String>,
+) -> Result<(), String> {
+    complete_onboarding_impl(
+        &engine,
+        &app,
+        model,
+        summary_provider,
+        transcription_provider,
+        transcription_model,
+    )
+    .await
 }
 
 #[cfg(test)]

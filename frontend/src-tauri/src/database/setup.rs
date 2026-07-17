@@ -30,6 +30,11 @@ pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), Strin
             .await
             .map_err(|e| format!("Failed to initialize database manager: {}", e))?;
 
+        // Seed the ari-engine context's deferred DB alongside the legacy
+        // AppState (Stage A — both are kept until commands migrate to Engine).
+        if let Some(engine) = app.try_state::<std::sync::Arc<crate::engine::Engine>>() {
+            engine.set_db(db_manager.clone()).await;
+        }
         app.manage(AppState { db_manager });
         info!("Database initialized successfully");
     }

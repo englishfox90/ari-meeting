@@ -160,6 +160,10 @@ pub async fn import_and_initialize_database(
             format!("Failed to import database: {}", e)
         })?;
 
+    // Seed the ari-engine context's deferred DB alongside the legacy AppState.
+    if let Some(engine) = app.try_state::<std::sync::Arc<crate::engine::Engine>>() {
+        engine.set_db(db_manager.clone()).await;
+    }
     // Update app state with the new manager
     app.manage(AppState { db_manager });
 
@@ -184,6 +188,10 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
             format!("Failed to initialize database: {}", e)
         })?;
 
+    // Seed the ari-engine context's deferred DB alongside the legacy AppState.
+    if let Some(engine) = app.try_state::<std::sync::Arc<crate::engine::Engine>>() {
+        engine.set_db(db_manager.clone()).await;
+    }
     // Update app state with the new manager
     app.manage(AppState { db_manager: db_manager.clone() });
 

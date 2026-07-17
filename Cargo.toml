@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "ari-protocol",
     "frontend/src-tauri",
     "llama-helper"
 ]
