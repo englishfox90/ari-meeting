@@ -13,8 +13,9 @@
 //! Errors surface through the command's `Result::Err` (the frontend `invoke` rejects);
 //! there is no separate error event.
 
+use std::sync::Arc;
+
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::api::{
     build_global_recall_sources, build_local_recall_context, build_local_recall_history,
@@ -25,7 +26,8 @@ use crate::database::repositories::{
     meeting_series::MeetingSeriesRepository, setting::SettingsRepository,
     transcript::TranscriptsRepository,
 };
-use crate::state::AppState;
+use crate::engine::events::EventSink;
+use crate::engine::Engine;
 use crate::summary::llm_client::LLMProvider;
 use crate::summary::llm_stream::generate_summary_stream;
 
@@ -45,10 +47,8 @@ struct StreamDone {
 }
 
 /// Streaming counterpart of `api_answer_meetings_locally`. See module docs.
-#[tauri::command]
-pub async fn api_answer_meetings_locally_stream<R: Runtime>(
-    app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+async fn api_answer_meetings_locally_stream_impl(
+    engine: &Engine,
     stream_id: String,
     question: String,
     meeting_id: Option<String>,
@@ -67,7 +67,13 @@ pub async fn api_answer_meetings_locally_stream<R: Runtime>(
     }
     let history = build_local_recall_history(history.unwrap_or_default())?;
 
-    let pool = state.db_manager.pool();
+    // Owned sink: `&dyn EventSink` borrowed from `&Engine` can't be threaded through the
+    // `emit_delta`/`emit_done` helpers (they're called from inside the `generate_summary_stream`
+    // delta callback too), so clone the sink once via `Engine::event_sink` and reuse it.
+    let sink = engine.event_sink();
+
+    let db = engine.db().await?;
+    let pool = db.pool();
     let config = SettingsRepository::get_model_config(pool)
         .await
         .map_err(|error| format!("Could not read the local model configuration: {error}"))?
@@ -96,10 +102,10 @@ pub async fn api_answer_meetings_locally_stream<R: Runtime>(
         && meeting_id.is_none()
         && series_id.is_none()
     {
-        let app_data_dir = app.path().app_data_dir().ok();
+        let app_data_dir = &engine.paths().app_data;
         match crate::recall::agent::answer_agentic(
             pool,
-            app_data_dir.as_ref(),
+            Some(app_data_dir),
             &config.model,
             &api_key,
             question,
@@ -111,8 +117,8 @@ pub async fn api_answer_meetings_locally_stream<R: Runtime>(
         {
             Ok((answer, sources)) => {
                 let answer = crate::recall::citations::verify_source_citations(&answer, sources.len());
-                emit_delta(&app, &stream_id, &answer);
-                emit_done(&app, &stream_id, answer, sources);
+                emit_delta(&sink, &stream_id, &answer);
+                emit_done(&sink, &stream_id, answer, sources);
                 return Ok(());
             }
             Err(e) => log::warn!("recall(stream): agentic path failed, falling back: {e}"),
@@ -193,11 +199,9 @@ pub async fn api_answer_meetings_locally_stream<R: Runtime>(
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|error| format!("Could not start the local model request: {error}"))?;
-    let app_data_dir = app.path().app_data_dir().ok();
+    let app_data_dir = &engine.paths().app_data;
 
     // Stream tokens straight to the webview as they arrive.
-    let app_for_delta = app.clone();
-    let stream_id_for_delta = stream_id.clone();
     let answer = generate_summary_stream(
         &client,
         &provider,
@@ -210,9 +214,9 @@ pub async fn api_answer_meetings_locally_stream<R: Runtime>(
         None,
         None,
         None,
-        app_data_dir.as_ref(),
+        Some(app_data_dir),
         None,
-        |delta| emit_delta(&app_for_delta, &stream_id_for_delta, delta),
+        |delta| emit_delta(&sink, &stream_id, delta),
     )
     .await
     .map_err(|error| format!("The local model could not answer from your saved meetings: {error}"))?;
@@ -230,15 +234,30 @@ pub async fn api_answer_meetings_locally_stream<R: Runtime>(
         crate::recall::citations::filter_ref_timestamps(&answer, None)
     };
 
-    emit_done(&app, &stream_id, answer, sources);
+    emit_done(&sink, &stream_id, answer, sources);
     Ok(())
 }
 
-fn emit_delta<R: Runtime>(app: &AppHandle<R>, stream_id: &str, delta: &str) {
+#[tauri::command]
+pub async fn api_answer_meetings_locally_stream(
+    engine: tauri::State<'_, Arc<Engine>>,
+    stream_id: String,
+    question: String,
+    meeting_id: Option<String>,
+    series_id: Option<String>,
+    history: Option<Vec<LocalRecallTurn>>,
+) -> Result<(), String> {
+    api_answer_meetings_locally_stream_impl(
+        &engine, stream_id, question, meeting_id, series_id, history,
+    )
+    .await
+}
+
+fn emit_delta(sink: &Arc<dyn EventSink>, stream_id: &str, delta: &str) {
     if delta.is_empty() {
         return;
     }
-    let _ = app.emit(
+    sink.emit(
         "ask-stream-delta",
         StreamDelta {
             stream_id: stream_id.to_string(),
@@ -247,13 +266,13 @@ fn emit_delta<R: Runtime>(app: &AppHandle<R>, stream_id: &str, delta: &str) {
     );
 }
 
-fn emit_done<R: Runtime>(
-    app: &AppHandle<R>,
+fn emit_done(
+    sink: &Arc<dyn EventSink>,
     stream_id: &str,
     answer: String,
     sources: Vec<LocalRecallSource>,
 ) {
-    let _ = app.emit(
+    sink.emit(
         "ask-stream-done",
         StreamDone {
             stream_id: stream_id.to_string(),

@@ -20,7 +20,12 @@ pub trait EventSink: Send + Sync {
     fn emit_value(&self, channel: &str, payload: Value);
 }
 
-impl dyn EventSink {
+// Lifetime-generic so the helper is available on a `&dyn EventSink` of ANY
+// lifetime — not just `&(dyn EventSink + 'static)`. Without the `+ 'a`, a bare
+// `&dyn EventSink` threaded through a function parameter (its object bound
+// elided to the borrow's own lifetime) can't reach `emit`, forcing callers to
+// pass an owned `Arc<dyn EventSink>` unnecessarily.
+impl<'a> dyn EventSink + 'a {
     /// Ergonomic mirror of `app.emit(channel, payload)` for any `Serialize`
     /// payload. A payload that fails to serialize degrades to `null` rather
     /// than panicking — an event is never worth taking the process down.

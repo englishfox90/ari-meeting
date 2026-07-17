@@ -1,35 +1,48 @@
 //! Tauri commands for the recall index: trigger a (re)build and report status. Registered
 //! in `lib.rs`.
 
+use std::sync::Arc;
+
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::database::repositories::{
     meeting::MeetingsRepository, recall_index::RecallIndexRepository, setting::SettingsRepository,
 };
+use crate::engine::Engine;
 use crate::recall::embedding::EmbedBackend;
 use crate::recall::indexer;
-use crate::state::AppState;
 
 /// Return the selected recall embedder id ('apple' | 'nomic-gguf' | 'ollama'; default 'apple').
-#[tauri::command]
-pub async fn recall_get_embedder(state: tauri::State<'_, AppState>) -> Result<String, String> {
-    let pool = state.db_manager.pool();
+async fn recall_get_embedder_impl(engine: &Engine) -> Result<String, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     Ok(crate::recall::embedding::current_backend(pool).await.id().to_string())
+}
+
+#[tauri::command]
+pub async fn recall_get_embedder(
+    engine: tauri::State<'_, Arc<Engine>>,
+) -> Result<String, String> {
+    recall_get_embedder_impl(&engine).await
 }
 
 /// Persist the selected recall embedder. Vectors from different embedders aren't comparable,
 /// so the caller should follow this with `recall_reindex(force=true)` to re-embed.
-#[tauri::command]
-pub async fn recall_set_embedder(
-    state: tauri::State<'_, AppState>,
-    embedder: String,
-) -> Result<(), String> {
+async fn recall_set_embedder_impl(engine: &Engine, embedder: String) -> Result<(), String> {
     let normalized = EmbedBackend::from_setting(Some(&embedder)).id();
-    let pool = state.db_manager.pool();
+    let db = engine.db().await?;
+    let pool = db.pool();
     SettingsRepository::save_recall_embedder(pool, normalized)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn recall_set_embedder(
+    engine: tauri::State<'_, Arc<Engine>>,
+    embedder: String,
+) -> Result<(), String> {
+    recall_set_embedder_impl(&engine, embedder).await
 }
 
 #[derive(Debug, Serialize)]
@@ -43,11 +56,9 @@ pub struct RecallIndexStatus {
     pub reindex_running: bool,
 }
 
-#[tauri::command]
-pub async fn recall_index_status(
-    state: tauri::State<'_, AppState>,
-) -> Result<RecallIndexStatus, String> {
-    let pool = state.db_manager.pool();
+async fn recall_index_status_impl(engine: &Engine) -> Result<RecallIndexStatus, String> {
+    let db = engine.db().await?;
+    let pool = db.pool();
     let (indexed_meetings, chunk_count, embedded_count) = RecallIndexRepository::index_summary(pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -65,19 +76,27 @@ pub async fn recall_index_status(
     })
 }
 
+#[tauri::command]
+pub async fn recall_index_status(
+    engine: tauri::State<'_, Arc<Engine>>,
+) -> Result<RecallIndexStatus, String> {
+    recall_index_status_impl(&engine).await
+}
+
 /// Kick a background (re)index of every meeting. Returns the number of meetings queued and
 /// emits `recall-reindex-progress` / `recall-reindex-complete` events for a settings UI.
 /// No-op (returns 0) if a backfill is already running.
-#[tauri::command]
-pub async fn recall_reindex<R: Runtime>(
-    app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
-    force: Option<bool>,
-) -> Result<usize, String> {
+///
+/// Takes an owned `Arc<Engine>` (rather than `&Engine`) because the spawned backfill task
+/// below is `'static` — a borrow of `&Engine` can't escape into it, so the pool is cloned
+/// out and the event sink is cloned via `Engine::event_sink` before the spawn.
+async fn recall_reindex_impl(engine: Arc<Engine>, force: Option<bool>) -> Result<usize, String> {
     if !indexer::try_begin_reindex() {
         return Ok(0);
     }
-    let pool = state.db_manager.pool().clone();
+    let db = engine.db().await?;
+    let pool = db.pool().clone();
+    let sink = engine.event_sink();
     let force = force.unwrap_or(false);
 
     let meetings = MeetingsRepository::get_meetings(&pool)
@@ -93,14 +112,22 @@ pub async fn recall_reindex<R: Runtime>(
             }
             indexer::index_meeting(&pool, &meeting.id).await;
             done += 1;
-            let _ = app.emit(
+            sink.emit(
                 "recall-reindex-progress",
                 serde_json::json!({ "done": done, "total": total }),
             );
         }
         indexer::end_reindex();
-        let _ = app.emit("recall-reindex-complete", total);
+        sink.emit("recall-reindex-complete", total);
     });
 
     Ok(total)
+}
+
+#[tauri::command]
+pub async fn recall_reindex(
+    engine: tauri::State<'_, Arc<Engine>>,
+    force: Option<bool>,
+) -> Result<usize, String> {
+    recall_reindex_impl(engine.inner().clone(), force).await
 }
