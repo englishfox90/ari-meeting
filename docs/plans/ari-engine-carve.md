@@ -80,6 +80,20 @@ The reference migration of `complete_onboarding` (green) establishes the pattern
 
 **New deferred seam discovered:** the **Tauri store plugin** (`tauri_plugin_store`, `app.store("*.json")`) — used by onboarding (and to be grepped for elsewhere). Like `Notifier`, it needs a headless home before Stage B: either a `Paths`-based JSON file the engine owns, or a host capability. Tracked here; resolved before the owning service's `_impl` moves crates.
 
+#### A-migrate progress log
+
+Approach: parallel Sonnet agents in the **main tree** (not worktrees — `isolation: worktree` pins to the session-start commit and can't see in-session foundation commits), disjoint files, compiling disabled, orchestrator runs one **central `cargo check`** per batch. Clean and fast (warm cache); the central check caught one over-generified impl in batch 1.
+
+- **Done + committed — 8 services, ~61 commands, `cargo check` (lib+tests) green:**
+  - reference: `onboarding` (1) — commit `9778aa1`
+  - batch 1 (`a3b3abd`): `persons` (18), `meeting_series` (11), `diarization` (10)
+  - batch 2 (`7da1e76`): `meeting_time` (1), `summary` (9), `recall/conversations` (5), `calendar` (10)
+- **Remaining Stage-A (per module cluster):**
+  - `api/api.rs` — **the big one** (meetings + settings + `recall.answerLocally` + search in one 2.3k-line file); do solo/carefully, not a blind fan-out.
+  - manager-state services: `summary/summary_engine/commands.rs` (`ModelManagerState`→`engine.summary_models()`), `recall/embed_models.rs` (`engine.embed_models()`), `whisper_engine/parallel_commands.rs` (`engine.parallel()`).
+  - `recall/commands.rs` + `recall/stream.rs` (streaming — `engine.events()`), the whisper/parakeet engine command files (emit + `MODELS_DIR` statics), `providers` (ollama emit; most don't touch DB), `audio/*` (emit-heavy) + the `lib.rs` top-level `recording` fns (**orchestrator-owned** — shared file), `notch/bridge.rs`, `apple/mod.rs`, `database/commands.rs`, `app_config.rs` (Paths seam, not AppState).
+  - then: the **emit-conversion sweep** (`app.emit`→`engine.events()`), **retire the old `.manage()` states** once each has no consumer, and design the **`Notifier`** + **Tauri-store** host seams.
+
 ### Stage B — Extract the `ari-engine` library crate
 
 B1. Create `ari-engine` lib crate; move the decoupled engine modules into it (audio, transcription engines, summary, recall, calendar, persons, series, diarization, database, providers, notch/apple bridges, config). The `#[tauri::command]` shims stay behind in the host.
