@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use tauri::{command, Manager, AppHandle, Runtime};
 use crate::config::WHISPER_MODEL_CATALOG;
+use crate::engine::Engine;
 
 // Global whisper engine
 pub static WHISPER_ENGINE: Mutex<Option<Arc<WhisperEngine>>> = Mutex::new(None);
@@ -10,13 +11,11 @@ pub static WHISPER_ENGINE: Mutex<Option<Arc<WhisperEngine>>> = Mutex::new(None);
 // Global models directory path (set during app initialization)
 static MODELS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-/// Initialize the models directory path using app_data_dir
-/// This should be called during app setup before whisper_init
+/// Initialize the models directory path using the engine's resolved `Paths`.
+/// This should be called during app setup (after the `Engine` is managed) before whisper_init.
 pub fn set_models_directory<R: Runtime>(app: &AppHandle<R>) {
-    let app_data_dir = app.path().app_data_dir()
-        .expect("Failed to get app data dir");
-
-    let models_dir = app_data_dir.join("models");
+    let engine = app.state::<Arc<Engine>>();
+    let models_dir = engine.paths().models();
 
     // Create directory if it doesn't exist
     if !models_dir.exists() {

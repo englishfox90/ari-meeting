@@ -15,8 +15,9 @@
 
 use anyhow::{anyhow, Context, Result};
 use sqlx::SqlitePool;
-use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
+
+use crate::engine::Engine;
 
 use crate::database::repositories::meeting::MeetingsRepository;
 use crate::database::repositories::meeting_series::MeetingSeriesRepository;
@@ -38,7 +39,7 @@ const LEDGER_WORD_CAP: usize = 500;
 /// 4. Run a bounded REDUCE prompt through the SAME provider/model the summary service uses.
 /// 5. Upsert the merged ledger.
 pub async fn rebuild_ledger_for_meeting(
-    app: &AppHandle,
+    engine: &Engine,
     pool: &SqlitePool,
     meeting_id: &str,
 ) -> Result<()> {
@@ -106,7 +107,7 @@ pub async fn rebuild_ledger_for_meeting(
 
     // 4. Run the reduce through the configured LLM provider.
     let new_markdown = reduce_ledger(
-        app,
+        engine,
         pool,
         &series.title,
         Some(&current_ledger),
@@ -166,7 +167,7 @@ pub async fn rebuild_ledger_for_meeting(
 /// Returns `Ok(Some(markdown))` with the rebuilt ledger, or `Ok(None)` when there was
 /// nothing to build from.
 pub async fn rebuild_ledger_for_series(
-    app: &AppHandle,
+    engine: &Engine,
     pool: &SqlitePool,
     series_id: &str,
 ) -> Result<Option<String>> {
@@ -215,7 +216,7 @@ pub async fn rebuild_ledger_for_series(
             };
 
         let next = reduce_ledger(
-            app,
+            engine,
             pool,
             &series.title,
             accumulated.as_deref(),
@@ -286,7 +287,7 @@ pub async fn rebuild_ledger_for_series(
 /// owns the upsert. `current_ledger` = `None`/empty means "no prior context".
 #[allow(clippy::too_many_arguments)]
 pub async fn reduce_ledger(
-    app: &AppHandle,
+    engine: &Engine,
     pool: &SqlitePool,
     series_title: &str,
     current_ledger: Option<&str>,
@@ -302,7 +303,7 @@ pub async fn reduce_ledger(
         meeting_date,
     );
 
-    let out = run_reduce(app, pool, &system_prompt, &user_prompt)
+    let out = run_reduce(engine, pool, &system_prompt, &user_prompt)
         .await
         .context("series ledger reduce LLM call failed")?;
 
@@ -417,7 +418,7 @@ Produce the updated series ledger now.",
 /// `settings` row) and run one LLM call for the reduce. No cancellation token — the reduce
 /// is a short, fire-and-forget background step.
 async fn run_reduce(
-    app: &AppHandle,
+    engine: &Engine,
     pool: &SqlitePool,
     system_prompt: &str,
     user_prompt: &str,
@@ -471,7 +472,7 @@ async fn run_reduce(
         }
     }
 
-    let app_data_dir = app.path().app_data_dir().ok();
+    let app_data_dir = Some(engine.paths().app_data.clone());
 
     let client = reqwest::Client::new();
     generate_summary(

@@ -117,18 +117,14 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     let mut manager = RecordingManager::new();
 
     // Load recording preferences to get auto_save AND device preferences
-    let (auto_save, preferred_mic_name, preferred_system_name) =
-        match super::recording_preferences::load_recording_preferences(&app).await {
-            Ok(prefs) => {
-                info!("📋 Loaded recording preferences: auto_save={}, preferred_mic={:?}, preferred_system={:?}",
-                      prefs.auto_save, prefs.preferred_mic_device, prefs.preferred_system_device);
-                (prefs.auto_save, prefs.preferred_mic_device, prefs.preferred_system_device)
-            }
-            Err(e) => {
-                warn!("Failed to load recording preferences, using defaults: {}", e);
-                (true, None, None)
-            }
-        };
+    let (auto_save, preferred_mic_name, preferred_system_name) = {
+        let prefs = super::recording_preferences::load_recording_preferences(
+            app.state::<Arc<Engine>>().paths(),
+        );
+        info!("📋 Loaded recording preferences: auto_save={}, preferred_mic={:?}, preferred_system={:?}",
+              prefs.auto_save, prefs.preferred_mic_device, prefs.preferred_system_device);
+        (prefs.auto_save, prefs.preferred_mic_device, prefs.preferred_system_device)
+    };
 
     // ============================================================================
     // MICROPHONE DEVICE RESOLUTION: Preference → Default → Error
@@ -396,15 +392,12 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     let mut manager = RecordingManager::new();
 
     // Load recording preferences to check auto_save setting
-    let auto_save = match super::recording_preferences::load_recording_preferences(&app).await {
-        Ok(prefs) => {
-            info!("📋 Loaded recording preferences: auto_save={}", prefs.auto_save);
-            prefs.auto_save
-        }
-        Err(e) => {
-            warn!("Failed to load recording preferences, defaulting to auto_save=true: {}", e);
-            true // Default to saving if preferences can't be loaded
-        }
+    let auto_save = {
+        let prefs = super::recording_preferences::load_recording_preferences(
+            app.state::<Arc<Engine>>().paths(),
+        );
+        info!("📋 Loaded recording preferences: auto_save={}", prefs.auto_save);
+        prefs.auto_save
     };
 
     // Always ensure a meeting name is set so incremental saver initializes

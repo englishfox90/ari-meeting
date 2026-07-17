@@ -434,13 +434,11 @@ pub async fn profile_fact_add_manual(
 
 async fn person_extract_facts_for_meeting_impl(
     engine: &Engine,
-    app: &tauri::AppHandle,
     meeting_id: String,
 ) -> Result<ExtractionResult, String> {
-    use tauri::Manager;
     let db = engine.db().await?;
     let pool = db.pool();
-    let app_data_dir = app.path().app_data_dir().ok();
+    let app_data_dir = Some(engine.paths().app_data.clone());
     extraction::extract_facts_for_meeting(pool, app_data_dir.as_deref(), &meeting_id)
         .await
         .map_err(|e| format!("Fact extraction failed for meeting {}: {}", meeting_id, e))
@@ -449,10 +447,10 @@ async fn person_extract_facts_for_meeting_impl(
 #[tauri::command]
 pub async fn person_extract_facts_for_meeting(
     meeting_id: String,
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<ExtractionResult, String> {
-    person_extract_facts_for_meeting_impl(&engine, &app, meeting_id).await
+    person_extract_facts_for_meeting_impl(&engine, meeting_id).await
 }
 
 /// Reconciles a meeting's facts against each participant's CURRENT active+pending facts
@@ -464,13 +462,11 @@ pub async fn person_extract_facts_for_meeting(
 /// lifecycle hook).
 async fn person_reconcile_facts_for_meeting_impl(
     engine: &Engine,
-    app: &tauri::AppHandle,
     meeting_id: String,
 ) -> Result<ReconciliationResult, String> {
-    use tauri::Manager;
     let db = engine.db().await?;
     let pool = db.pool();
-    let app_data_dir = app.path().app_data_dir().ok();
+    let app_data_dir = Some(engine.paths().app_data.clone());
     reconciliation::reconcile_facts_for_meeting(pool, app_data_dir.as_deref(), &meeting_id)
         .await
         .map_err(|e| format!("Fact reconciliation failed for meeting {}: {}", meeting_id, e))
@@ -479,10 +475,10 @@ async fn person_reconcile_facts_for_meeting_impl(
 #[tauri::command]
 pub async fn person_reconcile_facts_for_meeting(
     meeting_id: String,
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<ReconciliationResult, String> {
-    person_reconcile_facts_for_meeting_impl(&engine, &app, meeting_id).await
+    person_reconcile_facts_for_meeting_impl(&engine, meeting_id).await
 }
 
 /// Active/pending facts for a person that haven't been (re)confirmed in over

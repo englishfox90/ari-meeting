@@ -362,12 +362,11 @@ pub async fn series_set_template(
 /// finished summary — see the No-Fake-State gating inside the ledger module.
 async fn series_update_ledger_impl(
     engine: &Engine,
-    app: &tauri::AppHandle,
     meeting_id: String,
 ) -> Result<(), String> {
     let db = engine.db().await?;
     let pool = db.pool();
-    crate::meeting_series::ledger::rebuild_ledger_for_meeting(app, pool, &meeting_id)
+    crate::meeting_series::ledger::rebuild_ledger_for_meeting(engine, pool, &meeting_id)
         .await
         .map_err(|e| format!("Failed to update series ledger for meeting {}: {}", meeting_id, e))
 }
@@ -375,10 +374,10 @@ async fn series_update_ledger_impl(
 #[tauri::command]
 pub async fn series_update_ledger(
     meeting_id: String,
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<(), String> {
-    series_update_ledger_impl(&engine, &app, meeting_id).await
+    series_update_ledger_impl(&engine, meeting_id).await
 }
 
 /// Rebuild a series' ledger from scratch by folding every member meeting's EXISTING finished
@@ -393,12 +392,11 @@ pub async fn series_update_ledger(
 /// blank a ledger).
 async fn series_rebuild_ledger_impl(
     engine: &Engine,
-    app: &tauri::AppHandle,
     series_id: String,
 ) -> Result<Option<String>, String> {
     let db = engine.db().await?;
     let pool = db.pool();
-    crate::meeting_series::ledger::rebuild_ledger_for_series(app, pool, &series_id)
+    crate::meeting_series::ledger::rebuild_ledger_for_series(engine, pool, &series_id)
         .await
         .map_err(|e| format!("Failed to rebuild series ledger for {}: {}", series_id, e))
 }
@@ -406,8 +404,8 @@ async fn series_rebuild_ledger_impl(
 #[tauri::command]
 pub async fn series_rebuild_ledger(
     series_id: String,
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<Option<String>, String> {
-    series_rebuild_ledger_impl(&engine, &app, series_id).await
+    series_rebuild_ledger_impl(&engine, series_id).await
 }

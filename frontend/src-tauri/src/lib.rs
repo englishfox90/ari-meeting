@@ -488,9 +488,25 @@ pub fn run() {
                         }
 
                         // Store the initialized manager
-                        let mut state_lock = notif_state.write().await;
-                        *state_lock = Some(manager);
+                        {
+                            let mut state_lock = notif_state.write().await;
+                            *state_lock = Some(manager);
+                        }
                         log::info!("Notification system initialized with default permissions");
+
+                        // Install the `Notifier` host capability on the Engine
+                        // (ari-engine carve, Seam 2): engine logic decides *when*
+                        // to notify via `engine.notifier()`; this Tauri-backed
+                        // impl *shows* it. Deferred like the DB — installed only
+                        // once the Runtime-generic manager above exists.
+                        let notifier: std::sync::Arc<dyn engine::Notifier> =
+                            std::sync::Arc::new(engine::TauriNotifier::new(
+                                notif_state.inner().clone(),
+                            ));
+                        app_for_notif
+                            .state::<std::sync::Arc<engine::Engine>>()
+                            .set_notifier(notifier)
+                            .await;
                     }
                     Err(e) => {
                         log::error!("Failed to initialize notification manager: {}", e);

@@ -26,6 +26,7 @@ use crate::summary::summary_engine::ModelManagerState;
 use crate::whisper_engine::parallel_commands::ParallelProcessorState;
 
 use super::events::EventSink;
+use super::notifier::Notifier;
 use super::paths::Paths;
 
 pub struct Engine {
@@ -35,6 +36,12 @@ pub struct Engine {
     db: RwLock<Option<DatabaseManager>>,
     paths: Paths,
     events: Arc<dyn EventSink>,
+    /// Deferred like [`Engine::db`]: `None` until the host builds the
+    /// Runtime-generic notification backend and installs a [`Notifier`] impl.
+    /// The engine only *decides when* to notify; the host capability *shows* it
+    /// (see `engine/notifier.rs`). Absent → notifications silently no-op, which
+    /// matches today's "manager not yet initialized" behavior.
+    notifier: RwLock<Option<Arc<dyn Notifier>>>,
     parallel: ParallelProcessorState,
     summary_models: ModelManagerState,
     embed_models: EmbedModelManagerState,
@@ -51,6 +58,7 @@ impl Engine {
             db: RwLock::new(None),
             paths,
             events,
+            notifier: RwLock::new(None),
             parallel: ParallelProcessorState::new(),
             summary_models: ModelManagerState(Arc::new(Mutex::new(None))),
             embed_models: EmbedModelManagerState::new(),
@@ -106,5 +114,18 @@ impl Engine {
     /// True once the DB has been installed.
     pub async fn has_db(&self) -> bool {
         self.db.read().await.is_some()
+    }
+
+    /// Install the host's [`Notifier`] capability once its Runtime-generic
+    /// notification backend has finished startup (mirrors [`Engine::set_db`]).
+    pub async fn set_notifier(&self, notifier: Arc<dyn Notifier>) {
+        *self.notifier.write().await = Some(notifier);
+    }
+
+    /// Clone out the installed notifier, if any. Returns `None` until the host
+    /// installs one — callers should treat that as "notifications not ready" and
+    /// no-op, exactly as the underlying manager does before init.
+    pub async fn notifier(&self) -> Option<Arc<dyn Notifier>> {
+        self.notifier.read().await.clone()
     }
 }

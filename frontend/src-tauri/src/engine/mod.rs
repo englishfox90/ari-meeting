@@ -8,8 +8,11 @@
 //! standalone `ari-engine` crate (Stage B) with no logic change.
 pub mod context;
 pub mod events;
+pub mod json_store;
+pub mod notifier;
 pub mod paths;
 
 pub use context::Engine;
 pub use events::{EventSink, TauriEventSink};
+pub use notifier::{Notifier, TauriNotifier};
 pub use paths::Paths;

@@ -30,7 +30,6 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 
 use crate::database::repositories::calendar::{CalendarEventRow, CalendarRepository};
 use crate::notch::protocol::NotchInbound;
-use crate::notifications::commands::NotificationManagerState;
 
 // ============================================================================
 // Tunables
@@ -302,17 +301,15 @@ async fn tick(
 /// `[15, 5]` if the manager is not yet initialized.
 async fn read_leads(app: &tauri::AppHandle) -> Vec<i64> {
     use tauri::Manager;
-    let state = app.state::<NotificationManagerState<tauri::Wry>>();
-    let guard = state.read().await;
-    match guard.as_ref() {
-        Some(mgr) => mgr
-            .get_settings()
-            .await
-            .notification_preferences
-            .meeting_reminder_minutes
-            .iter()
-            .map(|&m| m as i64)
-            .collect(),
+    // Route through the engine's `Notifier` seam (ari-engine carve, Seam 2)
+    // rather than reaching the Runtime-generic manager directly. The seam's
+    // own not-yet-installed fallback is `[15, 5]`, matching the previous default.
+    match app
+        .state::<std::sync::Arc<crate::engine::Engine>>()
+        .notifier()
+        .await
+    {
+        Some(n) => n.meeting_reminder_leads().await,
         None => vec![15, 5],
     }
 }
@@ -320,12 +317,12 @@ async fn read_leads(app: &tauri::AppHandle) -> Vec<i64> {
 /// Best-effort system meeting-reminder notification, gated by the manager itself.
 async fn show_reminder(app: &tauri::AppHandle, minutes: u64, title: String) {
     use tauri::Manager;
-    let state = app.state::<NotificationManagerState<tauri::Wry>>();
-    let guard = state.read().await;
-    if let Some(mgr) = guard.as_ref() {
-        if let Err(e) = mgr.show_meeting_reminder(minutes, Some(title)).await {
-            log::warn!("notch scheduler: show_meeting_reminder failed: {e}");
-        }
+    if let Some(n) = app
+        .state::<std::sync::Arc<crate::engine::Engine>>()
+        .notifier()
+        .await
+    {
+        n.notify_meeting_reminder(minutes, Some(title)).await;
     }
 }
 

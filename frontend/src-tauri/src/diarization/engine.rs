@@ -44,7 +44,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 // ============================================================================
@@ -411,15 +411,11 @@ pub async fn transcode_to_16k_mono_wav(input_path: &Path, out_wav: &Path) -> Res
 /// `(segmentation_model_path, embedding_model_path)`. Idempotent: a model already
 /// on disk is left untouched.
 ///
-/// Models live under `<app_data_dir>/models/diarization/` (resolved via the Tauri
-/// path API — never hardcoded), matching how Parakeet/whisper models are cached.
-pub async fn ensure_models(app: &AppHandle) -> Result<(PathBuf, PathBuf)> {
-    let models_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| anyhow!("failed to resolve app data dir: {e}"))?
-        .join("models")
-        .join("diarization");
+/// Models live under `<app_data_dir>/models/diarization/` (resolved via
+/// `Engine::paths()` — never hardcoded), matching how Parakeet/whisper models
+/// are cached.
+pub async fn ensure_models(engine: &crate::engine::Engine) -> Result<(PathBuf, PathBuf)> {
+    let models_dir = engine.paths().models().join("diarization");
     tokio::fs::create_dir_all(&models_dir)
         .await
         .with_context(|| format!("failed to create models dir {}", models_dir.display()))?;
@@ -441,7 +437,7 @@ pub async fn ensure_models(app: &AppHandle) -> Result<(PathBuf, PathBuf)> {
     // Segmentation model: a .tar.bz2 whose payload is `model.onnx`.
     if !seg_path.exists() {
         log::info!("diarization: downloading + extracting segmentation model");
-        ensure_segmentation_model(app, &seg_path)
+        ensure_segmentation_model(&seg_path)
             .await
             .context("failed to provision diarization segmentation model")?;
     }
@@ -456,12 +452,9 @@ pub async fn ensure_models(app: &AppHandle) -> Result<(PathBuf, PathBuf)> {
 /// decompresses bzip2). This deliberately avoids adding a `bzip2` crate: the
 /// project has no bzip2 dependency, and `Cargo.toml` is an upstream-tracked file
 /// we keep additive. `tar`/`xz2`/`zip` crates exist but none handles bzip2.
-async fn ensure_segmentation_model(app: &AppHandle, seg_path: &Path) -> Result<()> {
-    let scratch = app
-        .path()
-        .temp_dir()
-        .map_err(|e| anyhow!("failed to resolve temp dir: {e}"))?
-        .join(format!("ari-diar-seg-{}", std::process::id()));
+async fn ensure_segmentation_model(seg_path: &Path) -> Result<()> {
+    let scratch =
+        std::env::temp_dir().join(format!("ari-diar-seg-{}", std::process::id()));
     tokio::fs::create_dir_all(&scratch)
         .await
         .with_context(|| format!("failed to create scratch dir {}", scratch.display()))?;

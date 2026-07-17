@@ -1,11 +1,9 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime};
-use tauri_plugin_store::StoreExt;
-use log::{info, warn, error};
+use log::{info, error};
 use anyhow::Result;
 
 use crate::database::repositories::setting::SettingsRepository;
-use crate::engine::Engine;
+use crate::engine::{json_store, Engine, Paths};
 
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -42,86 +40,55 @@ impl Default for OnboardingStatus {
 }
 
 
-/// Load onboarding status from store
-pub async fn load_onboarding_status<R: Runtime>(
-    app: &AppHandle<R>,
-) -> Result<OnboardingStatus> {
-    // Try to load from Tauri store
-    let store = match app.store("onboarding-status.json") {
-        Ok(store) => store,
-        Err(e) => {
-            warn!("Failed to access onboarding store: {}, using defaults", e);
-            return Ok(OnboardingStatus::default());
-        }
-    };
+const ONBOARDING_STORE_FILE: &str = "onboarding-status.json";
+const ONBOARDING_STATUS_KEY: &str = "status";
 
-    // Try to get the status from store
-    let status = if let Some(value) = store.get("status") {
-        match serde_json::from_value::<OnboardingStatus>(value.clone()) {
-            Ok(s) => {
-                info!("Loaded onboarding status from store - Step: {}, Completed: {}",
-                      s.current_step, s.completed);
-                s
-            }
-            Err(e) => {
-                warn!("Failed to deserialize onboarding status: {}, using defaults", e);
-                OnboardingStatus::default()
-            }
+/// Load onboarding status from its headless JSON-store file
+/// (`<app_data>/onboarding-status.json`, same location the Tauri store plugin
+/// used — see `engine::json_store`).
+pub fn load_onboarding_status(paths: &Paths) -> OnboardingStatus {
+    match json_store::get::<OnboardingStatus>(paths, ONBOARDING_STORE_FILE, ONBOARDING_STATUS_KEY)
+    {
+        Some(s) => {
+            info!(
+                "Loaded onboarding status from store - Step: {}, Completed: {}",
+                s.current_step, s.completed
+            );
+            s
         }
-    } else {
-        info!("No stored onboarding status found, using defaults");
-        OnboardingStatus::default()
-    };
-
-    Ok(status)
+        None => {
+            info!("No stored onboarding status found, using defaults");
+            OnboardingStatus::default()
+        }
+    }
 }
 
-/// Save onboarding status to store
-pub async fn save_onboarding_status<R: Runtime>(
-    app: &AppHandle<R>,
-    status: &OnboardingStatus,
-) -> Result<()> {
-    info!("Saving onboarding status: step={}, completed={}",
-          status.current_step, status.completed);
+/// Save onboarding status to its headless JSON-store file.
+pub fn save_onboarding_status(paths: &Paths, status: &OnboardingStatus) -> Result<()> {
+    info!(
+        "Saving onboarding status: step={}, completed={}",
+        status.current_step, status.completed
+    );
 
-    // Get or create store
-    let store = app.store("onboarding-status.json")
-        .map_err(|e| anyhow::anyhow!("Failed to access onboarding store: {}", e))?;
-
-    // Update last_updated timestamp
     let mut status = status.clone();
     status.last_updated = chrono::Utc::now().to_rfc3339();
 
-    // Serialize status to JSON value
-    let status_value = serde_json::to_value(&status)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize onboarding status: {}", e))?;
-
-    // Save to store
-    store.set("status", status_value);
-
-    // Persist to disk
-    store.save()
-        .map_err(|e| anyhow::anyhow!("Failed to save onboarding store to disk: {}", e))?;
+    json_store::set(paths, ONBOARDING_STORE_FILE, ONBOARDING_STATUS_KEY, &status)
+        .map_err(|e| anyhow::anyhow!("Failed to save onboarding status: {}", e))?;
 
     info!("Successfully persisted onboarding status to disk");
     Ok(())
 }
 
-/// Reset onboarding status (delete from store)
-pub async fn reset_onboarding_status<R: Runtime>(
-    app: &AppHandle<R>,
-) -> Result<()> {
+/// Reset onboarding status (delete the key from the store file). Currently
+/// unused (no command wires to it) — kept for parity with the pre-carve
+/// behavior; ported onto the same headless store.
+#[allow(dead_code)]
+pub fn reset_onboarding_status(paths: &Paths) -> Result<()> {
     info!("Resetting onboarding status");
 
-    let store = app.store("onboarding-status.json")
-        .map_err(|e| anyhow::anyhow!("Failed to access onboarding store: {}", e))?;
-
-    // Clear the status key
-    store.delete("status");
-
-    // Persist deletion to disk
-    store.save()
-        .map_err(|e| anyhow::anyhow!("Failed to save onboarding store after reset: {}", e))?;
+    json_store::delete(paths, ONBOARDING_STORE_FILE, ONBOARDING_STATUS_KEY)
+        .map_err(|e| anyhow::anyhow!("Failed to reset onboarding status: {}", e))?;
 
     info!("Successfully reset onboarding status");
     Ok(())
@@ -129,48 +96,39 @@ pub async fn reset_onboarding_status<R: Runtime>(
 
 /// Tauri commands for onboarding status
 #[tauri::command]
-pub async fn get_onboarding_status<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn get_onboarding_status(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<Option<OnboardingStatus>, String> {
-    let status = load_onboarding_status(&app)
-        .await
-        .map_err(|e| format!("Failed to load onboarding status: {}", e))?;
+    let paths = engine.paths();
 
-    // Return None if it's the default (never saved before)
-    // Check if we have any saved data by seeing if the store has the key
-    let store = app.store("onboarding-status.json")
-        .map_err(|e| format!("Failed to access store: {}", e))?;
-
-    if store.get("status").is_none() {
-        Ok(None)
-    } else {
-        Ok(Some(status))
+    // Return None if it's the default (never saved before) — distinguish
+    // "no saved data" from "saved defaults" by checking key presence.
+    if !json_store::has_key(paths, ONBOARDING_STORE_FILE, ONBOARDING_STATUS_KEY) {
+        return Ok(None);
     }
+
+    Ok(Some(load_onboarding_status(paths)))
 }
 
 #[tauri::command]
-pub async fn save_onboarding_status_cmd<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn save_onboarding_status_cmd(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
     status: OnboardingStatus,
 ) -> Result<(), String> {
-    save_onboarding_status(&app, &status)
-        .await
+    save_onboarding_status(engine.paths(), &status)
         .map_err(|e| format!("Failed to save onboarding status: {}", e))
 }
 
 /// Pure engine logic for completing onboarding — takes `&Engine` for DB access
-/// (the Stage-A carve pattern: a `#[tauri::command]` shim unwraps managed state
-/// and calls this). See `docs/plans/ari-engine-carve.md`.
+/// and onboarding-status persistence (the Stage-A carve pattern: a
+/// `#[tauri::command]` shim unwraps managed state and calls this). See
+/// `docs/plans/ari-engine-carve.md`.
 ///
-/// DEFERRED SEAM: onboarding status is persisted through the Tauri **store
-/// plugin** (`app.store(...)` in `load_/save_onboarding_status`), so this fn
-/// still needs an `AppHandle`. The store is a host concern with no headless
-/// home yet — it must become a `Paths`-based JSON file (or a host capability)
-/// before this fn can move to the `ari-engine` crate in Stage B. DB access,
-/// though, already flows through the engine context.
-pub async fn complete_onboarding_impl<R: Runtime>(
+/// Onboarding status now persists through the headless `engine::json_store`
+/// (Stage B, Seam 1) rather than the Tauri store plugin, so this fn no longer
+/// needs an `AppHandle` at all — everything flows through `&Engine`.
+pub async fn complete_onboarding_impl(
     engine: &Engine,
-    app: &AppHandle<R>,
     model: String,
     summary_provider: Option<String>,
     transcription_provider: Option<String>,
@@ -216,9 +174,7 @@ pub async fn complete_onboarding_impl<R: Runtime>(
     info!("Saved transcription model config: provider={}, model={}", transcription_provider, transcription_model);
 
     // Step 2: Only NOW mark onboarding as complete (after DB operations succeed)
-    let mut status = load_onboarding_status(app)
-        .await
-        .map_err(|e| format!("Failed to load onboarding status: {}", e))?;
+    let mut status = load_onboarding_status(engine.paths());
 
     status.completed = true;
     status.current_step = 4; // Max step (4 on macOS with permissions, 3 on other platforms)
@@ -226,8 +182,7 @@ pub async fn complete_onboarding_impl<R: Runtime>(
     status.model_status.summary = "downloaded".to_string();
     status.model_status.selected_summary_model = Some(model.clone());
 
-    save_onboarding_status(app, &status)
-        .await
+    save_onboarding_status(engine.paths(), &status)
         .map_err(|e| format!("Failed to save completed onboarding status: {}", e))?;
 
     info!("Onboarding completed successfully with model: {}", model);
@@ -241,8 +196,7 @@ pub async fn complete_onboarding_impl<R: Runtime>(
 /// absent key stays `None`, preserving the historical builtin-ai/parakeet
 /// defaults inside the impl.
 #[tauri::command]
-pub async fn complete_onboarding<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn complete_onboarding(
     engine: tauri::State<'_, std::sync::Arc<Engine>>,
     model: String,
     summary_provider: Option<String>,
@@ -251,7 +205,6 @@ pub async fn complete_onboarding<R: Runtime>(
 ) -> Result<(), String> {
     complete_onboarding_impl(
         &engine,
-        &app,
         model,
         summary_provider,
         transcription_provider,

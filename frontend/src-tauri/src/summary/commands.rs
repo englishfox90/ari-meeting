@@ -379,7 +379,7 @@ pub async fn api_get_summary<R: Runtime>(
 /// Spawns a background task and returns immediately with process_id
 async fn api_process_transcript_impl<R: Runtime>(
     engine: &Engine,
-    app: AppHandle<R>,
+    _app: AppHandle<R>,
     text: String,
     model: String,
     model_name: String,
@@ -438,9 +438,10 @@ async fn api_process_transcript_impl<R: Runtime>(
 
     // Spawn background task for actual processing
     let meeting_id_clone = m_id.clone();
+    let app_data_dir = Some(engine.paths().app_data.clone());
     tauri::async_runtime::spawn(async move {
         SummaryService::process_transcript_background(
-            app,
+            app_data_dir,
             pool,
             meeting_id_clone.clone(),
             text,

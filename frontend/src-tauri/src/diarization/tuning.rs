@@ -5,7 +5,7 @@
 //! and re-run diarization.
 //!
 //! The file is OPTIONAL and lives at `<app_data_dir>/diarization-tuning.json`
-//! (resolved via the Tauri path API, exactly like [`crate::diarization::engine::ensure_models`]
+//! (resolved via `Engine::paths()`, exactly like [`crate::diarization::engine::ensure_models`]
 //! resolves its models dir — never hardcoded). Shape (all fields optional):
 //!
 //! ```json
@@ -37,7 +37,8 @@
 //! can never break a real diarization run.
 
 use serde::Deserialize;
-use tauri::{AppHandle, Manager};
+
+use crate::engine::Engine;
 
 /// Filename of the optional tuning file under the app-data dir.
 const TUNING_FILENAME: &str = "diarization-tuning.json";
@@ -128,14 +129,8 @@ struct RawTuning {
 
 /// Load the optional tuning file. Missing file OR parse error → defaults (logged).
 /// Never returns `Err` — diarization must never fail because of this file.
-pub async fn load(app: &AppHandle) -> DiarTuning {
-    let path = match app.path().app_data_dir() {
-        Ok(dir) => dir.join(TUNING_FILENAME),
-        Err(e) => {
-            log::info!("🎙️ diarize: could not resolve app-data dir ({e}) — using default tuning");
-            return DiarTuning::default();
-        }
-    };
+pub async fn load(engine: &Engine) -> DiarTuning {
+    let path = engine.paths().app_data.join(TUNING_FILENAME);
 
     let contents = match tokio::fs::read_to_string(&path).await {
         Ok(c) => c,

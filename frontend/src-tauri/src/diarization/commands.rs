@@ -139,7 +139,7 @@ pub async fn diarize_meeting_impl(
         .ok_or_else(|| format!("meeting {meeting_id} has no audio folder on disk"))?;
 
     // 2. Ensure the diarization models exist (downloads on first use).
-    let (seg_model, emb_model) = engine::ensure_models(&app)
+    let (seg_model, emb_model) = engine::ensure_models(engine)
         .await
         .map_err(|e| format!("failed to provision diarization models: {e}"))?;
     let emb_model_str = model_id_from_path(&emb_model);
@@ -158,6 +158,7 @@ pub async fn diarize_meeting_impl(
     // Everything below is best-effort; make sure we always clean up the scratch dir.
     let result = run_diarization(
         pool,
+        engine,
         &app,
         &meeting_id,
         &mic_path,
@@ -188,6 +189,7 @@ pub async fn diarize_meeting(
 #[allow(clippy::too_many_arguments)]
 async fn run_diarization(
     pool: &sqlx::SqlitePool,
+    engine: &Engine,
     app: &AppHandle,
     meeting_id: &str,
     mic_path: &Path,
@@ -221,7 +223,7 @@ async fn run_diarization(
     // on it); the owner cluster folds into the owner voiceprint, other clusters become
     // in-room speakers. Counts accumulate with the system-stream counts below.
     if mic_path.exists() {
-        match process_mic_track(pool, app, meeting_id, mic_path, scratch, seg_model, emb_model, emb_model_str).await
+        match process_mic_track(pool, engine, app, meeting_id, mic_path, scratch, seg_model, emb_model, emb_model_str).await
         {
             Ok((enrolled, mic_auto, mic_prov, mic_clusters)) => {
                 owner_enrolled = enrolled;
@@ -262,7 +264,7 @@ async fn run_diarization(
         // the sidecar's legacy 0.5 (which over-split — a 1:1 reported 44 speakers).
         // The heavy lifting is the post-process stage (§5b) that follows. Higher
         // threshold = FEWER clusters.
-        let tuning = tuning::load(app).await;
+        let tuning = tuning::load(engine).await;
         // `max_clusters` = an app-side UPPER BOUND on surviving clusters applied in
         // postprocess (P1). Only Calendar mode sets it; auto/fixed leave it None.
         let (num_speakers, threshold, max_clusters): (Option<i64>, Option<f32>, Option<usize>) = match tuning.speaker_count {
@@ -403,6 +405,7 @@ async fn run_diarization(
 #[allow(clippy::too_many_arguments)]
 async fn process_mic_track(
     pool: &sqlx::SqlitePool,
+    engine: &Engine,
     app: &AppHandle,
     meeting_id: &str,
     mic_path: &Path,
@@ -429,7 +432,7 @@ async fn process_mic_track(
 
     // ---- Auto-diarize the mic (multi-speaker) + postprocess, mirroring the system
     // stream. Forcing one speaker is exactly what mis-attributed in-person meetings. ----
-    let tuning = tuning::load(app).await;
+    let tuning = tuning::load(engine).await;
     let diar_res = engine::diarize(
         app,
         &wav_str,

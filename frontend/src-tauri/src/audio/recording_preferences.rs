@@ -1,15 +1,16 @@
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::{AppHandle, Runtime};
-use tauri_plugin_store::StoreExt;
-
 use anyhow::Result;
 #[cfg(target_os = "macos")]
 use log::error;
 
 #[cfg(target_os = "macos")]
 use crate::audio::capture::AudioCaptureBackend;
+use crate::engine::{json_store, Engine, Paths};
+
+const RECORDING_PREFS_STORE_FILE: &str = "recording_preferences.json";
+const RECORDING_PREFS_KEY: &str = "preferences";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RecordingPreferences {
@@ -92,73 +93,51 @@ pub fn generate_recording_filename(format: &str) -> String {
     format!("recording_{}.{}", timestamp, format)
 }
 
-/// Load recording preferences from store
-pub async fn load_recording_preferences<R: Runtime>(
-    app: &AppHandle<R>,
-) -> Result<RecordingPreferences> {
-    // Try to load from Tauri store
-    let store = match app.store("recording_preferences.json") {
-        Ok(store) => store,
-        Err(e) => {
-            warn!("Failed to access store: {}, using defaults", e);
-            return Ok(RecordingPreferences::default());
+/// Load recording preferences from their headless JSON-store file
+/// (`<app_data>/recording_preferences.json`, same location the Tauri store
+/// plugin used — see `engine::json_store`).
+pub fn load_recording_preferences(paths: &Paths) -> RecordingPreferences {
+    let mut prefs = match json_store::get::<RecordingPreferences>(
+        paths,
+        RECORDING_PREFS_STORE_FILE,
+        RECORDING_PREFS_KEY,
+    ) {
+        Some(p) => {
+            info!("Loaded recording preferences from store");
+            p
+        }
+        None => {
+            info!("No stored preferences found, using defaults");
+            RecordingPreferences::default()
         }
     };
 
-    // Try to get the preferences from store
-    let prefs = if let Some(value) = store.get("preferences") {
-        match serde_json::from_value::<RecordingPreferences>(value.clone()) {
-            Ok(mut p) => {
-                info!("Loaded recording preferences from store");
-                // Update macOS backend to current value if needed
-                #[cfg(target_os = "macos")]
-                {
-                    let backend = crate::audio::capture::get_current_backend();
-                    p.system_audio_backend = Some(backend.to_string());
-                }
-                p
-            }
-            Err(e) => {
-                warn!("Failed to deserialize preferences: {}, using defaults", e);
-                RecordingPreferences::default()
-            }
-        }
-    } else {
-        info!("No stored preferences found, using defaults");
-        RecordingPreferences::default()
-    };
+    // Update macOS backend to current value if needed
+    #[cfg(target_os = "macos")]
+    {
+        let backend = crate::audio::capture::get_current_backend();
+        prefs.system_audio_backend = Some(backend.to_string());
+    }
 
     info!("Loaded recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}",
           prefs.save_folder, prefs.auto_save, prefs.file_format,
           prefs.preferred_mic_device, prefs.preferred_system_device);
-    Ok(prefs)
+    prefs
 }
 
-/// Save recording preferences to store
-pub async fn save_recording_preferences<R: Runtime>(
-    app: &AppHandle<R>,
-    preferences: &RecordingPreferences,
-) -> Result<()> {
+/// Save recording preferences to their headless JSON-store file.
+pub fn save_recording_preferences(paths: &Paths, preferences: &RecordingPreferences) -> Result<()> {
     info!("Saving recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}",
           preferences.save_folder, preferences.auto_save, preferences.file_format,
           preferences.preferred_mic_device, preferences.preferred_system_device);
 
-    // Get or create store
-    let store = app
-        .store("recording_preferences.json")
-        .map_err(|e| anyhow::anyhow!("Failed to access store: {}", e))?;
-
-    // Serialize preferences to JSON value
-    let prefs_value = serde_json::to_value(preferences)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize preferences: {}", e))?;
-
-    // Save to store
-    store.set("preferences", prefs_value);
-
-    // Persist to disk
-    store
-        .save()
-        .map_err(|e| anyhow::anyhow!("Failed to save store to disk: {}", e))?;
+    json_store::set(
+        paths,
+        RECORDING_PREFS_STORE_FILE,
+        RECORDING_PREFS_KEY,
+        preferences,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to save recording preferences: {}", e))?;
 
     info!("Successfully persisted recording preferences to disk");
 
@@ -179,21 +158,18 @@ pub async fn save_recording_preferences<R: Runtime>(
 
 /// Tauri commands for recording preferences
 #[tauri::command]
-pub async fn get_recording_preferences<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn get_recording_preferences(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
 ) -> Result<RecordingPreferences, String> {
-    load_recording_preferences(&app)
-        .await
-        .map_err(|e| format!("Failed to load recording preferences: {}", e))
+    Ok(load_recording_preferences(engine.paths()))
 }
 
 #[tauri::command]
-pub async fn set_recording_preferences<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn set_recording_preferences(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
     preferences: RecordingPreferences,
 ) -> Result<(), String> {
-    save_recording_preferences(&app, &preferences)
-        .await
+    save_recording_preferences(engine.paths(), &preferences)
         .map_err(|e| format!("Failed to save recording preferences: {}", e))
 }
 
@@ -204,10 +180,10 @@ pub async fn get_default_recordings_folder_path() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn open_recordings_folder<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let preferences = load_recording_preferences(&app)
-        .await
-        .map_err(|e| format!("Failed to load preferences: {}", e))?;
+pub async fn open_recordings_folder(
+    engine: tauri::State<'_, std::sync::Arc<Engine>>,
+) -> Result<(), String> {
+    let preferences = load_recording_preferences(engine.paths());
 
     // Ensure directory exists before trying to open it
     ensure_recordings_directory(&preferences.save_folder)

@@ -4,7 +4,6 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_store::StoreExt;
 
 use crate::{
     audio::recording_preferences::{get_default_recordings_folder, load_recording_preferences},
@@ -435,32 +434,6 @@ pub struct TranscriptSegment {
     pub audio_end_time: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
-}
-
-// Helper function to get auth token from store (optional)
-#[allow(dead_code)]
-async fn get_auth_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
-    let store = match app.store("store.json") {
-        Ok(store) => store,
-        Err(_) => return None,
-    };
-
-    match store.get("authToken") {
-        Some(token) => {
-            if let Some(token_str) = token.as_str() {
-                let truncated = token_str.chars().take(20).collect::<String>();
-                log_info!("Found auth token: {}", truncated);
-                Some(token_str.to_string())
-            } else {
-                log_warn!("Auth token is not a string");
-                None
-            }
-        }
-        None => {
-            log_warn!("No auth token found in store");
-            None
-        }
-    }
 }
 
 // API Commands for Tauri
@@ -1361,7 +1334,6 @@ mod local_meeting_folder_cleanup_tests {
 
 async fn api_delete_meeting_impl(
     engine: &Engine,
-    app: &AppHandle,
     meeting_id: String,
 ) -> Result<serde_json::Value, String> {
     let db = engine.db().await?;
@@ -1377,9 +1349,7 @@ async fn api_delete_meeting_impl(
         .and_then(|(folder_path,)| folder_path)
         .filter(|folder_path| !folder_path.trim().is_empty())
     {
-        let preferences = load_recording_preferences(app)
-            .await
-            .map_err(|error| format!("Failed to read the recordings folder preference: {error}"))?;
+        let preferences = load_recording_preferences(engine.paths());
         let allowed_roots = vec![preferences.save_folder, get_default_recordings_folder()];
         let folder_path = PathBuf::from(folder_path);
         let removed_folder = tokio::task::spawn_blocking(move || {
@@ -1420,7 +1390,6 @@ async fn api_delete_meeting_impl(
 
 #[tauri::command]
 pub async fn api_delete_meeting(
-    app: AppHandle,
     engine: tauri::State<'_, std::sync::Arc<Engine>>,
     meeting_id: String,
     auth_token: Option<String>,
@@ -1430,7 +1399,7 @@ pub async fn api_delete_meeting(
         meeting_id,
         auth_token.is_some()
     );
-    api_delete_meeting_impl(&engine, &app, meeting_id).await
+    api_delete_meeting_impl(&engine, meeting_id).await
 }
 
 async fn api_get_meeting_impl(
