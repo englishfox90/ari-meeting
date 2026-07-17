@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+.cache/
+models/
+*.rttm
+*.wav
