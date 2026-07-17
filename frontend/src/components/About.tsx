@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
-import Image from 'next/image';
+import { AriMark } from "./app-shell/AriMark";
 import { UpdateDialog } from "./UpdateDialog";
 import { updateService, UpdateInfo } from '@/services/updateService';
 import { Button } from './ui/button';
@@ -50,7 +50,8 @@ export function About() {
     return (
         <div className="max-h-[80vh] space-y-5 overflow-y-auto p-5">
             <div className="border-b border-border pb-5 text-center">
-                <h1 className="app-display mt-2 text-2xl">Ari Meeting</h1>
+                <AriMark className="mx-auto h-10 w-auto text-[hsl(var(--accent))]" />
+                <h1 className="app-display mt-3 text-2xl">Ari Meeting</h1>
                 <span className="mt-1 block text-xs text-muted-foreground">v{currentVersion}</span>
                 <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
                     Private, on-device meeting intelligence for macOS. Ari records and transcribes your meetings, then writes summaries that understand who was in the room, who owns the conversation, and what kind of meeting it is.

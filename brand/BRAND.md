@@ -2,7 +2,7 @@
 
 **Status:** Adopted 2026-07-16 for the SwiftUI era. Canonical.
 **Scope:** This document + `tokens.json` + `assets/` define the brand for the native SwiftUI frontend.
-**Not this:** the repo-root `DESIGN.md` / `DESIGN.json` describe the *current* Tauri app's outgoing Arivo system and are load-bearing test fixtures (`frontend/tests/lib/visual-system.test.mjs`). Do not merge, cross-edit, or "reconcile" the two.
+**Relationship to `DESIGN.md` / `DESIGN.json`:** those repo-root files are the load-bearing test fixtures for the **outgoing (frozen) Tauri app** (`frontend/tests/lib/visual-system.test.mjs`). As of **2026-07-16** the Tauri app was rebranded to Marginalia ahead of the Swift rewrite (color scheme, Bricolage Grotesque, and the Dictation mark/icons), so `DESIGN.*` now describe *Marginalia as applied to the Tauri app* and are kept in lockstep with `frontend/src/app/globals.css`. This file (`BRAND.md` + `tokens.json` + `assets/`) remains **canonical**; on any conflict, BRAND.md wins. Don't fork the palette — derive `DESIGN.*` from these tokens, never the reverse. (The former "do not reconcile the two" rule is retired by this decision.)
 
 ---
 

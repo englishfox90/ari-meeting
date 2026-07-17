@@ -1,38 +1,39 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-07-14T09:40:00-06:00",
+  "generatedAt": "2026-07-16T12:00:00-06:00",
   "title": "Design System: Ari Meeting",
+  "note": "Marginalia applied to the outgoing (frozen) Tauri app. Canonical brand source is brand/BRAND.md + brand/tokens.json; this file + DESIGN.md are the load-bearing test fixtures for the Tauri UI (frontend/tests/lib/visual-system.test.mjs). Kept in lockstep with frontend/src/app/globals.css.",
   "extensions": {
     "colorMeta": {
-      "canvas": { "role": "neutral", "displayName": "Warm Cream", "canonical": "#F4F1EB", "tonalRamp": ["#14161A", "#2A2B2C", "#45443F", "#6B685E", "#928D80", "#BAB4A6", "#DAD5CB", "#F4F1EB"] },
-      "surface": { "role": "neutral", "displayName": "Card Surface", "canonical": "#FBFAF8", "tonalRamp": ["#1B1C1E", "#34342F", "#56544C", "#7C7A6F", "#A5A296", "#CBC7BB", "#E9E5DC", "#FBFAF8"] },
-      "ink": { "role": "primary", "displayName": "Navy Ink", "canonical": "#1A2B4A", "tonalRamp": ["#0D1B2E", "#1A2B4A", "#2A3D5F", "#465873", "#6B7B92", "#9AA6B6", "#C7CED8", "#EDEFF3"] },
-      "accent": { "role": "primary", "displayName": "Arivo Amber", "canonical": "#E8A020", "tonalRamp": ["#2E1E05", "#4F3609", "#7A530F", "#A87415", "#E8A020", "#EEB854", "#F3D08C", "#FBEED2"] },
-      "rail": { "role": "neutral", "displayName": "Warm Rail", "canonical": "#EAE5DC", "note": "Light mode: deeper cream over the cream canvas. Dark mode: deep navy (#0B1522).", "tonalRamp": ["#0B1522", "#152238", "#26303F", "#4A5162", "#8A8578", "#C9C2B4", "#DED8CC", "#EAE5DC"] }
+      "canvas": { "role": "neutral", "displayName": "Porcelain Paper", "canonical": "#FAF8F5", "tonalRamp": ["#211E1B", "#2B2723", "#3E3933", "#6F6759", "#A89F92", "#D8CFC2", "#EDE8E1", "#FAF8F5"] },
+      "surface": { "role": "neutral", "displayName": "Card Surface", "canonical": "#FFFFFF", "tonalRamp": ["#2D2925", "#3E3933", "#56504A", "#7C7568", "#A89F92", "#CFC7BB", "#F1EDE6", "#FFFFFF"] },
+      "ink": { "role": "primary", "displayName": "Warm Charcoal Ink", "canonical": "#2B2620", "note": "Body ink — never pure black. The heading ink (Iron Gall #152C66) is a separate, non-interactive second ink.", "tonalRamp": ["#151310", "#2B2620", "#3E3933", "#6F6759", "#948B7D", "#BCB3A5", "#E0DACF", "#F3EFE8"] },
+      "heading": { "role": "primary", "displayName": "Iron Gall", "canonical": "#152C66", "note": "The second ink — headings/display text only. Non-interactive; never signals state; outside the accent budget.", "tonalRamp": ["#0B1730", "#152C66", "#20408C", "#3457AB", "#6480C6", "#9AABDA", "#C7D2EC", "#E8EAF2"] },
+      "accent": { "role": "primary", "displayName": "Shin-kai", "canonical": "#1B3A8C", "note": "The sole interactive ink — selection, citations, links, speaker names. If it's Shin-kai, you can act on it.", "tonalRamp": ["#0C1B44", "#122763", "#16317A", "#1B3A8C", "#4C6BB8", "#7E9BE8", "#B4C4EF", "#E1E8F8"] },
+      "rail": { "role": "neutral", "displayName": "Elevated Paper", "canonical": "#F1EDE6", "note": "Sidebar ground — warm paper in both modes (espresso #2B2723 in dark). No navy rail; Marginalia has no two-world navy.", "tonalRamp": ["#211E1B", "#2B2723", "#3E3933", "#6F6759", "#A89F92", "#D2C9BC", "#E6E1D8", "#F1EDE6"] }
     },
     "modes": {
-      "light": { "background": "#F4F1EB", "surface": "#FBFAF8", "ink": "#1A2B4A", "muted": "#566276", "rail": "#EAE5DC", "accent": "#E8A020", "accentSoft": "#FAECD6", "border": "#D9D3C9" },
-      "dark": { "background": "#0D192B", "surface": "#17233B", "ink": "#F1EDE4", "muted": "#C4BBAB", "rail": "#0B1522", "accent": "#EEA82F", "accentSoft": "#3A2E1A", "border": "#2D384D" }
+      "light": { "background": "#FAF8F5", "surface": "#FFFFFF", "ink": "#2B2620", "heading": "#152C66", "muted": "#6F6759", "rail": "#F1EDE6", "accent": "#1B3A8C", "accentSoft": "#DEE3F0", "border": "#E6E1D8" },
+      "dark": { "background": "#211E1B", "surface": "#2D2925", "ink": "#EDE8E1", "heading": "#E8EAF2", "muted": "#A89F92", "rail": "#2B2723", "accent": "#7E9BE8", "accentSoft": "#2B3350", "border": "#3E3933" }
     },
     "semantic": {
-      "success": { "displayName": "Forest", "canonical": "#2A6048" },
-      "warning": { "displayName": "Dark Gold", "canonical": "#B57817" },
-      "danger": { "displayName": "Brick", "canonical": "#B04040" },
-      "info": { "displayName": "Muted Blue", "canonical": "#37699E" }
+      "success": { "displayName": "Sage", "canonical": "#42794F" },
+      "warning": { "displayName": "Ochre", "canonical": "#B57817" },
+      "danger": { "displayName": "Recording Red", "canonical": "#C6362C", "note": "Live capture, and destructive confirmation. Always labeled; never co-branded with the accent." },
+      "info": { "displayName": "Shin-kai (muted)", "canonical": "#20408C" }
     },
     "typographyMeta": {
-      "fontFamily": { "primary": "Space Grotesk", "fallback": "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, sans-serif", "mono": "SFMono-Regular, ui-monospace, Menlo, monospace", "note": "Space Grotesk is bundled locally at frontend/public/fonts/SpaceGrotesk-Variable.woff2 for offline rendering." },
-      "display": { "displayName": "Display", "purpose": "Route-defining titles only." },
-      "headline": { "displayName": "Headline", "purpose": "Meeting titles and primary workspace sections." },
-      "body": { "displayName": "Body", "purpose": "Controls, explanation, transcript, and summary prose." },
-      "label": { "displayName": "Label", "purpose": "Compact metadata and state labels; uppercase eyebrows use muted ink, never amber." },
-      "mono": { "displayName": "Technical Mono", "purpose": "Timestamps, models, formats, and technical values." }
+      "fontFamily": { "primary": "Bricolage Grotesque", "fallback": "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, sans-serif", "mono": "SFMono-Regular, ui-monospace, Menlo, monospace", "note": "Bricolage Grotesque (SIL OFL) is bundled locally at frontend/public/fonts/BricolageGrotesque-Variable.woff2 for headings/display only (>= 17px). Body/UI use the native SF Pro system stack; sub-17px headings use SF Pro Semibold." },
+      "display": { "displayName": "Display", "purpose": "Route-defining titles only, in Bricolage Grotesque and Iron Gall heading ink." },
+      "headline": { "displayName": "Headline", "purpose": "Meeting titles and primary workspace sections; Bricolage Grotesque, heading ink." },
+      "body": { "displayName": "Body", "purpose": "Controls, explanation, transcript, and summary prose; SF Pro, body ink, 72ch measure." },
+      "label": { "displayName": "Label", "purpose": "Compact metadata and state labels; uppercase eyebrows use secondary ink, never accent or heading ink." },
+      "mono": { "displayName": "Technical Mono", "purpose": "Timestamps, models, formats, and technical values; tabular numerals." }
     },
     "shadows": [
-      { "name": "floating-control", "value": "0 8px 24px rgba(26, 43, 74, 0.10)", "purpose": "Menus, popovers, and floating controls." },
-      { "name": "dialog", "value": "0 24px 64px rgba(26, 43, 74, 0.18)", "purpose": "Blocking dialogs and import/recovery overlays." },
-      { "name": "focus-halo", "value": "0 0 0 3px rgba(232, 160, 32, 0.18)", "purpose": "Keyboard focus paired with a solid amber outline." },
-      { "name": "amber-glow", "value": "radial-gradient(ellipse at 70% 30%, rgba(232, 160, 32, 0.14), transparent 60%)", "purpose": "Optional warmth behind hero/recording surfaces, echoing the logo arc." }
+      { "name": "floating-control", "value": "0 8px 24px rgba(43, 38, 32, 0.10)", "purpose": "Menus, popovers, and floating controls." },
+      { "name": "dialog", "value": "0 24px 64px rgba(43, 38, 32, 0.18)", "purpose": "Blocking dialogs and import/recovery overlays." },
+      { "name": "focus-halo", "value": "0 0 0 3px rgba(27, 58, 140, 0.18)", "purpose": "Keyboard focus paired with a solid Shin-kai outline." }
     ],
     "motion": [
       { "name": "instant", "value": "120ms cubic-bezier(0.23, 1, 0.32, 1)", "purpose": "Press and micro-state feedback." },
@@ -50,17 +51,17 @@
       "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The single primary non-recording action on a screen.",
+      "description": "The single primary non-recording action on a screen — the one reserved solid Shin-kai fill.",
       "html": "<button class=\"ds-btn-primary\">Continue</button>",
-      "css": ".ds-btn-primary{height:36px;padding:0 14px;border:1px solid #1A2B4A;border-radius:6px;background:#1A2B4A;color:#FBFAF8;font:600 14px/1 \"Space Grotesk\",-apple-system,BlinkMacSystemFont,sans-serif;transition:background 180ms cubic-bezier(.23,1,.32,1),transform 120ms cubic-bezier(.23,1,.32,1)}.ds-btn-primary:hover{background:#26395C}.ds-btn-primary:active{transform:translateY(1px)}.ds-btn-primary:focus-visible{outline:2px solid #E8A020;outline-offset:2px;box-shadow:0 0 0 3px rgba(232,160,32,.18)}"
+      "css": ".ds-btn-primary{height:36px;padding:0 14px;border:1px solid #1B3A8C;border-radius:6px;background:#1B3A8C;color:#FAF8F5;font:600 14px/1 -apple-system,BlinkMacSystemFont,\"SF Pro Text\",sans-serif;transition:background 180ms cubic-bezier(.23,1,.32,1),transform 120ms cubic-bezier(.23,1,.32,1)}.ds-btn-primary:hover{background:#16317A}.ds-btn-primary:active{background:#122763;transform:translateY(1px)}.ds-btn-primary:focus-visible{outline:2px solid #1B3A8C;outline-offset:2px;box-shadow:0 0 0 3px rgba(27,58,140,.18)}"
     },
     {
       "name": "Recording Button",
       "kind": "button",
-      "refersTo": "button-accent",
-      "description": "Reserved for starting or representing active capture.",
+      "refersTo": "button-record",
+      "description": "Reserved for starting or representing active capture — recording red, never co-branded with the accent.",
       "html": "<button class=\"ds-btn-record\">Start recording</button>",
-      "css": ".ds-btn-record{height:36px;padding:0 14px;border:1px solid #E8A020;border-radius:6px;background:#E8A020;color:#1A2B4A;font:600 14px/1 \"Space Grotesk\",-apple-system,BlinkMacSystemFont,sans-serif;transition:filter 180ms cubic-bezier(.23,1,.32,1),transform 120ms cubic-bezier(.23,1,.32,1)}.ds-btn-record:hover{filter:brightness(.94)}.ds-btn-record:active{transform:translateY(1px)}.ds-btn-record:focus-visible{outline:2px solid #1A2B4A;outline-offset:2px;box-shadow:0 0 0 3px rgba(232,160,32,.18)}"
+      "css": ".ds-btn-record{height:36px;padding:0 14px;border:1px solid #C6362C;border-radius:6px;background:#C6362C;color:#FAF8F5;font:600 14px/1 -apple-system,BlinkMacSystemFont,\"SF Pro Text\",sans-serif;transition:filter 180ms cubic-bezier(.23,1,.32,1),transform 120ms cubic-bezier(.23,1,.32,1)}.ds-btn-record:hover{filter:brightness(.94)}.ds-btn-record:active{transform:translateY(1px)}.ds-btn-record:focus-visible{outline:2px solid #1B3A8C;outline-offset:2px;box-shadow:0 0 0 3px rgba(27,58,140,.18)}"
     },
     {
       "name": "Secondary Button",
@@ -68,7 +69,7 @@
       "refersTo": "button-secondary",
       "description": "Supporting actions in headers, toolbars, and states.",
       "html": "<button class=\"ds-btn-secondary\">Review settings</button>",
-      "css": ".ds-btn-secondary{height:36px;padding:0 14px;border:1px solid #D9D3C9;border-radius:6px;background:#FBFAF8;color:#1A2B4A;font:600 14px/1 \"Space Grotesk\",-apple-system,BlinkMacSystemFont,sans-serif;transition:background 180ms cubic-bezier(.23,1,.32,1),border-color 180ms cubic-bezier(.23,1,.32,1)}.ds-btn-secondary:hover{background:#ECE7DF;border-color:#C9C2B4}.ds-btn-secondary:active{background:#E1DACE}.ds-btn-secondary:focus-visible{outline:2px solid #E8A020;outline-offset:2px;box-shadow:0 0 0 3px rgba(232,160,32,.18)}"
+      "css": ".ds-btn-secondary{height:36px;padding:0 14px;border:1px solid #E6E1D8;border-radius:6px;background:#FFFFFF;color:#2B2620;font:600 14px/1 -apple-system,BlinkMacSystemFont,\"SF Pro Text\",sans-serif;transition:background 180ms cubic-bezier(.23,1,.32,1),border-color 180ms cubic-bezier(.23,1,.32,1)}.ds-btn-secondary:hover{background:#F1EDE6;border-color:#D8CFC2}.ds-btn-secondary:active{background:#E6E1D8}.ds-btn-secondary:focus-visible{outline:2px solid #1B3A8C;outline-offset:2px;box-shadow:0 0 0 3px rgba(27,58,140,.18)}"
     },
     {
       "name": "Search Field",
@@ -76,36 +77,36 @@
       "refersTo": "field",
       "description": "Compact search and command input.",
       "html": "<label class=\"ds-field-label\">Search<input class=\"ds-field\" placeholder=\"Search meetings\"></label>",
-      "css": ".ds-field-label{display:grid;gap:6px;color:#566276;font:600 12px/1.3 \"Space Grotesk\",-apple-system,BlinkMacSystemFont,sans-serif}.ds-field{height:36px;padding:0 12px;border:1px solid #D9D3C9;border-radius:6px;background:#FBFAF8;color:#1A2B4A;font:400 14px/1 \"Space Grotesk\",-apple-system,BlinkMacSystemFont,sans-serif;transition:border-color 180ms cubic-bezier(.23,1,.32,1),box-shadow 180ms cubic-bezier(.23,1,.32,1)}.ds-field:hover{border-color:#C9C2B4}.ds-field:focus{outline:2px solid #E8A020;outline-offset:1px;box-shadow:0 0 0 3px rgba(232,160,32,.18)}"
+      "css": ".ds-field-label{display:grid;gap:6px;color:#6F6759;font:600 12px/1.3 -apple-system,BlinkMacSystemFont,\"SF Pro Text\",sans-serif}.ds-field{height:36px;padding:0 12px;border:1px solid #E6E1D8;border-radius:6px;background:#FFFFFF;color:#2B2620;font:400 14px/1 -apple-system,BlinkMacSystemFont,\"SF Pro Text\",sans-serif;transition:border-color 180ms cubic-bezier(.23,1,.32,1),box-shadow 180ms cubic-bezier(.23,1,.32,1)}.ds-field:hover{border-color:#D8CFC2}.ds-field:focus{outline:2px solid #1B3A8C;outline-offset:1px;box-shadow:0 0 0 3px rgba(27,58,140,.18)}"
     },
     {
       "name": "Navigation Item",
       "kind": "nav",
       "refersTo": "navigation-item-selected",
-      "description": "Quiet warm-cream rail navigation with a clear current state (deep navy rail in dark mode).",
+      "description": "Quiet warm-paper rail navigation with a clear current state (Shin-kai selection; the rail stays warm paper in both modes).",
       "html": "<nav class=\"ds-rail\"><button class=\"ds-nav\">Home</button><button class=\"ds-nav ds-nav-current\">Saved meetings</button><button class=\"ds-nav\">Ask meetings</button></nav>",
-      "css": ".ds-rail{display:grid;gap:4px;width:220px;padding:12px;background:#EAE5DC}.ds-nav{height:36px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:#566276;text-align:left;font:500 14px/1 \"Space Grotesk\",-apple-system,BlinkMacSystemFont,sans-serif;transition:background 180ms cubic-bezier(.23,1,.32,1),color 180ms cubic-bezier(.23,1,.32,1)}.ds-nav:hover{background:#E2DCCF;color:#1A2B4A}.ds-nav-current{background:#FAECD6;color:#1A2B4A}.ds-nav:focus-visible{outline:2px solid #E8A020;outline-offset:1px}"
+      "css": ".ds-rail{display:grid;gap:4px;width:220px;padding:12px;background:#F1EDE6}.ds-nav{height:36px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:#6F6759;text-align:left;font:500 14px/1 -apple-system,BlinkMacSystemFont,\"SF Pro Text\",sans-serif;transition:background 180ms cubic-bezier(.23,1,.32,1),color 180ms cubic-bezier(.23,1,.32,1)}.ds-nav:hover{background:#E6E1D8;color:#2B2620}.ds-nav-current{background:#1B3A8C;color:#FAF8F5}.ds-nav:focus-visible{outline:2px solid #1B3A8C;outline-offset:1px}"
     },
     {
       "name": "Workspace Surface",
       "kind": "custom",
       "description": "A flat bounded reading or tool region, never a decorative nested card.",
       "html": "<section class=\"ds-surface\"><h3>Summary</h3><p>The conversation remains the primary content.</p></section>",
-      "css": ".ds-surface{padding:24px;border:1px solid #D9D3C9;border-radius:10px;background:#FBFAF8;color:#1A2B4A}.ds-surface h3{margin:0 0 12px;font:650 17px/1.3 \"Space Grotesk\",-apple-system,BlinkMacSystemFont,sans-serif}.ds-surface p{max-width:72ch;margin:0;color:#566276;font:400 14px/1.55 \"Space Grotesk\",-apple-system,BlinkMacSystemFont,sans-serif}"
+      "css": ".ds-surface{padding:24px;border:1px solid #E6E1D8;border-radius:10px;background:#FFFFFF;color:#2B2620}.ds-surface h3{margin:0 0 12px;color:#152C66;font:600 17px/1.3 \"Bricolage Grotesque\",-apple-system,BlinkMacSystemFont,sans-serif}.ds-surface p{max-width:72ch;margin:0;color:#6F6759;font:400 14px/1.55 -apple-system,BlinkMacSystemFont,\"SF Pro Text\",sans-serif}"
     }
   ],
   "narrative": {
-    "northStar": "The Signal Desk",
-    "overview": "A precise desktop workbench with the warmth of the Arivo brand. A warm cream canvas holds the meeting; a navy-inked rail holds tools and state. The visual signature is the Arivo palette — cream canvas, navy ink and structure, scarce golden Arivo Amber accent — set in Space Grotesk with tight geometry and clear state language.",
-    "keyCharacteristics": ["Warm cream canvas with a navy-inked utility rail (deep navy in dark mode).", "Restrained Arivo Amber reserved for recording, active AI work, and decisive selection.", "Flat-by-default surfaces separated by warm tone and one-pixel rules.", "Compact controls with generous reading width where content matters.", "State-driven motion only."],
+    "northStar": "Marginalia — the notebook that listens",
+    "overview": "A private study, not a SaaS dashboard: two inks on warm paper. A porcelain paper canvas holds the meeting; a warm elevated-paper rail holds tools and state. The visual signature is Marginalia — porcelain and espresso grounds, warm-charcoal body ink with an Iron Gall heading ink (the second ink), and a scarce Shin-kai interactive accent — set in Bricolage Grotesque headings over an SF Pro body, with tight geometry and honest state language.",
+    "keyCharacteristics": ["Warm paper canvas with a warm elevated-paper rail (espresso in dark mode) — no navy.", "Two inks: warm-charcoal body and non-interactive Iron Gall headings.", "Restrained Shin-kai accent reserved for selection, citations, links, and speaker names.", "Flat-by-default surfaces separated by warm tone and one-pixel rules.", "State-driven motion only."],
     "rules": [
-      { "name": "The Signal Rule", "body": "Arivo Amber appears on no more than 8% of a screen and only for recording, active AI work, or consequential selection.", "section": "colors" },
-      { "name": "The Warm Neutral Rule", "body": "Every neutral is warm (cream, taupe, tan). Never introduce cool gray or blue-gray fills.", "section": "colors" },
-      { "name": "The Two-World Rule", "body": "Rail and canvas are both warm, separated by tone plus a one-pixel border: deeper cream over lighter cream in light mode, deep navy in dark mode. Ink and structure are navy.", "section": "colors" },
+      { "name": "The Signal Rule", "body": "The Shin-kai accent appears on no more than 8% of a screen and only for selection, citations, links, and speaker names. Solid accent fill is reserved for the one primary action per view.", "section": "colors" },
+      { "name": "The Two-Ink Rule", "body": "Body text is warm charcoal; headings and display text use the Iron Gall second ink. The heading ink is non-interactive and never signals state.", "section": "colors" },
+      { "name": "The Warm Neutral Rule", "body": "Every neutral is warm (porcelain, espresso, charcoal, taupe). Never introduce cool gray or blue-gray fills.", "section": "colors" },
       { "name": "The Flat Workspace Rule", "body": "Static content surfaces do not float.", "section": "elevation" },
-      { "name": "The Product Voice Rule", "body": "No marketing-scale greetings inside the desktop app.", "section": "typography" }
+      { "name": "The Product Voice Rule", "body": "No marketing-scale greetings inside the desktop app; the largest type names the work currently open.", "section": "typography" }
     ],
-    "dos": ["Use the warm cream canvas and navy rail as the primary compositional structure.", "Keep Arivo Amber scarce and tied to real state.", "Keep every neutral warm — cream, taupe, tan.", "Preserve every local behavior and keyboard path."],
-    "donts": ["Do not use cool gray or blue-gray neutrals; the palette is warm throughout.", "Do not spread Arivo Amber onto labels, eyebrows, or decoration.", "Do not copy Granola, Codex, or Scoutly assets or exact layouts.", "Do not add fake metrics, progress, status, citations, or assistant states."]
+    "dos": ["Use the warm porcelain canvas and warm-paper rail as the primary compositional structure.", "Keep the Shin-kai accent scarce and tied to interaction or citation.", "Keep every neutral warm — porcelain, espresso, charcoal, taupe.", "Render headings in Bricolage Grotesque and the Iron Gall heading ink.", "Preserve every local behavior and keyboard path."],
+    "donts": ["Do not use cool gray or blue-gray neutrals; the palette is warm throughout.", "Do not spread the Shin-kai accent onto labels, eyebrows, or decoration; do not use the heading ink interactively.", "Do not reintroduce the retired golden-amber / navy-rail system.", "Do not add fake metrics, progress, status, citations, or assistant states."]
   }
 }

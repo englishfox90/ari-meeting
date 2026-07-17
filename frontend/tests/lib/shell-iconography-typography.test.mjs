@@ -17,12 +17,13 @@ test('persistent workspace shell uses the Meetily glyph and native type systems'
 
   assert.doesNotMatch(css, /Instrument Sans/);
   assert.match(css, /@font-face/);
-  assert.match(css, /font-family: "Space Grotesk"/);
-  assert.match(css, /SpaceGrotesk-Variable\.woff2/);
+  // Marginalia: Bricolage Grotesque (headings), SF Pro system stack (body).
+  assert.match(css, /font-family: "Bricolage Grotesque"/);
+  assert.match(css, /BricolageGrotesque-Variable\.woff2/);
   assert.match(css, /-apple-system, BlinkMacSystemFont/);
   assert.match(tailwind, /hsl\(var\(--primary\)\)/);
   assert.match(tailwind, /hsl\(var\(--accent\)\)/);
-  assert.match(tailwind, /Space Grotesk/);
+  assert.match(tailwind, /Bricolage Grotesque/);
   assert.doesNotMatch(tailwind, /221, 83%, 53%/);
   assert.match(sidebar, /MeetilyGlyph/);
   assert.doesNotMatch(sidebar, /@heroicons\/react/);

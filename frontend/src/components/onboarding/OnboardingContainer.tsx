@@ -1,7 +1,7 @@
 import React from 'react';
-import Image from 'next/image';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/20/solid';
 import { cn } from '@/lib/utils';
+import { AriMark } from '@/components/app-shell/AriMark';
 import { ProgressIndicator } from './shared/ProgressIndicator';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import type { OnboardingContainerProps } from '@/types/onboarding';
@@ -48,10 +48,9 @@ export function OnboardingContainer({
       <div className={cn('grid h-full w-full grid-cols-[264px_minmax(0,1fr)] max-[1160px]:grid-cols-[232px_minmax(0,1fr)]', className)}>
         <aside className="flex min-h-0 flex-col border-r border-border bg-secondary/35 px-7 pb-7 pt-10 max-[1160px]:px-6">
           <div className="flex items-center gap-2.5">
-            {/* Arivo brand mark — gray wordmark on light, white wordmark on dark */}
-            <Image src="/arivo-logo.png" alt="Arivo" width={144} height={80} priority className="block h-7 w-auto dark:hidden" />
-            <Image src="/arivo-logo-white.png" alt="Arivo" width={144} height={80} priority className="hidden h-7 w-auto dark:block" />
-            <span className="text-[13px] font-medium tracking-[-0.015em]">Ari Meeting</span>
+            {/* Marginalia "Dictation" mark — Shin-kai ink on the warm paper rail */}
+            <AriMark className="h-6 w-auto text-[hsl(var(--accent))]" />
+            <span className="font-display text-[13px] font-semibold tracking-[-0.015em] text-[hsl(var(--heading))]">Ari Meeting</span>
           </div>
           <div className="mt-auto">
             <p className="text-[12px] font-medium text-foreground">Private by default</p>

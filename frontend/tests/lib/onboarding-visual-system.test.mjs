@@ -21,7 +21,7 @@ test('onboarding uses the native setup assistant visual language', async () => {
   assert.match(container, /grid-cols-\[264px_minmax\(0,1fr\)\]/);
   assert.match(container, /max-\[1160px\]:grid-cols-\[232px_minmax\(0,1fr\)\]/);
   assert.match(container, /Private by default/);
-  assert.match(container, /arivo-logo\.png/);
+  assert.match(container, /AriMark/);
   assert.match(progress, /aria-current=\{isActive \? 'step'/);
   assert.match(downloads, /role="progressbar"/);
   assert.match(downloads, /aria-valuenow=\{Math\.round\(state\.progress\)\}/);

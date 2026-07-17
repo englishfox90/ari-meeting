@@ -1,59 +1,61 @@
 ---
 name: Ari Meeting
-description: A focused local meeting workspace for capture, notes, and recall, themed to the Arivo brand.
+description: A focused local meeting workspace for capture, notes, and recall, themed to the Marginalia brand — two inks on warm paper.
 colors:
-  canvas: "#F4F1EB"
-  surface: "#FBFAF8"
-  surface-subtle: "#ECE7DF"
-  surface-strong: "#E1DACE"
-  ink: "#1A2B4A"
-  ink-muted: "#566276"
-  ink-faint: "#8A8578"
-  rail: "#EAE5DC"
-  rail-hover: "#E2DCCF"
-  rail-selected: "#FAECD6"
-  rail-ink: "#1A2B4A"
-  rail-muted: "#566276"
-  accent: "#E8A020"
-  accent-soft: "#FAECD6"
-  success: "#2A6048"
+  canvas: "#FAF8F5"
+  surface: "#FFFFFF"
+  surface-subtle: "#F1EDE6"
+  surface-strong: "#E6E1D8"
+  ink: "#2B2620"
+  heading: "#152C66"
+  ink-muted: "#6F6759"
+  ink-faint: "#A89F92"
+  rail: "#F1EDE6"
+  rail-hover: "#E6E1D8"
+  rail-selected: "#1B3A8C"
+  rail-ink: "#2B2620"
+  rail-muted: "#6F6759"
+  accent: "#1B3A8C"
+  accent-soft: "#DEE3F0"
+  success: "#42794F"
   warning: "#B57817"
-  danger: "#B04040"
-  info: "#37699E"
-  border: "#D9D3C9"
-  border-strong: "#C9C2B4"
-  dark-canvas: "#0D192B"
-  dark-surface: "#17233B"
-  dark-rail: "#0B1522"
-  dark-ink: "#F1EDE4"
-  dark-accent: "#EEA82F"
+  danger: "#C6362C"
+  info: "#20408C"
+  border: "#E6E1D8"
+  border-strong: "#D8CFC2"
+  dark-canvas: "#211E1B"
+  dark-surface: "#2D2925"
+  dark-rail: "#2B2723"
+  dark-ink: "#EDE8E1"
+  dark-heading: "#E8EAF2"
+  dark-accent: "#7E9BE8"
 typography:
   display:
-    fontFamily: "Space Grotesk, -apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, sans-serif"
+    fontFamily: "Bricolage Grotesque, -apple-system, BlinkMacSystemFont, SF Pro Text, sans-serif"
     fontSize: "32px"
-    fontWeight: 650
+    fontWeight: 700
     lineHeight: 1.08
-    letterSpacing: "-0.03em"
-  headline:
-    fontFamily: "Space Grotesk, -apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, sans-serif"
-    fontSize: "24px"
-    fontWeight: 650
-    lineHeight: 1.15
     letterSpacing: "-0.02em"
+  headline:
+    fontFamily: "Bricolage Grotesque, -apple-system, BlinkMacSystemFont, SF Pro Text, sans-serif"
+    fontSize: "24px"
+    fontWeight: 700
+    lineHeight: 1.15
+    letterSpacing: "-0.01em"
   title:
-    fontFamily: "Space Grotesk, -apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, sans-serif"
+    fontFamily: "Bricolage Grotesque, -apple-system, BlinkMacSystemFont, SF Pro Text, sans-serif"
     fontSize: "17px"
     fontWeight: 600
     lineHeight: 1.3
     letterSpacing: "-0.01em"
   body:
-    fontFamily: "Space Grotesk, -apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, sans-serif"
+    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, sans-serif"
     fontSize: "14px"
     fontWeight: 400
     lineHeight: 1.55
     letterSpacing: "normal"
   label:
-    fontFamily: "Space Grotesk, -apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, sans-serif"
+    fontFamily: "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, sans-serif"
     fontSize: "12px"
     fontWeight: 600
     lineHeight: 1.3
@@ -81,15 +83,15 @@ spacing:
   "8": "48px"
 components:
   button-primary:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.surface}"
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.canvas}"
     typography: "{typography.body}"
     rounded: "{rounded.sm}"
     padding: "9px 14px"
     height: "36px"
-  button-accent:
-    backgroundColor: "{colors.accent}"
-    textColor: "{colors.ink}"
+  button-record:
+    backgroundColor: "{colors.danger}"
+    textColor: "{colors.canvas}"
     typography: "{typography.body}"
     rounded: "{rounded.sm}"
     padding: "9px 14px"
@@ -117,7 +119,7 @@ components:
     height: "36px"
   navigation-item-selected:
     backgroundColor: "{colors.rail-selected}"
-    textColor: "{colors.rail-ink}"
+    textColor: "{colors.canvas}"
     typography: "{typography.body}"
     rounded: "{rounded.sm}"
     padding: "8px 10px"
@@ -126,72 +128,76 @@ components:
 
 # Design System: Ari Meeting
 
+> This document and `DESIGN.json` are the load-bearing test fixtures for the **outgoing (frozen) Tauri app** (`frontend/tests/lib/visual-system.test.mjs`), kept in lockstep with `frontend/src/app/globals.css`. The canonical brand is **Marginalia** — `brand/BRAND.md` + `brand/tokens.json`, the go-forward SwiftUI source of truth. This file applies Marginalia to the Tauri app; on any conflict, `brand/BRAND.md` wins.
+
 ## Overview
 
-**Creative North Star: "The Signal Desk"**
+**Creative North Star: "Marginalia — the notebook that listens"**
 
-Ari Meeting should feel like a precise desktop workbench with the warmth of the Arivo brand. A warm cream canvas holds the meeting; a navy-inked rail holds tools and state. Navigation is compact, predictable, and low-chrome. Transcript, summary, notes, and local model feedback are allowed to breathe without being wrapped in a grid of decorative cards.
+Ari Meeting should feel like a working instrument in a private study, not a SaaS dashboard: **two inks on warm paper.** A porcelain paper canvas holds the meeting; a warm elevated-paper rail holds tools and state. Navigation is compact, predictable, and low-chrome. Transcript, summary, notes, and local model feedback breathe without being wrapped in a grid of decorative cards.
 
-The visual signature comes from the Arivo palette — warm cream canvas, deep navy ink and structure, and a scarce golden Arivo Amber accent — set in Space Grotesk with tight geometry and unusually clear state language. It reads like a sharp product organization with taste, not a generic SaaS dashboard.
+The visual signature comes from the Marginalia palette — porcelain and espresso paper grounds, a warm-charcoal body ink paired with an Iron Gall **heading ink** (the second ink), and a scarce **Shin-kai** interactive accent — set in **Bricolage Grotesque** headings over an **SF Pro** body, with tight geometry and unusually honest state language.
 
 **Key Characteristics:**
 
-- Warm cream canvas with a navy-inked utility rail (deep navy rail and canvas in dark mode).
-- Restrained Arivo Amber reserved for recording, current AI work, and decisive selection.
+- Warm porcelain canvas with a warm elevated-paper rail (both go espresso in dark mode) — no navy rail.
+- Two inks: warm-charcoal body text and non-interactive Iron Gall headings.
+- Restrained Shin-kai accent reserved for selection, citations, links, and speaker names.
 - Flat-by-default surfaces separated by warm tone and one-pixel borders.
-- Compact controls with generous reading width where content matters.
 - State-driven motion only; no decorative page choreography.
 
 ## Colors
 
-The palette is warm-neutral and high-contrast. Color is functional, scarce, and therefore meaningful. Every neutral is warm — cream, taupe, tan — never cool gray.
+The palette is warm-neutral and high-contrast. Color is functional, scarce, and therefore meaningful. Every neutral is warm — porcelain, espresso, charcoal, taupe — never cool gray.
 
 ### Primary
 
-- **Navy Ink (`#1A2B4A`):** primary actions, headings, critical text, and the structural rail.
-- **Arivo Amber (`#E8A020`):** recording, active AI work, and rare signature emphasis. It must not become decoration.
+- **Shin-kai (`#1B3A8C`):** the sole interactive ink — selection, citations, links, speaker names, and the one primary action per view (its only solid fill). If it's Shin-kai, you can act on it.
+- **Iron Gall heading ink (`#152C66`):** headings and display text only — the "second ink". Non-interactive; never a fill, never a state signal.
+- **Warm Charcoal Ink (`#2B2620`):** body copy and controls — never pure black.
 
 ### Secondary
 
-- **Warm Cream Canvas (`#F4F1EB`):** the application background behind working surfaces (brand cream `#EDE8DF` family).
-- **Card Surface (`#FBFAF8`):** transcript, summary, editor, dialog, and field surfaces — warm near-white.
-- **Layer Neutrals:** warm hover, selected, recessed, and disabled differentiation (`surface-subtle`, `surface-strong`).
+- **Porcelain Paper Canvas (`#FAF8F5`):** the application background behind working surfaces.
+- **Card Surface (`#FFFFFF`):** transcript, summary, editor, dialog, and field surfaces.
+- **Elevated Paper (`#F1EDE6`):** the sidebar/rail ground and grouped regions; warm hover/recessed layers (`surface-subtle`, `surface-strong`).
 
 ### Neutral
 
-- **Muted Ink (`#566276`):** secondary descriptions and metadata (blue-gray).
-- **Faint Ink (`#8A8578`):** placeholders and tertiary information only when contrast remains valid.
-- **Structural Border (`#D9D3C9`):** one-pixel warm separation between adjacent functional regions.
+- **Secondary Ink (`#6F6759`):** secondary descriptions and metadata (AA at any size). Never the only copy of critical information.
+- **Faint Ink (`#A89F92`):** placeholders and tertiary information only when contrast remains valid.
+- **Hairline (`#E6E1D8`):** one-pixel warm separation between adjacent functional regions.
 
 ### Dark Mode
 
-Dark mode is navy-grounded, not a naive inversion: canvas `#0D192B`, card surface `#17233B`, rail `#0B1522`, ink becomes warm cream `#F1EDE4`, and the accent brightens slightly to `#EEA82F`. Contrast and the amber-for-state discipline are preserved on both grounds.
+Dark mode is espresso-grounded, not a naive inversion: canvas `#211E1B`, card surface `#2D2925`, rail `#2B2723`, body ink becomes paper-white `#EDE8E1`, heading ink becomes ink-washed paper-white `#E8EAF2` (blue-black cannot survive honestly on dark), and the Shin-kai accent lifts to `#7E9BE8`. Contrast and the accent-for-interaction discipline are preserved on both grounds.
 
 ### Named Rules
 
-**The Signal Rule.** Arivo Amber appears on no more than 8% of a screen. Use it only for recording, active local AI work, a current selection that needs immediate recognition, or the app icon.
+**The Signal Rule.** The Shin-kai accent appears on no more than 8% of a screen and only for selection, citations, links, and speaker names. Solid Shin-kai fill is reserved for the one primary action per view.
 
-**The Warm Neutral Rule.** Every neutral is warm (cream, taupe, tan). Never introduce cool gray or blue-gray fills; the amber-on-navy pairing is the signature, and warm creams keep it grounded.
+**The Two-Ink Rule.** Body text is warm charcoal; headings and display text use the Iron Gall second ink (Bricolage Grotesque). The heading ink is non-interactive and never signals state — it sits outside the accent budget.
 
-**The Two-World Rule.** The rail and the canvas are both warm and separated by tone plus a one-pixel border: in light mode the rail is a deeper cream over a lighter cream canvas; in dark mode both go deep navy. Ink, primary actions, and structure are navy.
+**The Warm Neutral Rule.** Every neutral is warm (porcelain, espresso, charcoal, taupe). Never introduce cool gray or blue-gray fills.
 
 **The No Fake State Rule.** Semantic colors and progress treatments require authoritative application state and a text or icon label.
 
 ## Typography
 
-**Display and Body Font:** **Space Grotesk**, bundled locally (`frontend/public/fonts/SpaceGrotesk-Variable.woff2`) so it renders offline. It is the Arivo brand face and is used for headings, titles, controls, labels, and long transcripts alike — geometric and clean with just enough personality.
-**Label/Mono Font:** the native monospace stack (SF Mono → `ui-monospace`), reserved for timestamps, model identifiers, and technical values.
+**Heading/Display Font:** **Bricolage Grotesque** (SIL OFL), bundled locally (`frontend/public/fonts/BricolageGrotesque-Variable.woff2`) so it renders offline. Headings and display text only, at ≥ 17px; it keeps a grotesque lineage with the outgoing Space Grotesk while its ink traps carry the fountain-pen story.
+**Body/UI Font:** the native **SF Pro** system stack — all body, controls, labels, and metadata; SF Pro Semibold stands in for headings below the 17px floor.
+**Mono Font:** the native monospace stack (SF Mono → `ui-monospace`), reserved for timestamps, model identifiers, and technical values (tabular numerals).
 
-**Character:** Precise, calm, and slightly editorial. Hierarchy comes from confident weight, compact letter-spacing, and deliberate reading measures rather than oversized marketing copy.
+**Character:** Precise, calm, and literate. Hierarchy comes from confident weight, the two-ink distinction, and deliberate reading measures rather than oversized marketing copy.
 
 ### Hierarchy
 
-- **Display** (650, 32px, 1.08): route-defining titles only; never a greeting that repeats the navigation context.
-- **Headline** (650, 24px, 1.15): primary workspace sections and meeting titles.
-- **Title** (600, 17px, 1.3): panels, dialogs, and high-value rows.
-- **Body** (400, 14px, 1.55): controls and explanatory copy; long-form prose is capped at 72ch.
-- **Label** (600, 12px, 0.02em): compact metadata and short section labels, normally sentence case; uppercase eyebrows use muted ink, not amber.
-- **Mono** (500, 12px, 1.4): timestamps, model identifiers, file formats, and technical values.
+- **Display** (Bricolage 700, 32px, 1.08): route-defining titles only, in heading ink; never a greeting that repeats the navigation context.
+- **Headline** (Bricolage 700, 24px, 1.15): primary workspace sections and meeting titles, heading ink.
+- **Title** (Bricolage 600, 17px, 1.3): panels, dialogs, and high-value rows, heading ink.
+- **Body** (SF Pro 400, 14px, 1.55): controls and explanatory copy; long-form prose is capped at 72ch.
+- **Label** (SF Pro 600, 12px, 0.02em): compact metadata and short section labels; uppercase eyebrows use secondary ink, never accent or heading ink.
+- **Mono** (SF Mono 500, 12px, 1.4): timestamps, model identifiers, file formats, and technical values.
 
 ### Named Rules
 
@@ -205,10 +211,11 @@ The system is flat by default. Depth comes from tonal layering, one-pixel border
 
 ### Shadow Vocabulary
 
-- **Floating Control** (`0 8px 24px rgba(26, 43, 74, 0.10)`): popovers, menus, and compact floating controls.
-- **Dialog** (`0 24px 64px rgba(26, 43, 74, 0.18)`): blocking dialogs and recovery/import overlays.
-- **Focus Halo** (`0 0 0 3px rgba(232, 160, 32, 0.18)`): keyboard focus paired with a solid amber outline.
-- **Amber Glow** (`radial-gradient(ellipse at 70% 30%, rgba(232, 160, 32, 0.14), transparent 60%)`): optional low-opacity warmth behind hero/recording surfaces, echoing the logo arc.
+- **Floating Control** (`0 8px 24px rgba(43, 38, 32, 0.10)`): popovers, menus, and compact floating controls.
+- **Dialog** (`0 24px 64px rgba(43, 38, 32, 0.18)`): blocking dialogs and recovery/import overlays.
+- **Focus Halo** (`0 0 0 3px rgba(27, 58, 140, 0.18)`): keyboard focus paired with a solid Shin-kai outline.
+
+No gradients, no glassmorphism of our own — the warm palette carries the paper feeling on its own.
 
 ### Named Rules
 
@@ -223,33 +230,33 @@ Components are compact and familiar. Their personality comes from precision and 
 ### Buttons
 
 - **Shape:** compact rectangular controls with gently softened corners (6px).
-- **Primary:** Navy Ink fill, warm-surface text, 36px height. One primary action per screen.
-- **Accent:** Arivo Amber only for recording or active AI operations. Pair filled amber with Navy Ink text for contrast.
-- **Hover / Focus:** tonal shift in 180ms; keyboard focus uses a solid amber outline and soft halo.
+- **Primary:** solid Shin-kai fill, porcelain text, 36px height. One primary action per screen — the only solid accent fill.
+- **Recording:** recording red (`#C6362C`) only for starting or representing active capture; never co-branded with the accent.
+- **Hover / Focus:** tonal shift in 180ms; keyboard focus uses a solid Shin-kai outline and soft halo.
 - **Secondary / Ghost:** Card Surface with one-pixel border, or transparent when placed in a toolbar.
 
 ### Chips
 
 - **Style:** small tonal labels with 6px corners, never decorative pills by default.
-- **State:** semantic icon plus text. A selected filter may use Accent Soft with a dark-amber label; the active recording chip is the one place a solid amber fill is welcome.
+- **State:** semantic icon plus text. A selected filter uses the Shin-kai selection wash with accent text; the active recording chip is recording red.
 
 ### Cards / Containers
 
 - **Corner Style:** 10px only for independent bounded objects; continuous workspace regions remain square or 4px.
 - **Background:** Card Surface or a named warm layer neutral.
 - **Shadow Strategy:** flat at rest.
-- **Border:** one-pixel Structural Border when adjacent tone is insufficient.
+- **Border:** one-pixel Hairline when adjacent tone is insufficient.
 - **Internal Padding:** 16px compact, 24px reading, 32px major workspace.
 
 ### Inputs / Fields
 
 - **Style:** Card Surface, one-pixel border, 6px corners, 36px standard height.
-- **Focus:** Border becomes Arivo Amber and receives the Focus Halo.
+- **Focus:** Border becomes Shin-kai and receives the Focus Halo.
 - **Error / Disabled:** error includes text and icon; disabled lowers contrast without hiding the control's label.
 
 ### Navigation
 
-The rail uses muted navy labels on warm cream at rest (cream labels on deep navy in dark mode), a quiet tonal hover layer, and a clearly differentiated selected row. The Arivo wordmark sits at the top of the rail (gray on light, white on dark) above the "Ari Meeting" product label. The persistent shell uses the app's structural glyphs (`MeetilyGlyph`) at 16–18px with a consistent 1.45px rounded stroke; descriptive content actions may use the established semantic icon library. The recording control is separated from route navigation and uses Arivo Amber only when it needs to dominate.
+The rail uses secondary-ink labels on warm paper at rest (paper-white on espresso in dark mode), a quiet tonal hover layer, and a clearly differentiated selected row (Shin-kai). The **Dictation mark** — the cursive "a" whose tail runs out as a hand-drawn waveform (`AriMark`, rendered in Shin-kai) — sits at the top of the rail above the "Ari Meeting" product label, collapsing to the signature flick on the narrow rail. The persistent shell uses the app's structural glyphs (`MeetilyGlyph`) at 16–18px with a consistent 1.45px rounded stroke; descriptive content actions may use the established semantic icon library. The recording control is separated from route navigation and uses recording red only when it needs to dominate.
 
 ### Meeting Workspace
 
@@ -259,9 +266,10 @@ The meeting title and authoritative date establish context. Summary is the first
 
 ### Do:
 
-- **Do** use the warm cream canvas and navy rail as the primary compositional structure.
-- **Do** keep Arivo Amber scarce and tied to real recording, AI, or selection state.
-- **Do** keep every neutral warm — cream, taupe, tan.
+- **Do** use the warm porcelain canvas and warm-paper rail as the primary compositional structure.
+- **Do** keep the Shin-kai accent scarce and tied to real selection, citation, link, or speaker-name state.
+- **Do** render headings in Bricolage Grotesque and the Iron Gall heading ink.
+- **Do** keep every neutral warm — porcelain, espresso, charcoal, taupe.
 - **Do** use 4/8/12/16/24/32/40/48 spacing tokens and 6/10/14px radii only.
 - **Do** preserve every local command, lifecycle lock, keyboard path, and missing/error state during visual migration.
 - **Do** let transcript, summary, and notes own the space instead of wrapping every section in a card.
@@ -270,8 +278,8 @@ The meeting title and authoritative date establish context. Summary is the first
 ### Don't:
 
 - **Don't** use cool gray or blue-gray neutrals; the palette is warm throughout.
-- **Don't** use upstream Meetily's mixed utility-screen styling, hard-coded gray/blue controls, or form-first hierarchy.
-- **Don't** spread Arivo Amber onto labels, eyebrows, or decoration — uppercase labels use muted ink.
+- **Don't** reintroduce the retired golden-amber accent or the navy-rail two-world system.
+- **Don't** spread the Shin-kai accent onto labels, eyebrows, or decoration; do not use the heading ink interactively.
 - **Don't** build generic AI dashboards with oversized greetings, equal-weight card grids, decorative gradients, fake metrics, fake progress, or invented assistant states.
 - **Don't** use gradient text, glassmorphism, colored side-stripe borders, nested cards, or permanent decorative shadows.
 - **Don't** add a visual field, badge, progress value, citation, or status that lacks an authoritative local contract.

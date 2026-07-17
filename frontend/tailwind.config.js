@@ -9,8 +9,13 @@ module.exports = {
   theme: {
   	extend: {
 		fontFamily: {
+			// Marginalia: body/UI is the native SF Pro system stack; Bricolage
+			// Grotesque (bundled) is headings/display only (see globals.css).
 			sans: [
-				'Space Grotesk', '-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Helvetica Neue', 'Segoe UI', 'sans-serif'
+				'-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Helvetica Neue', 'Segoe UI', 'sans-serif'
+			],
+			display: [
+				'Bricolage Grotesque', '-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'sans-serif'
 			],
 			mono: [
 				'SFMono-Regular', 'SF Mono', 'ui-monospace', 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', 'monospace'

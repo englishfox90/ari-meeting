@@ -10,7 +10,7 @@ const icons = new URL('src-tauri/icons/', frontend);
 const pngSize = (file) => [file.readUInt32BE(16), file.readUInt32BE(20)];
 const digest = (file) => createHash('sha256').update(file).digest('hex');
 
-test('Arivo Amber icon assets match the configured desktop packaging contract', async () => {
+test('Marginalia icon assets match the configured desktop packaging contract', async () => {
   const requiredPngs = [
     ['icon.png', 512],
     ['icon_16x16.png', 16],
@@ -39,12 +39,12 @@ test('Arivo Amber icon assets match the configured desktop packaging contract', 
   // No dangling asset-catalog reference — the icon resolves from the .icns.
   assert.doesNotMatch(infoPlist, /CFBundleIconName/);
 
-  // Master art: the Arivo amber crescent-ring mark on the #0B1522 navy rail.
-  assert.match(svg, /#E8A020/);
-  assert.match(svg, /#0B1522/);
-  assert.match(svg, /linearGradient/);
-  assert.doesNotMatch(svg, /#E92C78/i);
-  assert.equal(digest(Buffer.from(svg)), '0f6e9192e5b375132d3fc7f6a5ba5881ec92dda4c6665d25438b5d7fd4a9093e');
+  // Master art: the Marginalia "Dictation" mark in Iron Gall ink (#152C66) on
+  // the porcelain paper field (#FAF8F5). The retired amber/navy must be gone.
+  assert.match(svg, /#152C66/);
+  assert.match(svg, /#FAF8F5/);
+  assert.doesNotMatch(svg, /#E8A020|#0B1522|#E92C78/i);
+  assert.equal(digest(Buffer.from(svg)), 'b2b7dc7df2c3b2ddd34093e6fe17b5400ddbb06448bbc8337d0566ae23bf365e');
 
   for (const [index, [, size]] of requiredPngs.entries()) {
     assert.deepEqual(pngSize(files[index]), [size, size]);
@@ -58,7 +58,7 @@ test('Arivo Amber icon assets match the configured desktop packaging contract', 
   ]);
   assert.ok(icns.size > 0);
   assert.ok(ico.size > 0);
-  assert.equal(digest(await readFile(new URL('icon.png', icons))), '7ba987d66991d6c0540df651b50a6ee0e836bca3ff9f502f4b36bae4e9cf0fc6');
-  assert.equal(digest(await readFile(new URL('app_icon.icns', icons))), '1e9fd0193e74062cdfa3575913a13f196516bc657835327ec3d4da8cf1552d4e');
+  assert.equal(digest(await readFile(new URL('icon.png', icons))), '7ab27c4d12dd4b51c2d54917ea187115012c1d3ec6dd9fb157e7be963c57c173');
+  assert.equal(digest(await readFile(new URL('app_icon.icns', icons))), 'c0a6f499ddb0769227ccc9a2d95d75dcfd6ea1dda593241d54defa68224b68f0');
   assert.equal(digest(publicIcon), digest(sourceIcon));
 });

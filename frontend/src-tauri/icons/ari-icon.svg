@@ -1,16 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Ari Meeting app icon: the Arivo amber crescent-ring mark (opening upper-right,
-       matching ArivoMark.tsx) on the deep-navy rail. Canonical vector twin of the
-       rasterized assets produced by frontend/scripts/gen-app-icon.mjs. -->
-  <defs>
-    <linearGradient id="ring" x1="205" y1="819" x2="819" y2="205" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#E8A020"/>
-      <stop offset="0.55" stop-color="#B4741A"/>
-      <stop offset="1" stop-color="#5A3A12"/>
-    </linearGradient>
-  </defs>
-  <rect width="1024" height="1024" rx="230" fill="#0B1522"/>
-  <circle cx="512" cy="512" r="307"
-    fill="none" stroke="url(#ring)" stroke-width="59" stroke-linecap="round"
-    stroke-dasharray="1621 308"/>
+  <!-- Ari Meeting app icon (Marginalia): the R2 "Dictation" mark — a cursive "a"
+       whose tail runs out as a hand-drawn waveform — in Iron Gall ink (#152C66)
+       on the porcelain paper field (#FAF8F5), standard macOS squircle (22.37%
+       corner radius). Icon-weight cut, gesture ~60% of the field, centered.
+       Canonical vector twin of the rasters produced by
+       frontend/scripts/gen-app-icon.mjs. See brand/assets/app-icon.svg. -->
+  <rect x="100" y="100" width="824" height="824" rx="184.3" fill="#FAF8F5"/>
+  <g transform="translate(162.77 291.52) scale(6.1156)" fill="none" stroke="#152C66" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M46 26 C37 18 23 23 21 34 C19 46 31 54 41 48" stroke-width="10.5"/>
+    <path d="M46 26 C43.5 23 40 21.4 36.5 21.6" stroke-width="5.5"/>
+    <path d="M47 20 C45.3 30 45.3 40 48 47" stroke-width="10.5"/>
+    <path d="M48 47 C50.5 51.5 55 49.5 57 43 C58.6 38 60 34.5 62.5 34.5" stroke-width="8"/>
+    <path d="M62.5 34.5 C66 34.5 65.5 45 69.5 45 C73.5 45 73.5 29.5 78 29" stroke-width="6"/>
+    <path d="M78 29 C81.5 28.7 82 38 86 40 C88.3 41 90.5 40 92.5 37.5" stroke-width="4.2"/>
+  </g>
 </svg>

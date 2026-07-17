@@ -22,12 +22,15 @@ test('global shell uses the documented Arivo amber visual system', async () => {
     readFile(new URL('../DESIGN.json', root), 'utf8'),
   ]);
 
-  assert.match(css, /--accent: 38 81% 52%/);
+  assert.match(css, /--accent: 224 68% 33%/);
   assert.match(css, /\.dark \{/);
   assert.match(css, /min-width: 1100px/);
-  assert.match(css, /--sidebar: 38 24% 89%/);
-  assert.match(css, /--sidebar-selection: 38 81% 52%/);
-  assert.doesNotMatch(css, /--background: 42 26% 96%/);
+  assert.match(css, /--sidebar: 38 28% 92%/);
+  assert.match(css, /--sidebar-selection: 224 68% 33%/);
+  // Iron Gall heading ink (the "second ink") is a distinct token.
+  assert.match(css, /--heading: 223 66% 24%/);
+  // The retired Arivo amber accent must not resurface.
+  assert.doesNotMatch(css, /--accent: 38 81% 52%/);
   assert.match(sidebar, /bg-\[hsl\(var\(--sidebar\)\/0\.94\)\]/);
   assert.match(sidebar, /MeetilyGlyph/);
   assert.doesNotMatch(sidebar, /@heroicons\/react\/24\/outline/);
@@ -71,13 +74,17 @@ test('global shell uses the documented Arivo amber visual system', async () => {
   assert.doesNotMatch(postRecording, /rounded-(?:lg|xl)/);
 
   const combinedDocs = `${designMarkdown}\n${designJson}`;
-  // Design docs must describe the shipped Arivo theme (amber #E8A020, navy #1A2B4A,
-  // warm cream, Space Grotesk) — not the retired signal-orange or graphite/cool system.
-  assert.match(combinedDocs, /Arivo Amber/);
-  assert.match(combinedDocs, /#E8A020/);
-  assert.match(combinedDocs, /#1A2B4A/);
-  assert.match(combinedDocs, /Space Grotesk/);
-  assert.match(combinedDocs, /[Ww]arm [Cc]ream/);
+  // Design docs must describe the shipped Marginalia theme — two inks on warm
+  // paper: Shin-kai accent (#1B3A8C), Iron Gall heading ink (#152C66), porcelain
+  // paper, Bricolage Grotesque — not the retired Arivo amber/navy system.
+  assert.match(combinedDocs, /Shin-kai/);
+  assert.match(combinedDocs, /#1B3A8C/);
+  assert.match(combinedDocs, /Iron Gall/);
+  assert.match(combinedDocs, /#152C66/);
+  assert.match(combinedDocs, /Bricolage Grotesque/);
+  assert.match(combinedDocs, /[Pp]orcelain|[Ww]arm [Pp]aper/);
+  // The retired Arivo amber/navy system must not resurface as the described theme.
+  assert.doesNotMatch(combinedDocs, /Arivo Amber/);
+  assert.doesNotMatch(combinedDocs, /#E8A020/);
   assert.doesNotMatch(combinedDocs, /Electric Rose|#E92C78/i);
-  assert.doesNotMatch(combinedDocs, /Cool Canvas|Graphite Rail|Graphite Ink|#F06A2A/);
 });

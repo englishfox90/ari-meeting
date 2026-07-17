@@ -2,13 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Arivo brand typography — Space Grotesk, bundled locally for offline use. */
+/* Marginalia brand typography — Bricolage Grotesque (headings/display only),
+   bundled locally for offline use. Body/UI use the native SF Pro system stack. */
 @font-face {
-  font-family: "Space Grotesk";
+  font-family: "Bricolage Grotesque";
   font-style: normal;
-  font-weight: 300 700;
+  font-weight: 200 800;
   font-display: swap;
-  src: url("/fonts/SpaceGrotesk-Variable.woff2") format("woff2");
+  src: url("/fonts/BricolageGrotesque-Variable.woff2") format("woff2");
 }
 
 @keyframes vibrate {
@@ -108,83 +109,87 @@
 
 @layer base {
   /*
-   * Arivo Design System palette — golden amber (#E8A020) accent, deep navy
-   * (#1A2B4A) ink, warm cream canvas. See paul-style brand guide.
+   * Marginalia palette — "two inks on paper". Warm porcelain canvas (#FAF8F5),
+   * warm-charcoal body ink (#2B2620), Iron Gall heading ink (#152C66, the
+   * non-interactive "second ink" → --heading), Shin-kai interactive accent
+   * (#1B3A8C). Every neutral is warm; no cool grays. See brand/BRAND.md.
    */
   :root {
-    --background: 38 30% 94%;
-    --foreground: 219 45% 18%;
-    --card: 40 30% 98%;
-    --card-foreground: 219 45% 18%;
-    --popover: 40 30% 98%;
-    --popover-foreground: 219 45% 18%;
-    --primary: 219 48% 20%;
-    --primary-foreground: 40 30% 96%;
-    --secondary: 38 24% 90%;
-    --secondary-foreground: 219 45% 18%;
-    --muted: 38 22% 90%;
-    --muted-foreground: 218 16% 40%;
-    --accent: 38 81% 52%;
-    --accent-foreground: 219 52% 14%;
-    --accent-soft: 36 80% 91%;
-    --destructive: 0 47% 47%;
+    --background: 36 33% 97%;
+    --foreground: 33 15% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 33 15% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 33 15% 15%;
+    --primary: 224 68% 33%;
+    --primary-foreground: 36 33% 97%;
+    --secondary: 38 28% 92%;
+    --secondary-foreground: 33 15% 15%;
+    --muted: 38 28% 92%;
+    --muted-foreground: 38 11% 39%;
+    --accent: 224 68% 33%;
+    --accent-foreground: 36 33% 97%;
+    --accent-soft: 224 30% 90%;
+    --heading: 223 66% 24%;
+    --destructive: 4 64% 47%;
     --destructive-foreground: 0 0% 100%;
-    --success: 154 39% 27%;
+    --success: 134 29% 37%;
     --warning: 37 77% 40%;
-    --info: 212 48% 42%;
-    --border: 38 17% 82%;
-    --input: 38 15% 75%;
-    --ring: 38 81% 52%;
+    --info: 224 60% 42%;
+    --border: 39 22% 87%;
+    --input: 39 18% 80%;
+    --ring: 224 68% 33%;
     --radius: 0.625rem;
-    --sidebar: 38 24% 89%;
-    --sidebar-hover: 38 22% 84%;
-    --sidebar-selection: 38 81% 52%;
-    --sidebar-foreground: 219 45% 18%;
-    --sidebar-muted: 218 15% 42%;
-    --sidebar-border: 38 17% 80%;
-    --shadow-color: 219 45% 18%;
-    --chart-1: 38 81% 52%;
-    --chart-2: 219 48% 30%;
-    --chart-3: 154 39% 27%;
+    --sidebar: 38 28% 92%;
+    --sidebar-hover: 38 24% 87%;
+    --sidebar-selection: 224 68% 33%;
+    --sidebar-foreground: 33 15% 15%;
+    --sidebar-muted: 38 11% 39%;
+    --sidebar-border: 39 22% 87%;
+    --shadow-color: 33 15% 15%;
+    --chart-1: 224 68% 33%;
+    --chart-2: 223 66% 24%;
+    --chart-3: 134 29% 37%;
     --chart-4: 37 77% 44%;
-    --chart-5: 0 47% 47%;
+    --chart-5: 4 64% 47%;
   }
 
   .dark {
-    --background: 216 52% 11%;
-    --foreground: 40 30% 92%;
-    --card: 219 44% 16%;
-    --card-foreground: 40 30% 92%;
-    --popover: 219 44% 17%;
-    --popover-foreground: 40 30% 92%;
-    --primary: 40 30% 92%;
-    --primary-foreground: 219 50% 14%;
-    --secondary: 219 32% 20%;
-    --secondary-foreground: 40 30% 92%;
-    --muted: 219 28% 20%;
-    --muted-foreground: 37 18% 72%;
-    --accent: 38 85% 56%;
-    --accent-foreground: 219 52% 12%;
-    --accent-soft: 38 38% 20%;
-    --destructive: 0 55% 56%;
-    --destructive-foreground: 0 0% 100%;
-    --success: 154 42% 45%;
+    --background: 30 10% 12%;
+    --foreground: 35 25% 91%;
+    --card: 30 10% 16%;
+    --card-foreground: 35 25% 91%;
+    --popover: 30 10% 16%;
+    --popover-foreground: 35 25% 91%;
+    --primary: 224 70% 70%;
+    --primary-foreground: 30 10% 12%;
+    --secondary: 30 10% 15%;
+    --secondary-foreground: 35 25% 91%;
+    --muted: 30 10% 15%;
+    --muted-foreground: 35 11% 62%;
+    --accent: 224 70% 70%;
+    --accent-foreground: 30 10% 12%;
+    --accent-soft: 224 25% 24%;
+    --heading: 228 28% 93%;
+    --destructive: 5 100% 68%;
+    --destructive-foreground: 30 10% 12%;
+    --success: 142 31% 65%;
     --warning: 38 78% 55%;
-    --info: 212 58% 62%;
-    --border: 219 26% 24%;
-    --input: 219 24% 30%;
-    --ring: 38 85% 56%;
-    --sidebar: 216 50% 9%;
-    --sidebar-hover: 219 34% 16%;
-    --sidebar-selection: 38 85% 56%;
-    --sidebar-foreground: 40 28% 90%;
-    --sidebar-muted: 37 15% 68%;
-    --sidebar-border: 219 26% 22%;
-    --chart-1: 38 85% 56%;
-    --chart-2: 219 55% 55%;
-    --chart-3: 154 45% 48%;
-    --chart-4: 37 80% 55%;
-    --chart-5: 0 60% 62%;
+    --info: 224 70% 70%;
+    --border: 33 10% 22%;
+    --input: 33 10% 28%;
+    --ring: 224 70% 70%;
+    --sidebar: 30 10% 15%;
+    --sidebar-hover: 30 10% 19%;
+    --sidebar-selection: 224 70% 70%;
+    --sidebar-foreground: 35 25% 91%;
+    --sidebar-muted: 35 11% 62%;
+    --sidebar-border: 33 10% 22%;
+    --chart-1: 224 70% 70%;
+    --chart-2: 228 28% 93%;
+    --chart-3: 142 31% 65%;
+    --chart-4: 38 78% 55%;
+    --chart-5: 5 100% 68%;
   }
 }
 
@@ -201,11 +206,30 @@
   /* html, */
   body {
     @apply bg-background text-foreground;
-    font-family: "Space Grotesk", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", sans-serif;
     font-feature-settings: "kern" 1, "liga" 1, "tnum" 1, "calt" 1;
     font-kerning: normal;
     overflow: hidden;
     height: 100%;
+  }
+
+  /*
+   * The "second ink" (Marginalia §4/§5): headings and display text render in
+   * Bricolage Grotesque. The font swap is safe globally; the non-interactive
+   * Iron Gall heading ink (--heading) is applied only via the explicit brand
+   * classes below, where the ground is known to be the canvas (never an accent
+   * or inverted surface, where a fixed blue would break contrast).
+   */
+  h1,
+  h2,
+  h3 {
+    font-family: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+
+  .app-display,
+  .app-heading {
+    font-family: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    color: hsl(var(--heading));
   }
 
   /*
