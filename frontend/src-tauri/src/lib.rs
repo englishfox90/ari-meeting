@@ -60,7 +60,6 @@ pub mod openrouter;
 pub mod parakeet_engine;
 pub mod persons;
 pub mod recall;
-pub mod state;
 pub mod summary;
 pub mod tray;
 pub mod utils;
@@ -548,7 +547,7 @@ pub fn run() {
             .expect("Failed to initialize database");
 
             // Periodic calendar background sync (F4 Phase 2) — runs on its own loop,
-            // independent of any command call; safe to spawn now that AppState is managed.
+            // independent of any command call; safe to spawn now that the engine is managed.
             calendar::sync::spawn_background_sync(_app.handle().clone());
 
             // Recall (F7): backfill the semantic index for existing meetings in the
@@ -563,9 +562,18 @@ pub fn run() {
                 }
                 let app_handle_for_recall = _app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let pool = {
-                        let state = app_handle_for_recall.state::<state::AppState>();
-                        state.db_manager.pool().clone()
+                    // DB now comes from the engine's deferred-init manager; on first
+                    // launch it may not be ready yet — skip backfill gracefully.
+                    let pool = match app_handle_for_recall
+                        .state::<std::sync::Arc<engine::Engine>>()
+                        .db()
+                        .await
+                    {
+                        Ok(db) => db.pool().clone(),
+                        Err(e) => {
+                            log::warn!("recall: startup backfill skipped, DB not ready: {e}");
+                            return;
+                        }
                     };
                     match recall::indexer::reindex_all(&pool, false).await {
                         Ok(count) => {
@@ -874,16 +882,24 @@ pub fn run() {
                 tauri::RunEvent::Exit => {
                     log::info!("Application exiting, cleaning up resources...");
                     tauri::async_runtime::block_on(async {
-                        // Clean up database connection and checkpoint WAL
-                        if let Some(app_state) = _app_handle.try_state::<state::AppState>() {
-                            log::info!("Starting database cleanup...");
-                            if let Err(e) = app_state.db_manager.cleanup().await {
-                                log::error!("Failed to cleanup database: {}", e);
-                            } else {
-                                log::info!("Database cleanup completed successfully");
+                        // Clean up database connection and checkpoint WAL (via the
+                        // engine's deferred-init DB manager).
+                        match _app_handle
+                            .state::<std::sync::Arc<engine::Engine>>()
+                            .db()
+                            .await
+                        {
+                            Ok(db) => {
+                                log::info!("Starting database cleanup...");
+                                if let Err(e) = db.cleanup().await {
+                                    log::error!("Failed to cleanup database: {}", e);
+                                } else {
+                                    log::info!("Database cleanup completed successfully");
+                                }
                             }
-                        } else {
-                            log::warn!("AppState not available for database cleanup (likely first launch)");
+                            Err(_) => {
+                                log::warn!("Database not initialized for cleanup (likely first launch)");
+                            }
                         }
 
                         // Clean up sidecar

@@ -7,7 +7,6 @@ use super::constants::AUDIO_EXTENSIONS;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::engine::{Engine, EventSink};
 use crate::parakeet_engine::ParakeetEngine;
-use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
@@ -104,7 +103,7 @@ pub async fn start_retranscription<R: Runtime>(
 
     // EventSink for this retranscription, derived from the managed Engine. `app`
     // itself stays in scope for `run_retranscription`, which needs it for
-    // AppState/whisper/parakeet access well beyond emitting events.
+    // engine/whisper/parakeet access well beyond emitting events.
     let sink = app.state::<Arc<Engine>>().event_sink();
 
     let use_parakeet = provider.as_deref() == Some("parakeet");
@@ -440,13 +439,15 @@ async fn run_retranscription<R: Runtime>(
     // Create transcript segments with proper timestamps from VAD
     let segments = create_transcript_segments(&all_transcripts);
 
-    // Save to database
-    let app_state = app
-        .try_state::<AppState>()
-        .ok_or_else(|| anyhow!("App state not available"))?;
+    // Save to database (via the engine's deferred-init DB manager)
+    let db = app
+        .state::<std::sync::Arc<crate::engine::Engine>>()
+        .db()
+        .await
+        .map_err(|e| anyhow!(e))?;
 
     // Wrap delete+insert+update in a transaction to prevent data loss
-    let pool = app_state.db_manager.pool();
+    let pool = db.pool();
     let mut conn = pool.acquire().await.map_err(|e| anyhow!("DB error: {}", e))?;
     let mut tx = sqlx::Connection::begin(&mut *conn)
         .await
@@ -612,11 +613,13 @@ async fn get_or_init_whisper<R: Runtime>(
 async fn get_configured_whisper_model<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
     debug!("Getting configured Whisper model from database...");
 
-    let app_state = app
-        .try_state::<AppState>()
-        .ok_or_else(|| {
-            error!("App state not available");
-            anyhow!("App state not available")
+    let db = app
+        .state::<std::sync::Arc<crate::engine::Engine>>()
+        .db()
+        .await
+        .map_err(|e| {
+            error!("DB not ready: {e}");
+            anyhow!(e)
         })?;
 
     debug!("Querying transcript_settings table...");
@@ -625,7 +628,7 @@ async fn get_configured_whisper_model<R: Runtime>(app: &AppHandle<R>) -> Result<
     let result: Option<(String, String)> = sqlx::query_as(
         "SELECT provider, model FROM transcript_settings WHERE id = '1'"
     )
-    .fetch_optional(app_state.db_manager.pool())
+    .fetch_optional(db.pool())
     .await
     .map_err(|e| {
         error!("Failed to query transcript config: {}", e);
@@ -714,18 +717,20 @@ async fn get_or_init_parakeet<R: Runtime>(
 async fn get_configured_parakeet_model<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
     debug!("Getting configured Parakeet model from database...");
 
-    let app_state = app
-        .try_state::<AppState>()
-        .ok_or_else(|| {
-            error!("App state not available");
-            anyhow!("App state not available")
+    let db = app
+        .state::<std::sync::Arc<crate::engine::Engine>>()
+        .db()
+        .await
+        .map_err(|e| {
+            error!("DB not ready: {e}");
+            anyhow!(e)
         })?;
 
     // Query the transcript settings from the database
     let result: Option<(String, String)> = sqlx::query_as(
         "SELECT provider, model FROM transcript_settings WHERE id = '1'"
     )
-    .fetch_optional(app_state.db_manager.pool())
+    .fetch_optional(db.pool())
     .await
     .map_err(|e| {
         error!("Failed to query transcript config: {}", e);

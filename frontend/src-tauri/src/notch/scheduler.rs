@@ -31,7 +31,6 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use crate::database::repositories::calendar::{CalendarEventRow, CalendarRepository};
 use crate::notch::protocol::NotchInbound;
 use crate::notifications::commands::NotificationManagerState;
-use crate::state::AppState;
 
 // ============================================================================
 // Tunables
@@ -228,8 +227,14 @@ async fn tick(
 
     // Load candidate rows from the DB (same pool-access pattern as calendar sync).
     let rows = {
-        let state = app.state::<AppState>();
-        let pool = state.db_manager.pool();
+        let db = match app.state::<std::sync::Arc<crate::engine::Engine>>().db().await {
+            Ok(db) => db,
+            Err(e) => {
+                log::warn!("notch scheduler: DB not ready: {e}");
+                return;
+            }
+        };
+        let pool = db.pool();
         match CalendarRepository::list_events_in_range(pool, range_start, range_end).await {
             Ok(rows) => rows,
             Err(e) => {

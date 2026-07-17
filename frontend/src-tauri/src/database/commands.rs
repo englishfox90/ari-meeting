@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
 use super::manager::DatabaseManager;
-use crate::state::AppState;
 
 #[derive(Serialize)]
 pub struct DatabaseCheckResult {
@@ -160,12 +159,11 @@ pub async fn import_and_initialize_database(
             format!("Failed to import database: {}", e)
         })?;
 
-    // Seed the ari-engine context's deferred DB alongside the legacy AppState.
-    if let Some(engine) = app.try_state::<std::sync::Arc<crate::engine::Engine>>() {
-        engine.set_db(db_manager.clone()).await;
-    }
-    // Update app state with the new manager
-    app.manage(AppState { db_manager });
+    // Install the DB into the engine — the single DB owner now (AppState is gone).
+    app.try_state::<std::sync::Arc<crate::engine::Engine>>()
+        .ok_or_else(|| "Engine not managed; cannot initialize database".to_string())?
+        .set_db(db_manager)
+        .await;
 
     info!("Legacy database imported and initialized successfully");
 
@@ -191,12 +189,11 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
             format!("Failed to initialize database: {}", e)
         })?;
 
-    // Seed the ari-engine context's deferred DB alongside the legacy AppState.
-    if let Some(engine) = app.try_state::<std::sync::Arc<crate::engine::Engine>>() {
-        engine.set_db(db_manager.clone()).await;
-    }
-    // Update app state with the new manager
-    app.manage(AppState { db_manager: db_manager.clone() });
+    // Install the DB into the engine — the single DB owner now (AppState is gone).
+    app.try_state::<std::sync::Arc<crate::engine::Engine>>()
+        .ok_or_else(|| "Engine not managed; cannot initialize database".to_string())?
+        .set_db(db_manager.clone())
+        .await;
 
     // Set default model configuration for fresh installs
     let pool = db_manager.pool();

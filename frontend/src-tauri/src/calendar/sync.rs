@@ -8,7 +8,6 @@
 
 use crate::calendar::eventkit;
 use crate::database::repositories::calendar::{CalendarRepository, NewCalendarEvent};
-use crate::state::AppState;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::SqlitePool;
 
@@ -200,8 +199,14 @@ async fn run_background_sync_once(app: &tauri::AppHandle) {
         return;
     }
 
-    let state = app.state::<AppState>();
-    let pool = state.db_manager.pool();
+    let db = match app.state::<std::sync::Arc<crate::engine::Engine>>().db().await {
+        Ok(db) => db,
+        Err(e) => {
+            log::warn!("📅 Background sync skipped: {e}");
+            return;
+        }
+    };
+    let pool = db.pool();
 
     let selected_ids = match CalendarRepository::selected_calendar_ids(pool).await {
         Ok(ids) => ids,

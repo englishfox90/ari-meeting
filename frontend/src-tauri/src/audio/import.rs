@@ -6,7 +6,6 @@ use crate::audio::vad::get_speech_chunks_with_progress;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::engine::{Engine, EventSink};
 use crate::parakeet_engine::ParakeetEngine;
-use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
 use anyhow::{anyhow, Result};
 use log::{debug, error, info, warn};
@@ -267,7 +266,7 @@ pub async fn start_import<R: Runtime>(
     IMPORT_CANCELLED.store(false, Ordering::SeqCst);
 
     // EventSink for this import, derived from the managed Engine. `app` itself
-    // stays in scope for `run_import`, which needs it for AppState/whisper/
+    // stays in scope for `run_import`, which needs it for engine/whisper/
     // parakeet access well beyond emitting events.
     let sink = app.state::<Arc<Engine>>().event_sink();
 
@@ -651,13 +650,15 @@ async fn run_import<R: Runtime>(
     // Create transcript segments
     let segments = create_transcript_segments(&all_transcripts);
 
-    // Save to database
-    let app_state = app
-        .try_state::<AppState>()
-        .ok_or_else(|| anyhow!("App state not available"))?;
+    // Save to database (via the engine's deferred-init DB manager)
+    let db = app
+        .state::<std::sync::Arc<crate::engine::Engine>>()
+        .db()
+        .await
+        .map_err(|e| anyhow!(e))?;
 
     let meeting_id = create_meeting_with_transcripts(
-        app_state.db_manager.pool(),
+        db.pool(),
         &title,
         &segments,
         meeting_folder.to_string_lossy().to_string(),
@@ -866,14 +867,16 @@ async fn get_or_init_parakeet<R: Runtime>(
 
 /// Get the configured model from database
 async fn get_configured_model<R: Runtime>(app: &AppHandle<R>, provider_type: &str) -> Result<String> {
-    let app_state = app
-        .try_state::<AppState>()
-        .ok_or_else(|| anyhow!("App state not available"))?;
+    let db = app
+        .state::<std::sync::Arc<crate::engine::Engine>>()
+        .db()
+        .await
+        .map_err(|e| anyhow!(e))?;
 
     let result: Option<(String, String)> = sqlx::query_as(
         "SELECT provider, model FROM transcript_settings WHERE id = '1'",
     )
-    .fetch_optional(app_state.db_manager.pool())
+    .fetch_optional(db.pool())
     .await
     .map_err(|e| anyhow!("Failed to query config: {}", e))?;
 
