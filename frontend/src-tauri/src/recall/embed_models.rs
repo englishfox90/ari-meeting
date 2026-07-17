@@ -623,18 +623,6 @@ pub async fn recall_embedder_delete_model<R: Runtime>(
     manager.delete_model(&model_name).await.map_err(|e| e.to_string())
 }
 
-/// Whether the given embedding model (default: the catalog default) is downloaded and ready.
-#[tauri::command]
-pub async fn recall_embedder_is_ready<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, EmbedModelManagerState>,
-    model_name: Option<String>,
-) -> Result<bool, String> {
-    let manager = ensure_manager(&app, &state).await?;
-    let name = model_name.unwrap_or_else(|| get_default_embed_model().name);
-    Ok(manager.is_model_ready(&name).await)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

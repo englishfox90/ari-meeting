@@ -243,17 +243,6 @@ pub async fn open_recordings_folder<R: Runtime>(app: AppHandle<R>) -> Result<(),
     Ok(())
 }
 
-#[tauri::command]
-pub async fn select_recording_folder<R: Runtime>(
-    _app: AppHandle<R>,
-) -> Result<Option<String>, String> {
-    // Use Tauri's dialog to select folder
-    // For now, return None - this would need to be implemented with tauri-plugin-dialog
-    // when it's available in the Cargo.toml
-    warn!("Folder selection not yet implemented - using dialog plugin");
-    Ok(None)
-}
-
 // Backend selection commands
 
 /// Get available audio capture backends for the current platform

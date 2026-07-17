@@ -161,18 +161,6 @@ pub async fn ask_message_append(
 }
 
 #[tauri::command]
-pub async fn ask_conversation_rename(
-    state: tauri::State<'_, AppState>,
-    conversation_id: String,
-    title: String,
-) -> Result<(), String> {
-    let pool = state.db_manager.pool();
-    AskConversationRepository::set_title(pool, &conversation_id, &title, &Utc::now().to_rfc3339())
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn ask_conversation_delete(
     state: tauri::State<'_, AppState>,
     conversation_id: String,
