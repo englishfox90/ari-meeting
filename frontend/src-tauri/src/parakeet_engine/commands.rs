@@ -246,8 +246,7 @@ pub async fn parakeet_validate_model_ready_with_config<R: tauri::Runtime>(
 
         // No model loaded - try to load user's configured model from transcript config
         let model_to_load = match crate::api::api::api_get_transcript_config(
-            app.clone(),
-            app.state(),
+            app.state::<std::sync::Arc<crate::engine::Engine>>(),
             None,
         )
         .await

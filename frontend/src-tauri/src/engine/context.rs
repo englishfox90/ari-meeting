@@ -70,8 +70,17 @@ impl Engine {
     }
 
     /// Borrow the event sink to emit; `engine.events().emit("channel", payload)`.
+    /// Use this for emits that stay within the current async fn body.
     pub fn events(&self) -> &dyn EventSink {
         self.events.as_ref()
+    }
+
+    /// Clone out an **owned** event sink for use inside a `'static` context —
+    /// a `move` closure (e.g. a download progress callback) or a spawned task —
+    /// where a borrow from `&Engine` can't escape. `let sink = engine.event_sink();`
+    /// then `sink.emit(...)` inside the closure.
+    pub fn event_sink(&self) -> Arc<dyn EventSink> {
+        self.events.clone()
     }
 
     pub fn parallel(&self) -> &ParallelProcessorState {

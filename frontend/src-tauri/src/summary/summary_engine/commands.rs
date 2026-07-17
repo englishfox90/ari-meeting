@@ -3,8 +3,10 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 use tokio::sync::Mutex;
+
+use crate::engine::Engine;
 
 use super::model_manager::{DownloadProgress, ModelInfo, ModelManager};
 
@@ -49,14 +51,13 @@ pub(crate) fn get_recommended_summary_model_for_current_system() -> Result<&'sta
 pub struct ModelManagerState(pub Arc<Mutex<Option<Arc<ModelManager>>>>);
 
 /// Initialize the model manager
-pub async fn init_model_manager<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
-    let models_dir = app.path().app_data_dir()?.join("models").join("summary");
+pub async fn init_model_manager(engine: &Engine) -> anyhow::Result<()> {
+    let models_dir = engine.paths().summary_models();
 
     let manager = ModelManager::new_with_models_dir(Some(models_dir))?;
     manager.init().await?;
 
-    let state: State<ModelManagerState> = app.state();
-    let mut manager_lock = state.0.lock().await;
+    let mut manager_lock = engine.summary_models().0.lock().await;
     *manager_lock = Some(Arc::new(manager));
 
     log::info!("Built-in AI model manager initialized");
@@ -67,25 +68,20 @@ pub async fn init_model_manager<R: Runtime>(app: &AppHandle<R>) -> anyhow::Resul
 // Tauri Commands
 // ============================================================================
 
-/// List all available built-in AI models with their status
-#[tauri::command]
-pub async fn builtin_ai_list_models<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ModelManagerState>,
-) -> Result<Vec<ModelInfo>, String> {
+async fn builtin_ai_list_models_impl(engine: &Engine) -> Result<Vec<ModelInfo>, String> {
     let manager = {
         // Ensure manager is initialized
         {
-            let manager_lock = state.0.lock().await;
+            let manager_lock = engine.summary_models().0.lock().await;
             if manager_lock.is_none() {
                 drop(manager_lock);
-                init_model_manager(&app)
+                init_model_manager(engine)
                     .await
                     .map_err(|e| format!("Failed to initialize model manager: {}", e))?;
             }
         }
 
-        let manager_lock = state.0.lock().await;
+        let manager_lock = engine.summary_models().0.lock().await;
         manager_lock
             .as_ref()
             .ok_or_else(|| "Model manager not initialized".to_string())?
@@ -96,26 +92,31 @@ pub async fn builtin_ai_list_models<R: Runtime>(
     Ok(models)
 }
 
-/// Get information about a specific model
+/// List all available built-in AI models with their status
 #[tauri::command]
-pub async fn builtin_ai_get_model_info<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ModelManagerState>,
+pub async fn builtin_ai_list_models(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Vec<ModelInfo>, String> {
+    builtin_ai_list_models_impl(&engine).await
+}
+
+async fn builtin_ai_get_model_info_impl(
+    engine: &Engine,
     model_name: String,
 ) -> Result<Option<ModelInfo>, String> {
     let manager = {
         // Ensure manager is initialized
         {
-            let manager_lock = state.0.lock().await;
+            let manager_lock = engine.summary_models().0.lock().await;
             if manager_lock.is_none() {
                 drop(manager_lock);
-                init_model_manager(&app)
+                init_model_manager(engine)
                     .await
                     .map_err(|e| format!("Failed to initialize model manager: {}", e))?;
             }
         }
 
-        let manager_lock = state.0.lock().await;
+        let manager_lock = engine.summary_models().0.lock().await;
         manager_lock
             .as_ref()
             .ok_or_else(|| "Model manager not initialized".to_string())?
@@ -126,26 +127,36 @@ pub async fn builtin_ai_get_model_info<R: Runtime>(
     Ok(info)
 }
 
-/// Download a built-in AI model with progress updates
+/// Get information about a specific model
 #[tauri::command]
-pub async fn builtin_ai_download_model<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ModelManagerState>,
+pub async fn builtin_ai_get_model_info(
+    engine: State<'_, Arc<Engine>>,
+    model_name: String,
+) -> Result<Option<ModelInfo>, String> {
+    builtin_ai_get_model_info_impl(&engine, model_name).await
+}
+
+// Takes an owned `Arc<Engine>` (rather than `&Engine`) because the progress callback below is
+// a `Box<dyn Fn(DownloadProgress) + Send>` — an owned trait object defaults to `'static`, so it
+// cannot capture a borrowed `&Engine`. Cloning the Arc into the closure keeps the callback valid
+// for the life of the download.
+async fn builtin_ai_download_model_impl(
+    engine: Arc<Engine>,
     model_name: String,
 ) -> Result<(), String> {
     let manager = {
         // Ensure manager is initialized
         {
-            let manager_lock = state.0.lock().await;
+            let manager_lock = engine.summary_models().0.lock().await;
             if manager_lock.is_none() {
                 drop(manager_lock);
-                init_model_manager(&app)
+                init_model_manager(&engine)
                     .await
                     .map_err(|e| format!("Failed to initialize model manager: {}", e))?;
             }
         }
 
-        let manager_lock = state.0.lock().await;
+        let manager_lock = engine.summary_models().0.lock().await;
         manager_lock
             .as_ref()
             .ok_or_else(|| "Model manager not initialized".to_string())?
@@ -153,10 +164,13 @@ pub async fn builtin_ai_download_model<R: Runtime>(
     };
     // IMPORTANT: Only emit "downloading" status here, never "completed"
     // Completion event is emitted AFTER download task fully finishes (validation, etc.)
-    let app_clone = app.clone();
+    // Owned sink for the 'static progress callback + the post-download emits
+    // (a borrow via engine.events() can't escape into the callback).
+    let sink = engine.event_sink();
+    let sink_cb = sink.clone();
     let model_name_clone = model_name.clone();
     let progress_callback = Box::new(move |progress: DownloadProgress| {
-        let _ = app_clone.emit(
+        sink_cb.emit(
             "builtin-ai-download-progress",
             serde_json::json!({
                 "model": model_name_clone,
@@ -175,7 +189,7 @@ pub async fn builtin_ai_download_model<R: Runtime>(
     {
         Ok(_) => {
             // Download task completed successfully (validation passed, status set to Available)
-            let _ = app.emit(
+            sink.emit(
                 "builtin-ai-download-progress",
                 serde_json::json!({
                     "model": model_name,
@@ -195,7 +209,7 @@ pub async fn builtin_ai_download_model<R: Runtime>(
             // Don't emit error event for cancellations - cancel command already emits cancelled event
             if !error_msg.starts_with("CANCELLED:") {
                 // Emit error via progress event for frontend to display (only for real errors)
-                let _ = app.emit(
+                sink.emit(
                     "builtin-ai-download-progress",
                     serde_json::json!({
                         "model": model_name,
@@ -213,15 +227,21 @@ pub async fn builtin_ai_download_model<R: Runtime>(
     }
 }
 
-/// Cancel an ongoing model download
+/// Download a built-in AI model with progress updates
 #[tauri::command]
-pub async fn builtin_ai_cancel_download<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ModelManagerState>,
+pub async fn builtin_ai_download_model(
+    engine: State<'_, Arc<Engine>>,
+    model_name: String,
+) -> Result<(), String> {
+    builtin_ai_download_model_impl(engine.inner().clone(), model_name).await
+}
+
+async fn builtin_ai_cancel_download_impl(
+    engine: &Engine,
     model_name: String,
 ) -> Result<(), String> {
     let manager = {
-        let manager_lock = state.0.lock().await;
+        let manager_lock = engine.summary_models().0.lock().await;
         manager_lock
             .as_ref()
             .ok_or_else(|| "Model manager not initialized".to_string())?
@@ -233,7 +253,7 @@ pub async fn builtin_ai_cancel_download<R: Runtime>(
         .await
         .map_err(|e| e.to_string())?;
 
-    let _ = app.emit(
+    engine.event_sink().emit(
         "builtin-ai-download-progress",
         serde_json::json!({
             "model": model_name,
@@ -245,14 +265,18 @@ pub async fn builtin_ai_cancel_download<R: Runtime>(
     Ok(())
 }
 
-/// Delete a corrupted or available model file
+/// Cancel an ongoing model download
 #[tauri::command]
-pub async fn builtin_ai_delete_model(
-    state: State<'_, ModelManagerState>,
+pub async fn builtin_ai_cancel_download(
+    engine: State<'_, Arc<Engine>>,
     model_name: String,
 ) -> Result<(), String> {
+    builtin_ai_cancel_download_impl(&engine, model_name).await
+}
+
+async fn builtin_ai_delete_model_impl(engine: &Engine, model_name: String) -> Result<(), String> {
     let manager = {
-        let manager_lock = state.0.lock().await;
+        let manager_lock = engine.summary_models().0.lock().await;
         manager_lock
             .as_ref()
             .ok_or_else(|| "Model manager not initialized".to_string())?
@@ -265,27 +289,33 @@ pub async fn builtin_ai_delete_model(
         .map_err(|e| e.to_string())
 }
 
-/// Check if a model is ready to use
+/// Delete a corrupted or available model file
 #[tauri::command]
-pub async fn builtin_ai_is_model_ready<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ModelManagerState>,
+pub async fn builtin_ai_delete_model(
+    engine: State<'_, Arc<Engine>>,
     model_name: String,
-    refresh: Option<bool>,  // NEW: Optional refresh parameter
+) -> Result<(), String> {
+    builtin_ai_delete_model_impl(&engine, model_name).await
+}
+
+async fn builtin_ai_is_model_ready_impl(
+    engine: &Engine,
+    model_name: String,
+    refresh: Option<bool>,
 ) -> Result<bool, String> {
     let manager = {
         // Ensure manager is initialized
         {
-            let manager_lock = state.0.lock().await;
+            let manager_lock = engine.summary_models().0.lock().await;
             if manager_lock.is_none() {
                 drop(manager_lock);
-                init_model_manager(&app)
+                init_model_manager(engine)
                     .await
                     .map_err(|e| format!("Failed to initialize model manager: {}", e))?;
             }
         }
 
-        let manager_lock = state.0.lock().await;
+        let manager_lock = engine.summary_models().0.lock().await;
         manager_lock
             .as_ref()
             .ok_or_else(|| "Model manager not initialized".to_string())?
@@ -305,26 +335,32 @@ pub async fn builtin_ai_is_model_ready<R: Runtime>(
     Ok(ready)
 }
 
-/// Check if any summary model is available (for onboarding)
-/// Returns the first available model name by priority, or None if no models exist
+/// Check if a model is ready to use
 #[tauri::command]
-pub async fn builtin_ai_get_available_summary_model<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, ModelManagerState>,
+pub async fn builtin_ai_is_model_ready(
+    engine: State<'_, Arc<Engine>>,
+    model_name: String,
+    refresh: Option<bool>,  // NEW: Optional refresh parameter
+) -> Result<bool, String> {
+    builtin_ai_is_model_ready_impl(&engine, model_name, refresh).await
+}
+
+async fn builtin_ai_get_available_summary_model_impl(
+    engine: &Engine,
 ) -> Result<Option<String>, String> {
     let manager = {
         // Ensure manager is initialized
         {
-            let manager_lock = state.0.lock().await;
+            let manager_lock = engine.summary_models().0.lock().await;
             if manager_lock.is_none() {
                 drop(manager_lock);
-                init_model_manager(&app)
+                init_model_manager(engine)
                     .await
                     .map_err(|e| format!("Failed to initialize model manager: {}", e))?;
             }
         }
 
-        let manager_lock = state.0.lock().await;
+        let manager_lock = engine.summary_models().0.lock().await;
         manager_lock
             .as_ref()
             .ok_or_else(|| "Model manager not initialized".to_string())?
@@ -349,6 +385,15 @@ pub async fn builtin_ai_get_available_summary_model<R: Runtime>(
 
     log::info!("Available summary model check: {:?}", available);
     Ok(available)
+}
+
+/// Check if any summary model is available (for onboarding)
+/// Returns the first available model name by priority, or None if no models exist
+#[tauri::command]
+pub async fn builtin_ai_get_available_summary_model(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Option<String>, String> {
+    builtin_ai_get_available_summary_model_impl(&engine).await
 }
 
 // ============================================================================

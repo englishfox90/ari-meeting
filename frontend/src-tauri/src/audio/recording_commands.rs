@@ -641,8 +641,7 @@ pub async fn stop_recording<R: Runtime>(
     let config = match tokio::time::timeout(
         tokio::time::Duration::from_secs(30), // 30 seconds max for DB operation
         crate::api::api::api_get_transcript_config(
-            app.clone(),
-            app.clone().state(),
+            app.state::<std::sync::Arc<crate::engine::Engine>>(),
             None,
         )
     )
@@ -768,8 +767,7 @@ pub async fn stop_recording<R: Runtime>(
         let transcription_config = match tokio::time::timeout(
             tokio::time::Duration::from_secs(30),
             crate::api::api::api_get_transcript_config(
-                app.clone(),
-                app.clone().state(),
+                app.state::<std::sync::Arc<crate::engine::Engine>>(),
                 None,
             )
         )
@@ -790,8 +788,7 @@ pub async fn stop_recording<R: Runtime>(
         let summary_config = match tokio::time::timeout(
             tokio::time::Duration::from_secs(30),
             crate::api::api::api_get_model_config(
-                app.clone(),
-                app.clone().state(),
+                app.state::<std::sync::Arc<crate::engine::Engine>>(),
                 None,
             )
         )

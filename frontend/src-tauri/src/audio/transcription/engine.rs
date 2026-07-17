@@ -55,8 +55,7 @@ impl TranscriptionEngine {
 pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     // Check transcript configuration to determine which engine to validate
     let config = match crate::api::api::api_get_transcript_config(
-        app.clone(),
-        app.clone().state(),
+        app.state::<std::sync::Arc<crate::engine::Engine>>(),
         None,
     )
     .await
@@ -159,8 +158,7 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
 ) -> Result<TranscriptionEngine, String> {
     // Get provider configuration from API
     let config = match crate::api::api::api_get_transcript_config(
-        app.clone(),
-        app.clone().state(),
+        app.state::<std::sync::Arc<crate::engine::Engine>>(),
         None,
     )
     .await
@@ -257,8 +255,7 @@ pub async fn get_or_init_whisper<R: Runtime>(
 
             // NEW: Check if loaded model matches saved config
             let configured_model = match crate::api::api::api_get_transcript_config(
-                app.clone(),
-                app.clone().state(),
+                app.state::<std::sync::Arc<crate::engine::Engine>>(),
                 None,
             )
             .await
@@ -336,7 +333,7 @@ pub async fn get_or_init_whisper<R: Runtime>(
 
     // Get model configuration from API
     let model_to_load =
-        match crate::api::api::api_get_transcript_config(app.clone(), app.clone().state(), None)
+        match crate::api::api::api_get_transcript_config(app.state::<std::sync::Arc<crate::engine::Engine>>(), None)
             .await
         {
             Ok(Some(config)) => {
