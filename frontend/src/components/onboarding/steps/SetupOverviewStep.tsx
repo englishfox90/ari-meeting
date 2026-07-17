@@ -62,7 +62,11 @@ export function SetupOverviewStep() {
           if (!disabled) setSelectedTier(tier.id);
         }}
         className={cn(
-          'group relative w-full rounded-[10px] border p-4 text-left transition-colors',
+          'group relative flex w-full flex-col rounded-[10px] border p-4 text-left transition-colors',
+          // On sm+, each card is a subgrid spanning the 6 shared row tracks defined on the
+          // radiogroup, so every line (header, tagline, badge, spec rows, description) aligns
+          // across all cards regardless of its own content length.
+          'sm:row-span-6 sm:grid sm:grid-rows-subgrid',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           disabled
             ? 'cursor-not-allowed border-border bg-muted/40 opacity-60'
@@ -89,33 +93,41 @@ export function SetupOverviewStep() {
           </span>
         </div>
 
-        <p className="mt-1.5 text-[12px] text-muted-foreground">{tier.tagline}</p>
+        {/* Track 2 — tagline */}
+        <p className="mt-1.5 text-[12px] leading-[17px] text-muted-foreground">{tier.tagline}</p>
 
-        {isRecommended && !disabled && (
-          <span className="mt-3 inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground">
-            <CheckCircleIcon className="size-3" />
-            Recommended for your Mac
-          </span>
-        )}
-
-        <div className="mt-3 space-y-1 border-t border-border pt-3 text-[11px]">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">Transcription</span>
-            <span className="font-medium text-foreground">{tier.transcription.label}</span>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">Summaries</span>
-            <span className="font-medium text-foreground">{tier.summary.label}</span>
-          </div>
+        {/* Track 3 — badge row (always rendered, empty when not recommended, so the row maps
+            to the same subgrid track on every card) */}
+        <div className="mt-3 flex items-center">
+          {isRecommended && !disabled && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground">
+              <CheckCircleIcon className="size-3" />
+              Recommended for your Mac
+            </span>
+          )}
         </div>
 
-        <p className="mt-3 text-[11px] leading-5 text-muted-foreground">{tier.description}</p>
+        {/* Track 4 — transcription row (carries the divider above the spec block) */}
+        <div className="mt-3 flex items-start justify-between gap-3 border-t border-border pt-3 text-[11px]">
+          <span className="shrink-0 text-muted-foreground">Transcription</span>
+          <span className="text-right font-medium text-foreground">{tier.transcription.label}</span>
+        </div>
 
-        {disabled && (
-          <p className="mt-2 text-[11px] font-medium text-foreground">
-            Requires macOS 26 + Apple Intelligence
-          </p>
-        )}
+        {/* Track 5 — summaries row */}
+        <div className="mt-1 flex items-start justify-between gap-3 text-[11px]">
+          <span className="shrink-0 text-muted-foreground">Summaries</span>
+          <span className="text-right font-medium text-foreground">{tier.summary.label}</span>
+        </div>
+
+        {/* Track 6 — description (fills the remaining shared track) */}
+        <div className="mt-3">
+          <p className="text-[11px] leading-5 text-muted-foreground">{tier.description}</p>
+          {disabled && (
+            <p className="mt-2 text-[11px] font-medium text-foreground">
+              Requires macOS 26 + Apple Intelligence
+            </p>
+          )}
+        </div>
       </button>
     );
   };
@@ -131,7 +143,7 @@ export function SetupOverviewStep() {
         <div
           role="radiogroup"
           aria-label="Model tier"
-          className="grid gap-3 sm:grid-cols-3"
+          className="grid gap-3 sm:grid-cols-3 sm:gap-x-3 sm:gap-y-0 sm:[grid-template-rows:auto_auto_auto_auto_auto_1fr]"
         >
           {TIER_ORDER.map((id) => renderTierCard(MODEL_TIERS[id]))}
         </div>
