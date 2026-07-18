@@ -64,4 +64,20 @@ public actor AppDatabase {
     public nonisolated var speakerSegments: SpeakerSegmentRepository {
         SpeakerSegmentRepository(dbWriter: dbWriter)
     }
+
+    public nonisolated var persons: PersonRepository {
+        PersonRepository(dbWriter: dbWriter)
+    }
+
+    public nonisolated var profileFacts: ProfileFactRepository {
+        ProfileFactRepository(dbWriter: dbWriter)
+    }
+
+    public nonisolated var summaries: SummaryRepository {
+        SummaryRepository(dbWriter: dbWriter)
+    }
+
+    public nonisolated var meetingNotes: MeetingNoteRepository {
+        MeetingNoteRepository(dbWriter: dbWriter)
+    }
 }

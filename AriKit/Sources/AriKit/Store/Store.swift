@@ -7,9 +7,12 @@
 ///  SQLite handles scattered through feature code.
 ///
 ///  FOUNDATION SLICE landed (plan §10 steps 1–2): `AppDatabase`, the `v1_baseline` migrator, and
-///  the `meeting`/`transcript`/`speaker`/`speakerSegment` tables + repositories. Persons,
-///  profile facts, series, calendar, summary, and meeting-notes tables/repositories, tombstones
-///  across all tables, the snake→camel decode adapter, and the legacy-library importer are later
-///  steps in the same plan — not built yet.
+///  the `meeting`/`transcript`/`speaker`/`speakerSegment` tables + repositories.
+///
+///  SLICE 2 landed (plan §10 steps 3–5): `summary`, `meetingNote`, `person`, `profileFact` +
+///  `profileFactSource` tables + repositories, including the read-time-computed provenance
+///  (`sourceCount`/`sourceMeetingTitle`) and the repository-enforced `person.isOwner`
+///  single-true-row invariant. Series, calendar, the snake→camel decode adapter, and the
+///  legacy-library importer are later steps in the same plan — not built yet.
 ///
 public enum Store {}

@@ -121,6 +121,25 @@ enum ModelSamples {
         ledgerVersion: 3
     )
 
+    static let summary = Summary(
+        id: "summary-1",
+        meetingId: "meeting-1",
+        bodyMarkdown: "# Weekly sync\n- Kicked off the migration project.",
+        provider: "anthropic",
+        model: "claude",
+        templateId: "one_on_one",
+        createdAt: instant,
+        updatedAt: laterInstant
+    )
+
+    static let meetingNote = MeetingNote(
+        meetingId: "meeting-1",
+        notesMarkdown: "Remember to follow up on the budget.",
+        notesJson: "{\"type\":\"doc\",\"content\":[]}",
+        createdAt: instant,
+        updatedAt: laterInstant
+    )
+
     static let attendee = Attendee(name: "Guest", email: "guest@example.com")
 
     static let calendarEvent = CalendarEvent(

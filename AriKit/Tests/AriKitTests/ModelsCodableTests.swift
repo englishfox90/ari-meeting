@@ -12,7 +12,7 @@ import Foundation
 import Testing
 @testable import AriKit
 
-@Suite struct ModelsCodableTests {
+struct ModelsCodableTests {
     private func roundTrip<T: Codable & Equatable>(_ value: T) throws {
         let encoded = try Models.jsonEncoder.encode(value)
         let decoded = try Models.jsonDecoder.decode(T.self, from: encoded)
@@ -33,6 +33,8 @@ import Testing
         try roundTrip(ModelSamples.series)
         try roundTrip(ModelSamples.attendee)
         try roundTrip(ModelSamples.calendarEvent)
+        try roundTrip(ModelSamples.summary)
+        try roundTrip(ModelSamples.meetingNote)
     }
 
     // MARK: - Wire-fixture parity
