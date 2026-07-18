@@ -1,29 +1,18 @@
 //! Apple on-device intelligence integration (Phase 1: availability probe).
 //!
-//! Wraps the `apple-helper` Swift sidecar, which exposes Apple's on-device
-//! Speech + FoundationModels stack. Phase 1 only implements a stateless `probe`
-//! that reports which capabilities are available; later phases add asset
-//! management, transcription, and summarization over the same NDJSON protocol.
+//! The pure logic (NDJSON protocol, sidecar resolver, helper client, text
+//! cleanup) now lives in `ari-engine::apple`; this module is a thin re-export
+//! shim (so `crate::apple::*` keeps resolving for existing callers) plus the
+//! `#[tauri::command]` shims that stay host-side.
 
-pub mod helper;
-pub mod protocol;
-pub mod resolver;
-pub mod text_cleanup;
+pub use ari_engine::apple::*;
 
 /// Report Apple STT/LLM availability. Always returns `Ok` with an HONEST
 /// [`helper::ProbeStatus`] — the frontend renders availability from the struct,
 /// including its `error` field when the stack is unavailable.
 #[tauri::command]
 pub async fn apple_probe() -> Result<helper::ProbeStatus, String> {
-    Ok(helper::probe().await)
-}
-
-/// Payload of the `apple-assets-progress` event: a single real download-progress
-/// tick. camelCase on the wire (`{ fraction }`) — the frontend depends on this.
-#[derive(Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AppleAssetsProgress {
-    fraction: f64,
+    ari_engine::apple::apple_probe_impl().await
 }
 
 /// Ensure Apple on-device `which` assets (e.g. `"speech"`) are installed,
@@ -33,17 +22,7 @@ struct AppleAssetsProgress {
 #[tauri::command]
 pub async fn apple_ensure_assets(
     which: String,
-    engine: tauri::State<'_, std::sync::Arc<crate::engine::Engine>>,
+    engine: tauri::State<'_, std::sync::Arc<ari_engine::engine::Engine>>,
 ) -> Result<bool, String> {
-    // Owned sink: moved into the 'static progress callback, which can't
-    // borrow from `&Engine`.
-    let sink = engine.event_sink();
-    helper::ensure_assets(
-        &which,
-        move |fraction| {
-            sink.emit("apple-assets-progress", AppleAssetsProgress { fraction });
-        },
-        None,
-    )
-    .await
+    ari_engine::apple::apple_ensure_assets_impl(which, &engine).await
 }

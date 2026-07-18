@@ -29,6 +29,8 @@ once_cell = "1.17.1"
 sysinfo = "0.32"
 dirs = "5.0.1"
 async-trait = "0.1"
+base64 = "0.22"
+tokio-util = "0.7"
 
 # macOS-only project (see .claude/rules/platform-and-deps.md) — Metal+CoreML are
 # the baseline acceleration, matching frontend/src-tauri/Cargo.toml exactly.

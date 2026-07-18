@@ -43,6 +43,7 @@ macro_rules! perf_trace {
 pub(crate) use perf_debug;
 pub(crate) use perf_trace;
 
+pub mod apple;
 pub mod audio;
 pub mod calendar;
 pub mod config;

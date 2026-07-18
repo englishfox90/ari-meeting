@@ -68,14 +68,20 @@ pub fn resolve_apple_binary() -> Result<PathBuf> {
         }
     }
 
-    // 3. Dev fallback: workspace target dir. CARGO_MANIFEST_DIR at runtime is
-    //    `frontend/src-tauri`; two parents up is the repo root that holds `target/`.
+    // 3. Dev fallback: workspace target dir. CARGO_MANIFEST_DIR, when set, is
+    //    this crate's manifest dir (`ari-engine`, a direct child of the repo
+    //    root) OR the host's (`frontend/src-tauri`, two levels down) depending
+    //    on which binary set it — try one parent up, then two, and use
+    //    whichever actually holds `target/`.
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        if let Some(root) = PathBuf::from(&manifest_dir)
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.to_path_buf())
-        {
+        let candidates_roots = [
+            PathBuf::from(&manifest_dir).parent().map(|p| p.to_path_buf()),
+            PathBuf::from(&manifest_dir)
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.to_path_buf()),
+        ];
+        for root in candidates_roots.into_iter().flatten() {
             for candidate in [
                 root.join("target/release").join(BIN_BASE),
                 root.join("target/debug").join(BIN_BASE),
