@@ -12,7 +12,7 @@ import Foundation
 import Testing
 @testable import AriKit
 
-@Suite struct ModelsCodableTests {
+struct ModelsCodableTests {
     private func roundTrip<T: Codable & Equatable>(_ value: T) throws {
         let encoded = try Models.jsonEncoder.encode(value)
         let decoded = try Models.jsonDecoder.decode(T.self, from: encoded)
@@ -33,6 +33,8 @@ import Testing
         try roundTrip(ModelSamples.series)
         try roundTrip(ModelSamples.attendee)
         try roundTrip(ModelSamples.calendarEvent)
+        try roundTrip(ModelSamples.summary)
+        try roundTrip(ModelSamples.meetingNote)
     }
 
     // MARK: - Wire-fixture parity
@@ -76,6 +78,10 @@ import Testing
     }
 
     @Test func seriesFixtureDecodes() throws {
+        // `ownerPersonId`/`createdAt`/`updatedAt` are Store-port follow-ons (plan §4.7) never
+        // present on the frozen engine's wire `SeriesSummary`/`SeriesDetail` — this fixture is
+        // synthetic for those three keys, standing in for a Store-persisted `Series` rather than
+        // literal captured IPC JSON (see `Series.swift`'s header).
         #expect(try FixtureLoader.decode(Series.self, from: "series") == ModelSamples.series)
     }
 

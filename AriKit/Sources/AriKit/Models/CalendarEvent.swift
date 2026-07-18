@@ -7,6 +7,14 @@
 //  plan §4). `linkSource` is a forward-tolerant enum. `calendarId` stays a plain `String`: the
 //  calendar is not a modeled domain entity here, so there is no `Identifier<Calendar>` to type it.
 //
+//  Store-port follow-ons (docs/plans/arikit-store.md §4.8 / arikit-models.md §7.7's deferred-DTO
+//  note): `seriesKey`/`hasRecurrence`/`occurrenceDate`/`isDetached` are EventKit recurrence
+//  signals that live on the capture-layer `NativeEvent` in the frozen engine, never on the wire
+//  `CalendarEvent` DTO — they "surface on `CalendarEvent`... when persisted," per that note. All
+//  four are `Optional` here (not defaulted to `false`/`nil`-as-known): `nil` means "not captured /
+//  unknown," a real state distinct from "known non-recurring," which the Store's nullable columns
+//  preserve losslessly rather than collapsing to a default.
+//
 import Foundation
 
 /// Typed identifier for a `CalendarEvent` (plan §7.4).
@@ -34,9 +42,17 @@ public enum CalendarLinkSource: UnknownTolerantEnum {
         }
     }
 
-    public static func unknownCase(_ rawValue: String) -> Self { .unknown(rawValue) }
-    public init(from decoder: any Decoder) throws { try self.init(tolerantFrom: decoder) }
-    public func encode(to encoder: any Encoder) throws { try encodeTolerant(to: encoder) }
+    public static func unknownCase(_ rawValue: String) -> Self {
+        .unknown(rawValue)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(tolerantFrom: decoder)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        try encodeTolerant(to: encoder)
+    }
 }
 
 /// A meeting attendee as surfaced by the calendar (pure value type).
@@ -65,6 +81,15 @@ public struct CalendarEvent: Codable, Hashable, Sendable, Identifiable {
     public var attendees: [Attendee]
     public var meetingId: MeetingID?
     public var linkSource: CalendarLinkSource?
+    /// Stable recurrence key (EventKit `calendarItemExternalIdentifier`) — Store-port follow-on,
+    /// see file header.
+    public var seriesKey: String?
+    /// Whether this event has recurrence rules (`hasRecurrenceRules`) — `nil` if not captured.
+    public var hasRecurrence: Bool?
+    /// RFC3339 instant of this specific occurrence, if any.
+    public var occurrenceDate: Date?
+    /// Whether this occurrence was detached/edited from the series — `nil` if not captured.
+    public var isDetached: Bool?
 
     public init(
         id: CalendarEventID,
@@ -79,7 +104,11 @@ public struct CalendarEvent: Codable, Hashable, Sendable, Identifiable {
         organizer: String? = nil,
         attendees: [Attendee],
         meetingId: MeetingID? = nil,
-        linkSource: CalendarLinkSource? = nil
+        linkSource: CalendarLinkSource? = nil,
+        seriesKey: String? = nil,
+        hasRecurrence: Bool? = nil,
+        occurrenceDate: Date? = nil,
+        isDetached: Bool? = nil
     ) {
         self.id = id
         self.calendarId = calendarId
@@ -94,5 +123,9 @@ public struct CalendarEvent: Codable, Hashable, Sendable, Identifiable {
         self.attendees = attendees
         self.meetingId = meetingId
         self.linkSource = linkSource
+        self.seriesKey = seriesKey
+        self.hasRecurrence = hasRecurrence
+        self.occurrenceDate = occurrenceDate
+        self.isDetached = isDetached
     }
 }

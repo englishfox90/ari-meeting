@@ -18,6 +18,14 @@
 //  `cadence` and `detectedType` stay `String` (plan decision 0.5): open sets, no closed case
 //  list to invent.
 //
+//  Store-port follow-ons (docs/plans/arikit-store.md §4.7, added when the Store slice landed):
+//  `ownerPersonId` (a real stored column the IPC DTOs never exposed) and the series' own
+//  `createdAt`/`updatedAt`. `ledgerVersion` becomes `Int?` (`nil` = no ledger yet — the Store's
+//  `seriesLedger` row may not exist until a first summary lands), resolving the wire DTO's
+//  ambiguous `0`. None of these five fields appear in the frozen engine's wire JSON (confirmed:
+//  `SeriesSummary`/`SeriesDetail` carry no timestamps/owner), so `Store/Records/SeriesRecord.swift`
+//  is the only place that populates them today.
+//
 import Foundation
 
 /// Typed identifier for a `Series` (plan §7.4).
@@ -32,9 +40,14 @@ public struct Series: Codable, Hashable, Sendable, Identifiable {
     public var detectedType: String?
     /// Cadence label (open set, kept as `String`).
     public var cadence: String?
+    /// The recording owner's `Person`, if attributed (Store-port follow-on, plan §4.7).
+    public var ownerPersonId: PersonID?
     /// The series ledger markdown (F9), folded onto the row in the frozen engine.
     public var ledgerMarkdown: String?
-    public var ledgerVersion: Int
+    /// `nil` = no ledger yet (the Store's `seriesLedger` row has never been written).
+    public var ledgerVersion: Int?
+    public var createdAt: Date
+    public var updatedAt: Date
 
     public init(
         id: SeriesID,
@@ -42,15 +55,21 @@ public struct Series: Codable, Hashable, Sendable, Identifiable {
         seriesKey: String? = nil,
         detectedType: String? = nil,
         cadence: String? = nil,
+        ownerPersonId: PersonID? = nil,
         ledgerMarkdown: String? = nil,
-        ledgerVersion: Int
+        ledgerVersion: Int? = nil,
+        createdAt: Date,
+        updatedAt: Date
     ) {
         self.id = id
         self.title = title
         self.seriesKey = seriesKey
         self.detectedType = detectedType
         self.cadence = cadence
+        self.ownerPersonId = ownerPersonId
         self.ledgerMarkdown = ledgerMarkdown
         self.ledgerVersion = ledgerVersion
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 }
