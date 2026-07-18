@@ -12,4 +12,5 @@
 //! to move modules into; no logic has been moved yet.
 
 pub mod config;
+pub mod models;
 pub mod providers;

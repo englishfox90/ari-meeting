@@ -71,17 +71,7 @@ pub struct SearchRequest {
     pub query: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TranscriptSearchResult {
-    pub id: String,
-    pub title: String,
-    #[serde(rename = "matchContext")]
-    pub match_context: String,
-    pub timestamp: String,
-    #[serde(rename = "meetingDate")]
-    pub meeting_date: Option<String>,
-    pub summary: Option<String>,
-}
+pub use ari_engine::models::TranscriptSearchResult;
 
 /// A source the local recall command actually supplied to the local model.
 /// The UI must render this independently from the answer text; the model is
@@ -351,31 +341,7 @@ pub struct DeleteMeetingRequest {
     pub meeting_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MeetingDetails {
-    pub id: String,
-    pub title: String,
-    pub created_at: String,
-    pub updated_at: String,
-    pub transcripts: Vec<MeetingTranscript>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MeetingTranscript {
-    pub id: String,
-    pub text: String,
-    pub timestamp: String,
-    // Recording-relative timestamps for audio-transcript synchronization
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audio_start_time: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audio_end_time: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration: Option<f64>,
-    // F1 diarization: the resolved speaker for this line (NULL until diarized/matched).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub speaker_id: Option<String>,
-}
+pub use ari_engine::models::{MeetingDetails, MeetingTranscript};
 
 /// Meeting metadata without transcripts (for pagination)
 #[derive(Debug, Serialize, Deserialize)]
@@ -422,19 +388,7 @@ pub struct SaveTranscriptRequest {
     pub transcripts: Vec<TranscriptSegment>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TranscriptSegment {
-    pub id: String,
-    pub text: String,
-    pub timestamp: String,
-    // NEW: Recording-relative timestamps for playback synchronization
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audio_start_time: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audio_end_time: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration: Option<f64>,
-}
+pub use ari_engine::models::TranscriptSegment;
 
 // API Commands for Tauri
 

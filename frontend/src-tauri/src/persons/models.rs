@@ -84,20 +84,7 @@ pub struct PersonDetail {
     pub meeting_count: i64,
 }
 
-/// Authored-identity input. If `id` is present, updates that row. Else, if `email` is
-/// present and a row already exists for it, updates that row. Otherwise inserts a new
-/// person. Never touches `is_owner` (see `PersonRepository::upsert_authored`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NewPerson {
-    pub id: Option<String>,
-    pub email: Option<String>,
-    pub display_name: String,
-    pub role: Option<String>,
-    pub organization: Option<String>,
-    pub domain: Option<String>,
-    pub notes: Option<String>,
-}
+pub use ari_engine::models::NewPerson;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
