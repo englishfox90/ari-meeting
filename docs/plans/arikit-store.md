@@ -1,5 +1,7 @@
 # AriKit `Store/` — SQLiteData port + legacy-data importer (plan)
 
+> **STATUS: COMPLETE (2026-07-17).** Built on **plain GRDB** (not SQLiteData — decision recorded in §0.1(3); SQLiteData revisited at Phase 5.5). Four reviewed green slices on `main` (`e4c2a0c`→`b956e99`): foundation + core tables → Summary/MeetingNote/persons+facts → series+calendar → the legacy-data importer + `SingleOwnerTests`. The importer passed a `swift-code-reviewer` data-fidelity gate (a HIGH orphaned-`summary_processes` reconciliation hole + two MEDIUMs fixed before commit). **Step 8 (snake→camel decode adapter) is DEFERRED** — it only decodes live engine-IPC JSON, which needs the deferred daemon/bridge; no consumer yet. Store contributes ~109 of the AriKit suite's 133 tests. Title says "SQLiteData" for history; the store is GRDB.
+
 ## 0. Status & scope guard
 
 This is Phase 3 step 1 ("Store") of `plans/swift-migration-plan.md`, folding in the deferred S4 local-store confirmation and resolving the two follow-ons flagged at the end of `docs/plans/arikit-models.md`. **Plan doc** — the implementation touches only `AriKit/Sources/AriKit/Store/**`, `AriKit/Sources/AriKit/Models/**` (additive follow-ons only, no rewrite of existing Models), `AriKit/Tests/AriKitTests/**`, and `AriKit/Package.swift`. No Rust file, no `Cargo.toml`, no `frontend/**`/`ari-engine/**` file is touched.
