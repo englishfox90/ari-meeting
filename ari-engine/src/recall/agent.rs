@@ -22,11 +22,11 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
-use crate::api::LocalRecallSource;
 use crate::database::repositories::{
     calendar::CalendarRepository, meeting::MeetingsRepository, person, person::PersonRepository,
     summary::SummaryProcessesRepository,
 };
+use crate::recall::LocalRecallSource;
 
 const MAX_ITERATIONS: usize = 8;
 const MAX_SOURCES: usize = 24;

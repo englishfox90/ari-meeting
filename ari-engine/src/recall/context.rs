@@ -10,11 +10,11 @@ use std::collections::{HashMap, HashSet};
 
 use sqlx::SqlitePool;
 
-use crate::api::LocalRecallSource;
 use crate::database::repositories::{
     calendar::CalendarRepository,
     person::{top_active_facts, PersonRepository},
 };
+use crate::recall::LocalRecallSource;
 
 const MAX_PEOPLE_PER_MEETING: usize = 8;
 const MAX_FACT_CHARS: usize = 160;
@@ -37,7 +37,7 @@ fn short_date(rfc3339: &str) -> String {
 /// person names), then any additional linked participants. Never fabricates names.
 async fn meeting_people(pool: &SqlitePool, meeting_id: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    let mut push_unique = |name: String, names: &mut Vec<String>| {
+    let push_unique = |name: String, names: &mut Vec<String>| {
         let name = name.trim().to_string();
         if !name.is_empty() && !names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
             names.push(name);

@@ -13,12 +13,12 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use sqlx::SqlitePool;
 
-use crate::api::TranscriptSearchResult;
 use crate::database::models::RecallChunk;
 use crate::database::repositories::{
     meeting::MeetingsRepository, recall_index::RecallIndexRepository,
     summary::SummaryProcessesRepository, transcript::TranscriptsRepository,
 };
+use crate::models::TranscriptSearchResult;
 use crate::recall::embedding;
 
 const FTS_CANDIDATES: i64 = 48;

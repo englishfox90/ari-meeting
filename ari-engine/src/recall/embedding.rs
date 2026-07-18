@@ -150,7 +150,14 @@ async fn embed_documents_ollama(
         .and_then(|c| c.ollama_endpoint);
     let mut out = Vec::with_capacity(texts.len());
     for text in texts {
-        out.push(crate::ollama::get_ollama_embedding(endpoint.as_deref(), "nomic-embed-text", text).await?);
+        out.push(
+            crate::providers::ollama::get_ollama_embedding(
+                endpoint.as_deref(),
+                "nomic-embed-text",
+                text,
+            )
+            .await?,
+        );
     }
     Ok(out)
 }

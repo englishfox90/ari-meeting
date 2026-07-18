@@ -15,7 +15,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::recall::embed_models::{embeddings_directory, get_default_embed_model};
-use crate::summary::summary_engine::sidecar::SidecarManager;
+use crate::summary_engine::sidecar::SidecarManager;
 
 /// Timeout for one embed exchange (model load on first call can take a few seconds).
 const EMBED_TIMEOUT_SECS: u64 = 120;
