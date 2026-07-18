@@ -48,6 +48,7 @@ pub mod calendar;
 pub mod config;
 pub mod database;
 pub mod embed_models;
+pub mod engine;
 pub mod language_preference;
 pub mod meeting_series;
 pub mod models;

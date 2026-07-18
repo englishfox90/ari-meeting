@@ -441,7 +441,7 @@ pub fn run() {
             // manager states outright; startup writers reach them via
             // `app.state::<Arc<Engine>>()`.
             {
-                let paths = engine::Paths::from_tauri(_app.handle())
+                let paths = engine::paths::from_tauri(_app.handle())
                     .expect("Failed to resolve engine paths");
                 let events: std::sync::Arc<dyn engine::EventSink> =
                     std::sync::Arc::new(engine::TauriEventSink::new(_app.handle().clone()));

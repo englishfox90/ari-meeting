@@ -20,14 +20,12 @@ use std::sync::Arc;
 
 use tokio::sync::{Mutex, RwLock};
 
+use ari_engine::engine::{EventSink, Notifier, Paths};
+
 use crate::database::manager::DatabaseManager;
 use crate::recall::embed_models::EmbedModelManagerState;
 use crate::summary::summary_engine::ModelManagerState;
 use crate::whisper_engine::parallel_commands::ParallelProcessorState;
-
-use super::events::EventSink;
-use super::notifier::Notifier;
-use super::paths::Paths;
 
 pub struct Engine {
     /// Deferred: `None` until a first-launch flow initializes the DB, mirroring
