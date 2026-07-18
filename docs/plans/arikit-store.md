@@ -12,7 +12,7 @@ The plan-only architect pass flagged four decisions rather than guessing. Resolv
 
 1. **`meeting_notes` → IN SCOPE (do NOT drop).** It is real user-authored data (`20251223000000_add_meeting_notes.sql`). Add a small additive `MeetingNote` domain type to `AriKit.Models`, a `meetingNote` table (§4.12), an importer mapping (§5.2), and round-trip tests. This is a direct consequence of the data-preservation requirement — silently skipping it is not acceptable.
 2. **`calendarEvent.attendees` → inline JSON column** (architect default accepted). Matches the shipped `CalendarEvent.attendees: [Attendee]` domain shape; normalize into a real `attendee` table only if per-attendee query/edit becomes a feature later.
-3. **Record layer → plain GRDB `FetchableRecord`/`PersistableRecord` now** (the committed `grdb`-skill path). The swift-implementer must check SQLiteData's *current released* `@Table`/sync-adjacent macro API and adopt it at the record layer **only if** it is a clean superset with no earlier-adoption cost; otherwise stay on GRDB records and revisit at Phase 5.5. Not blocking.
+3. **Record layer → plain GRDB `FetchableRecord`/`PersistableRecord`** — **RESOLVED with Paul 2026-07-17: GRDB chosen, NOT SQLiteData.** The implementer verified SQLiteData v1.7.0 is a `@Table` + `swift-structured-queries` paradigm (not a superset of plain records) with ~8 heavy transitive deps and no benefit until CloudKit at Phase 5.5; SQLiteData itself depends on GRDB 7.6, so GRDB keeps the same semantics. Dependency: `groue/GRDB.swift` from `7.11.0`. **Revisit SQLiteData-vs-hand-rolled-sync at Phase 5.5** (per plan §156's fallback clause). This is now the standing decision for every later slice.
 4. **`person.isOwner` → repository-enforced single-owner** (atomic set-owner in one transaction that unsets any prior owner), not a DB constraint — SQLite has no partial-unique-on-boolean primitive that survives CloudKit per-record conflict resolution cleanly.
 
 ## 1. Goal & seam
@@ -251,6 +251,12 @@ public struct ImportReport: Sendable {
 
 ## 6. Migration strategy — `DatabaseMigrator`
 Fresh Swift migration history — **not** a port of `_sqlx_migrations`. One **`v1_baseline`** migration creates every table in §4 in its final (post-all-25-sqlx-migrations) shape. Every subsequent Swift-side change is a new registered migration, never editing `v1_baseline` after it ships. `eraseDatabaseOnSchemaChange` is DEBUG-only. `PRAGMA foreign_keys = ON` in `prepareDatabase`. `DatabasePool` (WAL) in production; `DatabaseQueue` in tests/previews.
+
+**Slice-1 findings (2026-07-17) — update this plan's assumptions accordingly:**
+- **`v1_baseline` is being built incrementally while it is still unshipped.** Slice 1 created only `meeting`/`transcript`/`speaker`/`speakerSegment` in `v1_baseline`. Since the baseline has NOT shipped, later slices **extend `v1_baseline` in place** (add the remaining tables to the same migration), not add new migrations — the "never edit a shipped migration" rule only binds once it ships. The first real ship freezes it.
+- **FK forward-references fail at `CREATE TABLE` time with `foreign_keys = ON`.** `speaker.personId` could NOT be declared `REFERENCES person(id)` in slice 1 because `person` doesn't exist yet (SQLite validates the parent table exists at DDL time, not lazily at DML). It's a plain indexed nullable column for now. **Step-5 action (person table):** create `person` *before* `speaker` in `v1_baseline`'s table order, then either add the `REFERENCES person(id) ON DELETE SET NULL` to `speaker.personId` (requires table-recreate since SQLite can't `ALTER` in an FK) or, simplest, define `speaker` after `person` in the baseline so the FK is inline from the start. Same applies to any other cross-table FK — order tables parent-before-child in `v1_baseline`.
+- **`Meeting.templateId`** column exists (§4.1) but `AriKit.Models.Meeting` has no `templateId` field yet — persisted as `NULL`, not round-tripped. Add to the Model when template selection lands.
+- **`speakerSegments` repository** was added to `AppDatabase`'s surface (not in the original §2.2 list) — fold it into §2.2.
 
 ## 7. Acceptance / invariant tests (Swift Testing preferred)
 New files under `AriKit/Tests/AriKitTests/Store/`:
