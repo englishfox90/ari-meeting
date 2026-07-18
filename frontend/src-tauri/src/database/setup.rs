@@ -1,13 +1,13 @@
 use log::info;
 use tauri::{AppHandle, Manager};
 
-use super::manager::DatabaseManager;
+use super::manager;
 
 /// Initialize database on app startup
 /// Handles first launch detection and conditional initialization
 pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), String> {
     // Check if this is the first launch (no database exists yet)
-    let is_first_launch = DatabaseManager::is_first_launch(app)
+    let is_first_launch = manager::is_first_launch(app)
         .await
         .map_err(|e| format!("Failed to check first launch status: {}", e))?;
 
@@ -26,7 +26,7 @@ pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), Strin
         });
     } else {
         // Normal flow - initialize database immediately
-        let db_manager = DatabaseManager::new_from_app_handle(app)
+        let db_manager = manager::new_from_app_handle(app)
             .await
             .map_err(|e| format!("Failed to initialize database manager: {}", e))?;
 

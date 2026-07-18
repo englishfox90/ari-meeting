@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-use super::manager::DatabaseManager;
+use super::manager;
 
 #[derive(Serialize)]
 pub struct DatabaseCheckResult {
@@ -14,7 +14,7 @@ pub struct DatabaseCheckResult {
 /// Check if this is the first launch (no database exists yet)
 #[tauri::command]
 pub async fn check_first_launch(app: AppHandle) -> Result<bool, String> {
-    DatabaseManager::is_first_launch(&app)
+    manager::is_first_launch(&app)
         .await
         .map_err(|e| format!("Failed to check first launch: {}", e))
 }
@@ -149,7 +149,7 @@ pub async fn import_and_initialize_database(
     );
 
     // Import and get initialized manager
-    let db_manager = DatabaseManager::import_legacy_database(&app, &legacy_db_path)
+    let db_manager = manager::import_legacy_database(&app, &legacy_db_path)
         .await
         .map_err(|e| {
             error!("Failed to import legacy database: {}", e);
@@ -179,7 +179,7 @@ pub async fn import_and_initialize_database(
 pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
     info!("Initializing fresh database");
 
-    let db_manager = DatabaseManager::new_from_app_handle(&app)
+    let db_manager = manager::new_from_app_handle(&app)
         .await
         .map_err(|e| {
             error!("Failed to initialize fresh database: {}", e);
