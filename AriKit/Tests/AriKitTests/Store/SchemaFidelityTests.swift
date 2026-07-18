@@ -4,7 +4,8 @@
 //
 //  Foundation slice (plan §10 steps 1–2) covered `meeting`/`speaker`/`speakerSegment`/
 //  `transcript`. Slice 2 (plan §10 steps 3–5) adds `summary`, `meetingNote`, `person`,
-//  `profileFact`, `profileFactSource`.
+//  `profileFact`, `profileFactSource`. Slice 3 (plan §10 step 6) adds `series`, `seriesLedger`,
+//  `seriesMember`, `calendarEvent`, `calendarSyncSetting`.
 //
 import Foundation
 import GRDB
@@ -160,7 +161,7 @@ struct SchemaFidelityTests {
         #expect(enabled)
     }
 
-    @Test("only the foundation-slice + slice-2 tables exist")
+    @Test("only the foundation-slice + slice-2 + slice-3 tables exist")
     func noExtraTablesYet() throws {
         let queue = try migratedQueue()
         let tableNames = try queue.read { db in
@@ -171,7 +172,8 @@ struct SchemaFidelityTests {
         }
         #expect(Set(tableNames) == [
             "meeting", "speaker", "speakerSegment", "transcript",
-            "person", "profileFact", "profileFactSource", "summary", "meetingNote"
+            "person", "profileFact", "profileFactSource", "summary", "meetingNote",
+            "series", "seriesLedger", "seriesMember", "calendarEvent", "calendarSyncSetting"
         ])
     }
 
@@ -247,6 +249,125 @@ struct SchemaFidelityTests {
 
         let names = Set(actual.map(\.name))
         #expect(!names.contains("meetingTitle"))
+    }
+
+    @Test("series table matches §4.7")
+    func seriesSchema() throws {
+        let queue = try migratedQueue()
+        let actual = try columns(of: "series", in: queue)
+        assertColumns(actual, match: [
+            ExpectedColumn(name: "id", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "seriesKey", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "title", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "detectedType", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "cadence", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "ownerPersonId", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "templateId", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "createdAt", type: "DATETIME", notNull: true),
+            ExpectedColumn(name: "updatedAt", type: "DATETIME", notNull: true),
+            ExpectedColumn(name: "isDeleted", type: "BOOLEAN", notNull: true),
+            ExpectedColumn(name: "deletedAt", type: "DATETIME", notNull: false)
+        ], table: "series")
+    }
+
+    @Test("series.ownerPersonId carries an inline FK to person")
+    func seriesOwnerForeignKey() throws {
+        let queue = try migratedQueue()
+        let foreignKeys = try queue.read { db in try db.foreignKeys(on: "series") }
+        let personFK = foreignKeys.first { $0.destinationTable == "person" }
+        #expect(personFK != nil, "series.ownerPersonId should reference person(id)")
+    }
+
+    @Test("seriesLedger table matches §4.7 (no tombstone columns)")
+    func seriesLedgerSchema() throws {
+        let queue = try migratedQueue()
+        let actual = try columns(of: "seriesLedger", in: queue)
+        assertColumns(actual, match: [
+            ExpectedColumn(name: "seriesId", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "ledgerMarkdown", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "structuredJson", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "updatedFromMeetingId", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "ledgerVersion", type: "INTEGER", notNull: false),
+            ExpectedColumn(name: "createdAt", type: "DATETIME", notNull: true),
+            ExpectedColumn(name: "updatedAt", type: "DATETIME", notNull: true)
+        ], table: "seriesLedger")
+
+        let names = Set(actual.map(\.name))
+        #expect(!names.contains("isDeleted"))
+        #expect(!names.contains("deletedAt"))
+    }
+
+    @Test("seriesMember table matches §4.7 (composite PK, no tombstone columns)")
+    func seriesMemberSchema() throws {
+        let queue = try migratedQueue()
+        let actual = try columns(of: "seriesMember", in: queue)
+        assertColumns(actual, match: [
+            ExpectedColumn(name: "seriesId", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "meetingId", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "occurrenceTime", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "linkSource", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "createdAt", type: "DATETIME", notNull: true)
+        ], table: "seriesMember")
+
+        let names = Set(actual.map(\.name))
+        #expect(!names.contains("isDeleted"))
+        #expect(!names.contains("deletedAt"))
+
+        let primaryKey = try queue.read { db in try db.primaryKey("seriesMember") }
+        #expect(Set(primaryKey.columns) == ["seriesId", "meetingId"])
+    }
+
+    @Test("calendarEvent table matches §4.8")
+    func calendarEventSchema() throws {
+        let queue = try migratedQueue()
+        let actual = try columns(of: "calendarEvent", in: queue)
+        assertColumns(actual, match: [
+            ExpectedColumn(name: "id", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "calendarId", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "calendarTitle", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "title", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "startTime", type: "DATETIME", notNull: true),
+            ExpectedColumn(name: "endTime", type: "DATETIME", notNull: true),
+            ExpectedColumn(name: "isAllDay", type: "BOOLEAN", notNull: true),
+            ExpectedColumn(name: "location", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "notes", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "organizer", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "attendeesJson", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "meetingId", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "linkSource", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "seriesKey", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "hasRecurrence", type: "BOOLEAN", notNull: false),
+            ExpectedColumn(name: "occurrenceDate", type: "DATETIME", notNull: false),
+            ExpectedColumn(name: "isDetached", type: "BOOLEAN", notNull: false),
+            ExpectedColumn(name: "syncedAt", type: "DATETIME", notNull: false),
+            ExpectedColumn(name: "isDeleted", type: "BOOLEAN", notNull: true),
+            ExpectedColumn(name: "deletedAt", type: "DATETIME", notNull: false)
+        ], table: "calendarEvent")
+
+        // No separate `attendee` link table — attendees are kept inline as JSON (§0.1(2)).
+        let tableNames = try queue.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'attendee'"
+            )
+        }
+        #expect(tableNames.isEmpty)
+    }
+
+    @Test("calendarSyncSetting table matches §4.8 (no tombstone columns)")
+    func calendarSyncSettingSchema() throws {
+        let queue = try migratedQueue()
+        let actual = try columns(of: "calendarSyncSetting", in: queue)
+        assertColumns(actual, match: [
+            ExpectedColumn(name: "calendarId", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "calendarTitle", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "color", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "selected", type: "BOOLEAN", notNull: true)
+        ], table: "calendarSyncSetting")
+
+        let names = Set(actual.map(\.name))
+        #expect(!names.contains("isDeleted"))
+        #expect(!names.contains("deletedAt"))
     }
 
     @Test("summary table matches §4.9")

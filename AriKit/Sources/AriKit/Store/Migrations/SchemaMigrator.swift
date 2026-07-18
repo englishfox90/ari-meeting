@@ -7,10 +7,10 @@
 //
 //  ⚠️ `v1_baseline` is STILL BEING BUILT INCREMENTALLY (plan §10 slice-1 findings): because it
 //  has not shipped/been released anywhere, later slices extend this same migration directly
-//  rather than opening `v2_...`. This commit (plan §10 steps 3–5) adds `summary`, `meetingNote`,
+//  rather than opening `v2_...`. Slice 2 (plan §10 steps 3–5) added `summary`, `meetingNote`,
 //  `person`, `profileFact`, and `profileFactSource` to the foundation slice's
-//  `meeting`/`speaker`/`speakerSegment`/`transcript`. §4.7 (`series`+`seriesLedger`+
-//  `seriesMember`) and §4.8 (`calendarEvent`+`calendarSyncSetting`) are NOT here yet (plan step 6).
+//  `meeting`/`speaker`/`speakerSegment`/`transcript`. Slice 3 (plan §10 step 6) adds §4.7
+//  (`series`+`seriesLedger`+`seriesMember`) and §4.8 (`calendarEvent`+`calendarSyncSetting`).
 //
 //  ⚠️ Table order is now parent-before-child throughout, per the slice-1 finding: `person` is
 //  declared BEFORE `speaker` so `speaker.personId REFERENCES person(id)` can be inline from the
@@ -210,6 +210,100 @@ enum SchemaMigrator {
                 t.column("updatedAt", .datetime).notNull()
                 t.column("isDeleted", .boolean).notNull().defaults(to: false)
                 t.column("deletedAt", .datetime)
+            }
+
+            // `series` (§4.7) — after `person` (`ownerPersonId` FK) so it can be declared inline.
+            try db.create(table: "series") { t in
+                t.primaryKey("id", .text)
+                t.column("seriesKey", .text).unique()
+                t.column("title", .text).notNull()
+                t.column("detectedType", .text)
+                t.column("cadence", .text)
+                t.column("ownerPersonId", .text)
+                    .indexed()
+                    .references("person", onDelete: .setNull)
+                // Not yet on `AriKit.Models.Series` — same documented gap as `Meeting.templateId`
+                // (see `Records/SeriesRecord.swift`'s header). Always persisted as `NULL` here.
+                t.column("templateId", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+                t.column("isDeleted", .boolean).notNull().defaults(to: false)
+                t.column("deletedAt", .datetime)
+            }
+
+            // `seriesLedger` (§4.7) — one row per series (PK is the FK itself). No tombstone
+            // columns: §4.7 does not list them, and its lifecycle is tied to its parent `series`
+            // row via `ON DELETE CASCADE` (mirrors the `speakerSegment` precedent, plan §10 step 7
+            // folds tombstones in for every table that gets one).
+            try db.create(table: "seriesLedger") { t in
+                t.primaryKey("seriesId", .text)
+                    .references("series", onDelete: .cascade)
+                t.column("ledgerMarkdown", .text)
+                t.column("structuredJson", .text)
+                t.column("updatedFromMeetingId", .text)
+                    .indexed()
+                    .references("meeting", onDelete: .setNull)
+                // `nil` = no ledger yet (plan §4.7).
+                t.column("ledgerVersion", .integer)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+
+            // `seriesMember` (§4.7) — a link row, composite PK, no tombstone (plan §4.7 lists
+            // none; a meeting either is or isn't a member, so its row is added/removed directly).
+            try db.create(table: "seriesMember") { t in
+                t.column("seriesId", .text)
+                    .notNull()
+                    .indexed()
+                    .references("series", onDelete: .cascade)
+                t.column("meetingId", .text)
+                    .notNull()
+                    .indexed()
+                    .references("meeting", onDelete: .cascade)
+                t.column("occurrenceTime", .text)
+                t.column("linkSource", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.primaryKey(["seriesId", "meetingId"])
+            }
+
+            // `calendarEvent` (§4.8) — attendees kept as an inline JSON column (§0.1(2)).
+            try db.create(table: "calendarEvent") { t in
+                t.primaryKey("id", .text)
+                t.column("calendarId", .text).notNull()
+                t.column("calendarTitle", .text)
+                t.column("title", .text).notNull()
+                t.column("startTime", .datetime).notNull()
+                t.column("endTime", .datetime).notNull()
+                t.column("isAllDay", .boolean).notNull()
+                t.column("location", .text)
+                t.column("notes", .text)
+                t.column("organizer", .text)
+                t.column("attendeesJson", .text).notNull()
+                t.column("meetingId", .text)
+                    .indexed()
+                    .references("meeting", onDelete: .setNull)
+                t.column("linkSource", .text)
+                // Recurrence signals (§4.8) — nullable, matching the domain type's `Optional`
+                // "not captured" semantics (see `Models/CalendarEvent.swift`'s header).
+                t.column("seriesKey", .text)
+                t.column("hasRecurrence", .boolean)
+                t.column("occurrenceDate", .datetime)
+                t.column("isDetached", .boolean)
+                // Store-internal only — not on the domain type yet, same documented gap as
+                // `Meeting.templateId` (see `Records/CalendarEventRecord.swift`'s header).
+                t.column("syncedAt", .datetime)
+                t.column("isDeleted", .boolean).notNull().defaults(to: false)
+                t.column("deletedAt", .datetime)
+            }
+
+            // `calendarSyncSetting` (§4.8) — config/selection, not a synced text record (the
+            // domain-level `CalendarInfo` DTO was deliberately deferred, arikit-models.md §7.7);
+            // no tombstone, no dedicated repository — folded into `CalendarEventRepository`.
+            try db.create(table: "calendarSyncSetting") { t in
+                t.primaryKey("calendarId", .text)
+                t.column("calendarTitle", .text)
+                t.column("color", .text)
+                t.column("selected", .boolean).notNull().defaults(to: false)
             }
         }
 

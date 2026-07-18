@@ -4,6 +4,9 @@
   "seriesKey": "ext-abc-123",
   "detectedType": "one_on_one",
   "cadence": "weekly",
+  "ownerPersonId": "person-1",
   "ledgerMarkdown": "# Ledger\n- kicked off",
-  "ledgerVersion": 3
+  "ledgerVersion": 3,
+  "createdAt": "2023-11-14T22:13:20Z",
+  "updatedAt": "2023-11-14T23:13:20Z"
 }

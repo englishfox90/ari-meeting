@@ -6,9 +6,11 @@
 //  the same values already proven Codable-round-trip-clean at the Models layer.
 //
 //  Foundation slice (plan §10 steps 1–2) covered meeting/transcript/speaker/speakerSegment.
-//  Slice 2 (plan §10 steps 3–5) adds summary/meetingNote/person below.
+//  Slice 2 (plan §10 steps 3–5) adds summary/meetingNote/person below. Slice 3 (plan §10 step 6)
+//  adds series (+ its ledger/membership tables) and calendarEvent below.
 //
 import Foundation
+import GRDB
 import Testing
 @testable import AriKit
 
@@ -409,4 +411,256 @@ struct RoundTripFidelityTests {
         let all = try await db.profileFacts.all(includingDeleted: true)
         #expect(all.isEmpty)
     }
+
+    // MARK: - Slice 3: series (+ seriesLedger reconciliation, seriesMember)
+
+    @Test("Series round-trips through SeriesRepository, reconciling series ⊕ seriesLedger")
+    func seriesRoundTrip() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.persons.upsert(ModelSamples.person) // series.ownerPersonId FK target
+        let series = ModelSamples.series
+
+        try await db.series.upsert(series)
+        let fetched = try await db.series.find(series.id)
+
+        #expect(fetched == series)
+    }
+
+    @Test("Series upsert updates the ledger without wiping structuredJson/updatedFromMeetingId")
+    func seriesUpsertPreservesLedgerExtras() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.persons.upsert(ModelSamples.person)
+        try await db.meetings.upsert(ModelSamples.meeting)
+        var series = ModelSamples.series
+        try await db.series.upsert(series)
+
+        // A field not on `Series` — set via the fine-grained ledger API.
+        try await db.series.updateLedger(
+            seriesId: series.id,
+            ledgerMarkdown: series.ledgerMarkdown,
+            structuredJson: "{\"themes\":[]}",
+            updatedFromMeetingId: ModelSamples.meeting.id,
+            ledgerVersion: series.ledgerVersion,
+            at: ModelSamples.laterInstant
+        )
+
+        // A plain `upsert(_:)` (e.g. renaming the series) must not clobber that extra state.
+        series.title = "Renamed series"
+        try await db.series.upsert(series)
+
+        let ledgerRow = try await db.dbWriter.read { rawDb in
+            try Row.fetchOne(
+                rawDb,
+                sql: "SELECT * FROM seriesLedger WHERE seriesId = ?",
+                arguments: [series.id.rawValue]
+            )
+        }
+        #expect(ledgerRow?["structuredJson"] as String? == "{\"themes\":[]}")
+        #expect(ledgerRow?["updatedFromMeetingId"] as String? == ModelSamples.meeting.id.rawValue)
+
+        let fetched = try await db.series.find(series.id)
+        #expect(fetched?.title == "Renamed series")
+    }
+
+    @Test("Series with no ledger yet round-trips ledgerVersion as nil")
+    func seriesNoLedgerYet() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.persons.upsert(ModelSamples.person)
+        var series = ModelSamples.series
+        series.id = "series-no-ledger"
+        series.ledgerMarkdown = nil
+        series.ledgerVersion = nil
+
+        try await db.series.upsert(series)
+        let fetched = try await db.series.find(series.id)
+
+        #expect(fetched?.ledgerVersion == nil)
+        #expect(fetched?.ledgerMarkdown == nil)
+    }
+
+    @Test("Series soft-delete tombstones rather than deletes")
+    func seriesSoftDelete() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.persons.upsert(ModelSamples.person)
+        try await db.series.upsert(ModelSamples.series)
+
+        try await db.series.softDelete(ModelSamples.series.id, at: Date())
+        #expect(try await db.series.all().isEmpty)
+        #expect(try await db.series.all(includingDeleted: true).count == 1)
+    }
+
+    @Test("Deleting the owning person nulls out series.ownerPersonId (FK ON DELETE SET NULL)")
+    func seriesOwnerDeleteSetsNull() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.persons.upsert(ModelSamples.person)
+        try await db.series.upsert(ModelSamples.series)
+
+        try await db.dbWriter.write { rawDb in
+            try rawDb.execute(
+                sql: "DELETE FROM person WHERE id = ?",
+                arguments: [ModelSamples.person.id.rawValue]
+            )
+        }
+
+        let fetched = try await db.series.find(ModelSamples.series.id)
+        #expect(fetched?.ownerPersonId == nil)
+    }
+
+    @Test("Series membership: add/list/remove meetings via seriesMember")
+    func seriesMembership() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.persons.upsert(ModelSamples.person)
+        try await db.series.upsert(ModelSamples.series)
+        try await db.meetings.upsert(ModelSamples.meeting)
+
+        try await db.series.addMember(
+            seriesId: ModelSamples.series.id,
+            meetingId: ModelSamples.meeting.id,
+            occurrenceTime: "2023-11-14T22:00:00Z",
+            linkSource: "calendar"
+        )
+
+        let members = try await db.series.meetingIds(inSeries: ModelSamples.series.id)
+        #expect(members == [ModelSamples.meeting.id])
+
+        let removed = try await db.series.removeMember(
+            seriesId: ModelSamples.series.id,
+            meetingId: ModelSamples.meeting.id
+        )
+        #expect(removed)
+        let afterRemove = try await db.series.meetingIds(inSeries: ModelSamples.series.id)
+        #expect(afterRemove.isEmpty)
+    }
+
+    @Test("Deleting a series cascades to its seriesLedger and seriesMember rows (FK ON DELETE CASCADE)")
+    func seriesCascadeDelete() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.persons.upsert(ModelSamples.person)
+        try await db.meetings.upsert(ModelSamples.meeting)
+        try await db.series.upsert(ModelSamples.series)
+        try await db.series.addMember(seriesId: ModelSamples.series.id, meetingId: ModelSamples.meeting.id)
+
+        try await db.dbWriter.write { rawDb in
+            try rawDb.execute(
+                sql: "DELETE FROM series WHERE id = ?",
+                arguments: [ModelSamples.series.id.rawValue]
+            )
+        }
+
+        let ledgerCount = try await db.dbWriter.read { rawDb in
+            try Int.fetchOne(rawDb, sql: "SELECT COUNT(*) FROM seriesLedger") ?? -1
+        }
+        let memberCount = try await db.dbWriter.read { rawDb in
+            try Int.fetchOne(rawDb, sql: "SELECT COUNT(*) FROM seriesMember") ?? -1
+        }
+        #expect(ledgerCount == 0)
+        #expect(memberCount == 0)
+    }
+
+    // MARK: - Slice 3: calendarEvent
+
+    @Test("CalendarEvent round-trips through CalendarEventRepository, including attendees JSON")
+    func calendarEventRoundTrip() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(ModelSamples.meeting) // calendarEvent.meetingId FK target
+        let event = ModelSamples.calendarEvent
+
+        try await db.calendarEvents.upsert(event)
+        let fetched = try await db.calendarEvents.find(event.id)
+
+        #expect(fetched == event)
+    }
+
+    @Test("CalendarEvent round-trips recurrence signals and multiple attendees")
+    func calendarEventRecurrenceRoundTrip() async throws {
+        let db = try AppDatabase.makeInMemory()
+        var event = ModelSamples.calendarEvent
+        event.id = "event-recurring"
+        event.meetingId = nil
+        event.attendees = [
+            Attendee(name: "Guest One", email: "one@example.com"),
+            Attendee(name: nil, email: "two@example.com")
+        ]
+        event.seriesKey = "ext-abc-123"
+        event.hasRecurrence = true
+        event.occurrenceDate = instantForCalendarTests
+        event.isDetached = false
+
+        try await db.calendarEvents.upsert(event)
+        let fetched = try await db.calendarEvents.find(event.id)
+
+        #expect(fetched == event)
+    }
+
+    @Test("CalendarEvent soft-delete tombstones rather than deletes")
+    func calendarEventSoftDelete() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(ModelSamples.meeting) // calendarEvent.meetingId FK target
+        try await db.calendarEvents.upsert(ModelSamples.calendarEvent)
+
+        try await db.calendarEvents.softDelete(ModelSamples.calendarEvent.id, at: Date())
+        #expect(try await db.calendarEvents.all().isEmpty)
+        #expect(try await db.calendarEvents.all(includingDeleted: true).count == 1)
+    }
+
+    @Test("CalendarEvent.forMeeting scopes by meetingId and excludes tombstoned rows")
+    func calendarEventForMeeting() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(ModelSamples.meeting)
+        try await db.calendarEvents.upsert(ModelSamples.calendarEvent)
+
+        let forMeeting = try await db.calendarEvents.forMeeting(ModelSamples.meeting.id)
+        #expect(forMeeting.count == 1)
+
+        try await db.calendarEvents.softDelete(ModelSamples.calendarEvent.id, at: Date())
+        let afterDelete = try await db.calendarEvents.forMeeting(ModelSamples.meeting.id)
+        #expect(afterDelete.isEmpty)
+    }
+
+    @Test("Deleting a linked meeting nulls out calendarEvent.meetingId (FK ON DELETE SET NULL)")
+    func calendarEventMeetingDeleteSetsNull() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(ModelSamples.meeting)
+        try await db.calendarEvents.upsert(ModelSamples.calendarEvent)
+
+        try await db.dbWriter.write { rawDb in
+            try rawDb.execute(
+                sql: "DELETE FROM meeting WHERE id = ?",
+                arguments: [ModelSamples.meeting.id.rawValue]
+            )
+        }
+
+        let fetched = try await db.calendarEvents.find(ModelSamples.calendarEvent.id)
+        #expect(fetched?.meetingId == nil)
+    }
+
+    // MARK: - Slice 3: calendarSyncSetting
+
+    @Test("calendarSyncSetting round-trips through CalendarEventRepository")
+    func calendarSyncSettingRoundTrip() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1",
+            calendarTitle: "Work",
+            color: "#E8A020",
+            selected: true
+        )
+
+        let settings = try await db.calendarEvents.syncSettings()
+        #expect(settings.count == 1)
+        #expect(settings.first?.calendarId == "cal-1")
+        #expect(settings.first?.selected == true)
+
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1",
+            calendarTitle: "Work",
+            color: "#E8A020",
+            selected: false
+        )
+        let updated = try await db.calendarEvents.syncSettings()
+        #expect(updated.count == 1)
+        #expect(updated.first?.selected == false)
+    }
 }
+
+private let instantForCalendarTests = Date(timeIntervalSince1970: 1_700_006_000)

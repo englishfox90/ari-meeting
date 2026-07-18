@@ -80,4 +80,12 @@ public actor AppDatabase {
     public nonisolated var meetingNotes: MeetingNoteRepository {
         MeetingNoteRepository(dbWriter: dbWriter)
     }
+
+    public nonisolated var series: SeriesRepository {
+        SeriesRepository(dbWriter: dbWriter)
+    }
+
+    public nonisolated var calendarEvents: CalendarEventRepository {
+        CalendarEventRepository(dbWriter: dbWriter)
+    }
 }

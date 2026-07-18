@@ -117,8 +117,11 @@ enum ModelSamples {
         seriesKey: "ext-abc-123",
         detectedType: "one_on_one",
         cadence: "weekly",
+        ownerPersonId: "person-1",
         ledgerMarkdown: "# Ledger\n- kicked off",
-        ledgerVersion: 3
+        ledgerVersion: 3,
+        createdAt: instant,
+        updatedAt: laterInstant
     )
 
     static let summary = Summary(
