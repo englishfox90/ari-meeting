@@ -33,6 +33,18 @@
 //
 import PackageDescription
 
+/// Store dependency: plain GRDB, NOT Point-Free SQLiteData — see docs/plans/arikit-store.md §0.1(3)
+/// and §10 risk (d). SQLiteData's released API (checked 2026-07-17, v1.7.0) is built around its own
+/// `@Table` macro + swift-structured-queries query builder + `@FetchAll` property wrappers — a
+/// different paradigm from, not a superset of, the plain `FetchableRecord`/`PersistableRecord`
+/// record shape this plan specifies (§2.1, the `grdb` skill). Adopting it now would mean either
+/// fighting the macro layer to get plain records, or adopting the macro layer itself (an
+/// out-of-scope design change) — plus a heavy transitive dependency pull (swift-structured-queries,
+/// swift-sharing, swift-perception, swift-tagged, swift-collections, swift-custom-dump,
+/// swift-snapshot-testing, swift-dependencies) for zero benefit in this foundation slice (CloudKit
+/// sync isn't wired until Phase 5.5). SQLiteData itself depends on GRDB.swift ~> 7.6, so this
+/// package still rests on exactly the GRDB semantics SQLiteData will eventually layer over —
+/// revisit the SQLiteData adoption at the Phase 5.5 CloudKit-wiring step, per §0.1(3).
 let package = Package(
     name: "AriKit",
     platforms: [
@@ -45,9 +57,15 @@ let package = Package(
             targets: ["AriKit"]
         )
     ],
+    dependencies: [
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.11.0")
+    ],
     targets: [
         .target(
             name: "AriKit",
+            dependencies: [
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
