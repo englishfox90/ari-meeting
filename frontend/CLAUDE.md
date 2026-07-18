@@ -11,13 +11,13 @@ You're in the Next.js 14 frontend (App Router, static export, dev on port 3118).
 5. **No-Fake-State:** never render invented metrics/progress/counts/timestamps/citations. Honest empty/loading/error states only.
 6. **Guard Tauri availability** — code paths that call `invoke` must handle running outside the Tauri runtime (plain `pnpm run dev` in a browser has no backend).
 
-## Authoritative config files (duplicates still present — verify before touching)
+## Authoritative config files
 
-There are duplicate build configs; the authoritative one in each pair is:
+The duplicate build configs have been **deduped (done 2026-07-17)** — one config per tool now:
 
-- **Tailwind:** `tailwind.config.js` (shadcn points here). ⚠️ But `tailwind.config.ts` is the only one loading `@tailwindcss/typography`, and `prose` classes are used (chat + transcript panels) — do NOT delete `.ts` until you confirm which config Tailwind actually loads and that `prose` styling survives. Dedup is a tracked follow-up.
-- **PostCSS:** `postcss.config.js` (has tailwind + autoprefixer). `.mjs` is a Tailwind-v4 stub — verify resolution order before removing.
-- **ESLint:** `.eslintrc.json` via `next lint`. `eslint.config.mjs` is a non-functional flat config (missing deps) — safe candidate to remove after confirming `next lint` still uses the legacy file.
+- **Tailwind:** `tailwind.config.js` (shadcn points here) — now registers `@tailwindcss/typography` in its `plugins`, so `prose` styling works. The old `tailwind.config.ts` is **deleted** (its typography plugin folded in; its optional `fontSize` scale was not carried over — Tailwind defaults are in use). ⚠️ `tailwind.config.js` changes must stay in lockstep with root `DESIGN.json`/`DESIGN.md` (the visual-system test).
+- **PostCSS:** `postcss.config.js` (tailwind + autoprefixer) — the `.mjs` stub is **deleted**.
+- **ESLint:** `.eslintrc.json` via `next lint` — the non-functional `eslint.config.mjs` flat config is **deleted**.
 
 ## Tests
 
