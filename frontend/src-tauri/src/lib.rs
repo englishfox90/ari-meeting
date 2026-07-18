@@ -41,7 +41,7 @@ pub mod app_config;
 pub mod apple;
 pub mod audio;
 pub mod calendar;
-pub mod config;
+pub use ari_engine::config;
 pub mod console_utils;
 pub mod database;
 pub mod diarization;
