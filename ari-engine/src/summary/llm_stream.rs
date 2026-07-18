@@ -54,7 +54,7 @@ where
     if provider == &LLMProvider::BuiltInAI {
         let app_data_dir = app_data_dir
             .ok_or_else(|| "app_data_dir is required for BuiltInAI provider".to_string())?;
-        return crate::summary::summary_engine::generate_with_builtin_stream(
+        return crate::summary_engine::generate_with_builtin_stream(
             app_data_dir,
             model_name,
             system_prompt,

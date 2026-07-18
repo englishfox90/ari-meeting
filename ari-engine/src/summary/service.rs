@@ -8,7 +8,7 @@ use crate::summary::processor::{
     extract_meeting_name_from_markdown, generate_meeting_summary, language_name_from_code,
 };
 use crate::summary::templates::{self, Template};
-use crate::ollama::metadata::ModelMetadataCache;
+use crate::providers::ollama::metadata::ModelMetadataCache;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -442,7 +442,7 @@ impl SummaryService {
             }
         } else if provider == LLMProvider::BuiltInAI {
             // Get model's context size from registry
-            use crate::summary::summary_engine::models;
+            use crate::summary_engine::models;
             let model = models::get_model_by_name(&model_name)
                 .ok_or_else(|| format!("Unknown model: {}", model_name));
 

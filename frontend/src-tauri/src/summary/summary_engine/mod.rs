@@ -1,13 +1,13 @@
 // Built-in AI summary engine module
 // Provides local LLM inference via llama-helper sidecar
 
-pub mod client;
 pub mod commands;
-pub mod sidecar;
 
-// model_manager + models moved to ari-engine::summary_engine (Phase 1.5 carve, Stage B1).
+// model_manager + models + client + sidecar all moved to ari-engine::summary_engine
+// (Phase 1.5 carve, Stage B1) — zero Tauri coupling of their own.
 pub use ari_engine::summary_engine::model_manager;
 pub use ari_engine::summary_engine::models;
+pub use ari_engine::summary_engine::{client, sidecar};
 
 // Re-export commonly used types
 pub use client::{generate_with_builtin, generate_with_builtin_stream, is_sidecar_healthy, shutdown_sidecar_gracefully, force_shutdown_sidecar};

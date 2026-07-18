@@ -2,12 +2,18 @@
 ///
 /// These templates are bundled into the binary and serve as fallbacks
 /// when custom templates are not available.
+///
+/// Moved from `frontend/src-tauri/src/summary/templates/defaults.rs` (Phase 1.5
+/// carve, Stage B1); the `include_str!` paths are rebased to walk from this
+/// crate's location back to the templates that still live physically alongside
+/// the host (`frontend/src-tauri/templates/`), matching how the DB repositories'
+/// migrations path was rebased in the same carve.
 
 /// Daily standup template for engineering/product teams
-pub const DAILY_STANDUP: &str = include_str!("../../../templates/daily_standup.json");
+pub const DAILY_STANDUP: &str = include_str!("../../../../frontend/src-tauri/templates/daily_standup.json");
 
 /// Standard meeting notes template
-pub const STANDARD_MEETING: &str = include_str!("../../../templates/standard_meeting.json");
+pub const STANDARD_MEETING: &str = include_str!("../../../../frontend/src-tauri/templates/standard_meeting.json");
 
 /// Registry of all built-in templates
 ///

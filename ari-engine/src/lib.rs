@@ -54,5 +54,6 @@ pub mod language_preference;
 pub mod meeting_series;
 pub mod models;
 pub mod providers;
+pub mod summary;
 pub mod summary_engine;
 pub mod whisper_engine;

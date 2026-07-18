@@ -208,6 +208,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "futures-util",
+ "lazy_static",
  "log",
  "once_cell",
  "regex",
@@ -221,6 +222,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "whatlang",
  "whisper-rs",
 ]
 

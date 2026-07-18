@@ -143,7 +143,7 @@ pub async fn generate_summary(
         let app_data_dir = app_data_dir
             .ok_or_else(|| "app_data_dir is required for BuiltInAI provider".to_string())?;
 
-        return crate::summary::summary_engine::generate_with_builtin(
+        return crate::summary_engine::generate_with_builtin(
             app_data_dir,
             model_name,
             system_prompt,

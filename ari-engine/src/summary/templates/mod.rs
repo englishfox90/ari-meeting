@@ -13,7 +13,7 @@
 //! # Usage
 //!
 //! ```rust
-//! use app_lib::summary::templates;
+//! use ari_engine::summary::templates;
 //!
 //! // Load a specific template
 //! let template = templates::get_template("daily_standup").expect("daily standup template exists");

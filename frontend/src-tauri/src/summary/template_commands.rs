@@ -1,20 +1,11 @@
-use crate::summary::templates;
-use serde::{Deserialize, Serialize};
+//! Thin `#[tauri::command]` shim — the pure logic (`TemplateInfo` +
+//! `list_templates_impl`) now lives in `ari_engine::summary::template_commands`,
+//! per the ari-engine carve's per-service migration recipe
+//! (`docs/plans/ari-engine-carve.md`).
+
+pub use ari_engine::summary::template_commands::{list_templates_impl, TemplateInfo};
 use tauri::Runtime;
 use tracing::info;
-
-/// Template metadata for UI display
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TemplateInfo {
-    /// Template identifier (e.g., "daily_standup", "standard_meeting")
-    pub id: String,
-
-    /// Display name for the template
-    pub name: String,
-
-    /// Brief description of the template's purpose
-    pub description: String,
-}
 
 /// Lists all available templates
 ///
@@ -29,61 +20,9 @@ pub async fn api_list_templates<R: Runtime>(
 ) -> Result<Vec<TemplateInfo>, String> {
     info!("api_list_templates called");
 
-    let templates = templates::list_templates();
-
-    let template_infos: Vec<TemplateInfo> = templates
-        .into_iter()
-        .map(|(id, name, description)| TemplateInfo {
-            id,
-            name,
-            description,
-        })
-        .collect();
+    let template_infos = list_templates_impl();
 
     info!("Found {} available templates", template_infos.len());
 
     Ok(template_infos)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_list_templates() {
-        // This test requires the templates to be embedded/available
-        // In a real test environment, you might want to mock the templates module
-
-        // For now, just verify the function compiles and runs
-        // You can expand this with more specific assertions
-    }
-
-    #[tokio::test]
-    async fn test_validate_template_valid() {
-        let valid_json = r#"
-        {
-            "name": "Test Template",
-            "description": "A test template",
-            "sections": [
-                {
-                    "title": "Summary",
-                    "instruction": "Provide a summary",
-                    "format": "paragraph"
-                }
-            ]
-        }"#;
-
-        // Mock app handle would be needed for actual testing
-        // For now, test the validation logic directly
-        let result = templates::validate_and_parse_template(valid_json);
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_validate_template_invalid() {
-        let invalid_json = "invalid json";
-
-        let result = templates::validate_and_parse_template(invalid_json);
-        assert!(result.is_err());
-    }
 }
