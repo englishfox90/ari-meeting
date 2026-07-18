@@ -88,4 +88,8 @@ public actor AppDatabase {
     public nonisolated var calendarEvents: CalendarEventRepository {
         CalendarEventRepository(dbWriter: dbWriter)
     }
+
+    public nonisolated var recallIndex: RecallIndexRepository {
+        RecallIndexRepository(dbWriter: dbWriter)
+    }
 }

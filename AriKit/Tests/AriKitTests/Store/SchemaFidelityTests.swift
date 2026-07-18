@@ -161,7 +161,7 @@ struct SchemaFidelityTests {
         #expect(enabled)
     }
 
-    @Test("only the foundation-slice + slice-2 + slice-3 tables exist")
+    @Test("only the foundation-slice + slice-2 + slice-3 + recall-slice-2 tables exist")
     func noExtraTablesYet() throws {
         let queue = try migratedQueue()
         let tableNames = try queue.read { db in
@@ -170,10 +170,19 @@ struct SchemaFidelityTests {
                 sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'grdb_migrations'"
             )
         }
+        // Recall Slice 2 (docs/plans/arikit-recall-slice2.md §4) appended recallChunk/
+        // recallIndexState/askConversation/askMessage here. `recallFts` IS a `type = 'table'`
+        // row (FTS5 virtual tables register that way in `sqlite_master`), alongside its SQLite-
+        // managed shadow tables (`_data`/`_content`/`_idx`/`_docsize`/`_config`) that back the
+        // virtual table's storage even though it is declared standalone (non-external-content) —
+        // SQLite's own FTS5 module always creates these regardless of the `content=` option.
         #expect(Set(tableNames) == [
             "meeting", "speaker", "speakerSegment", "transcript",
             "person", "profileFact", "profileFactSource", "summary", "meetingNote",
-            "series", "seriesLedger", "seriesMember", "calendarEvent", "calendarSyncSetting"
+            "series", "seriesLedger", "seriesMember", "calendarEvent", "calendarSyncSetting",
+            "recallChunk", "recallIndexState", "askConversation", "askMessage",
+            "recallFts", "recallFts_data", "recallFts_content", "recallFts_idx",
+            "recallFts_docsize", "recallFts_config"
         ])
     }
 

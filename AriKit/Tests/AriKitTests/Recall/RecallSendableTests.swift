@@ -7,7 +7,7 @@
 import Testing
 @testable import AriKit
 
-@Suite struct RecallSendableTests {
+struct RecallSendableTests {
     private func requireSendable(_: (some Sendable).Type) {}
 
     @Test func everyRecallTypeIsSendable() {
@@ -18,6 +18,16 @@ import Testing
         requireSendable(ChunkDraft.self)
         requireSendable(EmbedBackend.self)
         requireSendable(RecallError.self)
+
+        // Recall Slice 2 (docs/plans/arikit-recall-slice2.md §6, "extend SendableInventoryTests")
+        requireSendable(RecallChunkID.self)
+        requireSendable(RecallChunk.self)
+        requireSendable(RecallChunkInput.self)
+        requireSendable(RecallIndexState.self)
+        requireSendable(RecallIndexSummary.self)
+        requireSendable(RecallFTSHit.self)
+        requireSendable(RecallEmbeddingRow.self)
+        requireSendable(RecallIndexRepository.self)
 
         #expect(Bool(true))
     }

@@ -11,6 +11,8 @@
 //  `person`, `profileFact`, and `profileFactSource` to the foundation slice's
 //  `meeting`/`speaker`/`speakerSegment`/`transcript`. Slice 3 (plan §10 step 6) adds §4.7
 //  (`series`+`seriesLedger`+`seriesMember`) and §4.8 (`calendarEvent`+`calendarSyncSetting`).
+//  Recall Slice 2 (docs/plans/arikit-recall-slice2.md §4) appends `recallChunk`,
+//  `recallIndexState`, `recallFts` (FTS5), and the schema-only `askConversation`/`askMessage`.
 //
 //  ⚠️ Table order is now parent-before-child throughout, per the slice-1 finding: `person` is
 //  declared BEFORE `speaker` so `speaker.personId REFERENCES person(id)` can be inline from the
@@ -304,6 +306,77 @@ enum SchemaMigrator {
                 t.column("calendarTitle", .text)
                 t.column("color", .text)
                 t.column("selected", .boolean).notNull().defaults(to: false)
+            }
+
+            // Recall Slice 2 (docs/plans/arikit-recall-slice2.md §4) — index tables + the
+            // schema-only Ask conversation tables. Appended after `calendarSyncSetting`
+            // (the migration's prior last table) per the slice's own decision to extend
+            // `v1_baseline` in place while it remains unshipped. `meeting` already exists above,
+            // so `recallChunk`/`recallIndexState` (FK→`meeting`) are inline from the start.
+
+            // `recallChunk` (§4.1) — the Swift schema ADDS an FK beyond the Rust plain index
+            // (single-owner rationale, plan §4.1).
+            try db.create(table: "recallChunk") { t in
+                t.primaryKey("id", .text)
+                t.column("meetingId", .text)
+                    .notNull()
+                    .indexed()
+                    .references("meeting", onDelete: .cascade)
+                t.column("chunkIndex", .integer).notNull()
+                t.column("chunkText", .text).notNull()
+                t.column("startTime", .double)
+                t.column("endTime", .double)
+                t.column("timestampLabel", .text)
+                t.column("embedding", .blob)
+                t.column("embeddingModel", .text)
+                t.column("dim", .integer)
+                t.column("tokenEstimate", .integer)
+                t.column("createdAt", .text).notNull()
+            }
+
+            // `recallIndexState` (§4.2) — Swift schema ADDS an FK beyond Rust's bare PK.
+            try db.create(table: "recallIndexState") { t in
+                t.primaryKey("meetingId", .text)
+                    .references("meeting", onDelete: .cascade)
+                t.column("contentHash", .text).notNull()
+                t.column("chunkCount", .integer).notNull()
+                t.column("embeddingModel", .text)
+                t.column("embeddedCount", .integer).notNull().defaults(to: 0)
+                t.column("indexedAt", .text).notNull()
+            }
+
+            // `recallFts` (§4.3) — standalone (non-external-content) FTS5 virtual table, "for
+            // robustness" per the Rust migration's own comment. No FK — SQLite does not support
+            // declared foreign keys on a virtual table, and Rust has none either.
+            try db.create(virtualTable: "recallFts", using: FTS5()) { t in
+                t.tokenizer = .porter(wrapping: .unicode61())
+                t.column("chunkText")
+                t.column("chunkId").notIndexed()
+                t.column("meetingId").notIndexed()
+            }
+
+            // `askConversation` (§4.4) — schema only in Slice 2; no repository yet (Slice 6).
+            try db.create(table: "askConversation") { t in
+                t.primaryKey("id", .text)
+                t.column("meetingId", .text)
+                    .indexed()
+                    .references("meeting", onDelete: .setNull)
+                t.column("title", .text)
+                t.column("createdAt", .text).notNull()
+                t.column("updatedAt", .text).notNull().indexed()
+            }
+
+            // `askMessage` (§4.5) — schema only in Slice 2; no repository yet (Slice 6).
+            try db.create(table: "askMessage") { t in
+                t.primaryKey("id", .text)
+                t.column("conversationId", .text)
+                    .notNull()
+                    .indexed()
+                    .references("askConversation", onDelete: .cascade)
+                t.column("role", .text).notNull()
+                t.column("content", .text).notNull()
+                t.column("sourcesJson", .text)
+                t.column("createdAt", .text).notNull()
             }
         }
 
