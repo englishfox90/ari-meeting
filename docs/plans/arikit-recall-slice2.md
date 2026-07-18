@@ -2,6 +2,8 @@
 
 ## 0. Status & scope guard
 
+**STATUS: COMPLETE (2026-07-18, commit `d2251f0`, branch `arikit-recall-slice2`).** Built tests-first, reviewer-verified (no BLOCKER/HIGH; 2 cosmetic fixes applied). Full suite 150 tests / 25 suites green, 0 warnings, Swift 6 strict. This doc is the as-built record.
+
 Slice 2 of `docs/plans/arikit-recall.md` (§5, §2.3, §4) — Phase 3.1's recall stream, index-table sub-step. Builds on the **completed** Store (`docs/plans/arikit-store.md`, STATUS: COMPLETE 2026-07-17) and the **landed** Recall Slice 1 pure domain layer (`AriKit/Sources/AriKit/Recall/{Shell,Citations,Chunking,Embedding}/**`, `docs/plans/arikit-recall.md` §5 Slice 1).
 
 **Scope guard.** This spec touches only:
