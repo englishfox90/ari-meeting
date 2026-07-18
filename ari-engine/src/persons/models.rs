@@ -84,7 +84,7 @@ pub struct PersonDetail {
     pub meeting_count: i64,
 }
 
-pub use ari_engine::models::NewPerson;
+pub use crate::models::NewPerson;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

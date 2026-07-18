@@ -54,6 +54,7 @@ pub mod engine;
 pub mod language_preference;
 pub mod meeting_series;
 pub mod models;
+pub mod persons;
 pub mod providers;
 pub mod recall;
 pub mod summary;
