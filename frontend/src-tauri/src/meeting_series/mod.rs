@@ -1,14 +1,11 @@
 // Meeting Series (F9) — additive feature module. Groups recurring meetings (calendar
 // recurrence today; heuristic later) into a series with a rolling per-series ledger.
 //
-// - `models`    — camelCase wire DTOs for the Tauri command surface.
-// - `commands`  — the `#[tauri::command]`s (registered in `lib.rs`).
-// - `detection` — series detection run from calendar sync after auto-match.
-// - `ledger`    — series ledger reduce (Phase B2, implemented by another agent).
-// - `ledger_citations` — meeting-attributed `@mref(m<N>@<TS>)` citation rewrite/validation.
+// The pure logic (`ledger`, `ledger_citations`, `models`, `detection`) now lives in
+// `ari-engine::meeting_series`; this module re-exports what external host callers still
+// reach via `crate::meeting_series::*` module paths, plus the `#[tauri::command]` shims
+// (`commands`, registered in `lib.rs`) that call straight into the moved `_impl` fns, per the
+// ari-engine carve's per-service migration recipe (`docs/plans/ari-engine-carve.md`).
 
 pub mod commands;
-pub use ari_engine::meeting_series::detection;
-pub mod ledger;
-pub mod ledger_citations;
-pub mod models;
+pub use ari_engine::meeting_series::{detection, ledger, ledger_citations, models};
