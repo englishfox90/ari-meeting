@@ -45,6 +45,13 @@ public struct SeriesRepository: Sendable {
         try await dbWriter.write { db in
             try SeriesRecord(series).save(db)
 
+            // Only touch the ledger when the incoming Series actually carries ledger content. A
+            // plain Series upsert (a rename, or the importer's series pass which always maps the
+            // ledger fields to nil — the follow-on ledger pass fills them via updateLedger) must
+            // NOT wipe or reset a ledger owned by updateLedger or a live post-cutover edit. Ledger
+            // mutations go through updateLedger; upsert(Series) never clears one.
+            guard series.ledgerMarkdown != nil || series.ledgerVersion != nil else { return }
+
             var ledger = try SeriesLedgerRecord.fetchOne(db, key: series.id.rawValue) ??
                 SeriesLedgerRecord(
                     seriesId: series.id.rawValue,
