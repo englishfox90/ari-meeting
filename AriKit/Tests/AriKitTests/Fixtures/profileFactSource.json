@@ -1,0 +1,11 @@
+{
+  "id": "factsource-1",
+  "factId": "fact-1",
+  "meetingId": "meeting-1",
+  "meetingTitle": "Weekly sync",
+  "segmentRef": "seg:3.0-5.5",
+  "sourceKind": "self_reported",
+  "relation": "origin",
+  "confidence": 0.82,
+  "observedAt": "2023-11-14T22:13:20Z"
+}

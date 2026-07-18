@@ -16,10 +16,12 @@
 //      ├── Engine        ported capture/STT/summarization pipeline (Phase-gated)
 //      └── DesignSystem  the Marginalia theme (colors/type/spacing/motion) — LIVE today
 //
-//  STATUS: mostly SCAFFOLD. Per the plan's WIP limits (principle 8), Models/Store/Recall/
-//  Context/Engine carry no engine code yet — Phase 0 spikes (S1–S4) gate that. DesignSystem
-//  is the one module that's real today: both future app targets need Marginalia themed
-//  from their first screen (swift-conventions.md), so it isn't gated behind Phase 0. This
+//  STATUS: mostly SCAFFOLD. Per the plan's WIP limits (principle 8), Store/Recall/Context/
+//  Engine carry no engine code yet — Phase 0 spikes (S1–S4) gate that. Two modules are real
+//  today: DesignSystem (both future app targets need Marginalia themed from their first screen,
+//  swift-conventions.md, so it isn't gated behind Phase 0) and Models — the shared domain
+//  value types, ported 2026-07-17 (persistence-agnostic, so not spike-gated; the GRDB Store
+//  over them is still Phase 3.1). See docs/plans/arikit-models.md. This
 //  package exists now so the Claude-Code Swift tooling (/swift-build, /swift-test, the
 //  PostToolUse SwiftLint/SwiftFormat hook, XcodeBuildMCP's swift_package_build/test) has a
 //  real home to operate on from day one, and so net-new Swift work has somewhere to land.
@@ -53,6 +55,9 @@ let package = Package(
         .testTarget(
             name: "AriKitTests",
             dependencies: ["AriKit"],
+            resources: [
+                .copy("Fixtures")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
