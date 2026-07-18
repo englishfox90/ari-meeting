@@ -1,0 +1,11 @@
+{
+  "id": "segment-1",
+  "meetingId": "meeting-1",
+  "speakerId": "speaker-1",
+  "clusterKey": "cluster-a",
+  "startTime": 3.0,
+  "endTime": 5.5,
+  "source": "import",
+  "embedding": "CgsM",
+  "createdAt": "2023-11-14T22:13:20Z"
+}

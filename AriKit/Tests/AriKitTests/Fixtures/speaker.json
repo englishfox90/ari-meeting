@@ -1,0 +1,13 @@
+{
+  "id": "speaker-1",
+  "personId": "person-1",
+  "label": "Owner",
+  "centroid": "AQIDBA==",
+  "embeddingModel": "wespeaker-v2",
+  "dim": 256,
+  "samples": 12,
+  "enrollmentState": "owner",
+  "totalSpeechSecs": 480.0,
+  "createdAt": "2023-11-14T22:13:20Z",
+  "updatedAt": "2023-11-14T23:13:20Z"
+}

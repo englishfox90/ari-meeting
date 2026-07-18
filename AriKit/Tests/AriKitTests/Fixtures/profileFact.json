@@ -1,0 +1,15 @@
+{
+  "id": "fact-1",
+  "personId": "person-1",
+  "factText": "Leads the migration project.",
+  "factKind": "project",
+  "sourceMeetingId": "meeting-1",
+  "sourceMeetingTitle": "Weekly sync",
+  "sourceSegmentRef": "seg:3.0-5.5",
+  "sourceKind": "self_reported",
+  "confidence": 0.82,
+  "sourceCount": 2,
+  "status": "active",
+  "supersededBy": null,
+  "createdAt": "2023-11-14T22:13:20Z"
+}

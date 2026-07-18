@@ -1,0 +1,17 @@
+{
+  "id": "event-1",
+  "calendarId": "cal-1",
+  "calendarTitle": "Work",
+  "title": "Weekly sync",
+  "startTime": "2023-11-14T22:13:20Z",
+  "endTime": "2023-11-14T23:13:20Z",
+  "isAllDay": false,
+  "location": "Room 4",
+  "notes": "Agenda attached",
+  "organizer": "owner@example.com",
+  "attendees": [
+    { "name": "Guest", "email": "guest@example.com" }
+  ],
+  "meetingId": "meeting-1",
+  "linkSource": "calendar"
+}

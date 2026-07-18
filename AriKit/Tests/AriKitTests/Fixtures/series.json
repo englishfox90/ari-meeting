@@ -1,0 +1,9 @@
+{
+  "id": "series-1",
+  "title": "Weekly sync",
+  "seriesKey": "ext-abc-123",
+  "detectedType": "one_on_one",
+  "cadence": "weekly",
+  "ledgerMarkdown": "# Ledger\n- kicked off",
+  "ledgerVersion": 3
+}

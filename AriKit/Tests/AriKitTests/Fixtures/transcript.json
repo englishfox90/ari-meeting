@@ -1,0 +1,13 @@
+{
+  "id": "transcript-1",
+  "meetingId": "meeting-1",
+  "transcript": "Hello everyone, let's begin.",
+  "timestamp": "00:00:03",
+  "summary": "Greeting",
+  "actionItems": "None",
+  "keyPoints": "Kickoff",
+  "audioStartTime": 3.0,
+  "audioEndTime": 5.5,
+  "duration": 2.5,
+  "speakerId": "speaker-1"
+}

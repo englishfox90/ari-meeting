@@ -1,0 +1,11 @@
+{
+  "id": "meeting-1",
+  "title": "Weekly sync",
+  "createdAt": "2023-11-14T22:13:20Z",
+  "updatedAt": "2023-11-14T23:13:20Z",
+  "audioReference": "/Users/owner/Recordings/meeting-1",
+  "transcriptionProvider": "parakeet",
+  "transcriptionModel": "parakeet-tdt-0.6b-v3-int8",
+  "summaryProvider": "anthropic",
+  "summaryModel": "claude"
+}

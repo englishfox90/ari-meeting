@@ -1,0 +1,12 @@
+{
+  "id": "person-1",
+  "email": "owner@example.com",
+  "displayName": "Owner Person",
+  "role": "Engineer",
+  "organization": "Arivo",
+  "domain": "example.com",
+  "notes": "Recording owner",
+  "isOwner": true,
+  "createdAt": "2023-11-14T22:13:20Z",
+  "updatedAt": "2023-11-14T23:13:20Z"
+}
