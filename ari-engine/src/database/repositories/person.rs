@@ -7,7 +7,7 @@ use chrono::Utc;
 use sqlx::{FromRow, Row, SqlitePool};
 use uuid::Uuid;
 
-use crate::persons::models::NewPerson;
+use crate::models::NewPerson;
 
 #[derive(Debug, Clone, FromRow)]
 pub struct PersonRow {
@@ -1033,7 +1033,7 @@ mod profile_fact_sources_tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::migrate!("../frontend/src-tauri/migrations").run(&pool).await.unwrap();
         pool
     }
 

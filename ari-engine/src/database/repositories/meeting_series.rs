@@ -323,7 +323,7 @@ mod series_integration_tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::migrate!("../frontend/src-tauri/migrations").run(&pool).await.unwrap();
         pool
     }
 
@@ -385,7 +385,7 @@ mod series_integration_tests {
 
         // The migrate call succeeding (not erroring) is the core assertion; this also
         // validates the F9 migrations 20260715160000 + 20260715170000.
-        let result = sqlx::migrate!("./migrations").run(&pool).await;
+        let result = sqlx::migrate!("../frontend/src-tauri/migrations").run(&pool).await;
         assert!(result.is_ok(), "migrations should apply cleanly: {result:?}");
 
         // Confirm the F9 tables exist.

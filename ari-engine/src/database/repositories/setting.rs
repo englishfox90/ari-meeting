@@ -1,5 +1,5 @@
 use crate::database::models::{Setting, TranscriptSetting};
-use crate::summary::CustomOpenAIConfig;
+use crate::models::CustomOpenAIConfig;
 use sqlx::SqlitePool;
 
 #[derive(serde::Deserialize, Debug)]

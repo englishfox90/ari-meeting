@@ -8,7 +8,7 @@
 // - `ledger_citations` — meeting-attributed `@mref(m<N>@<TS>)` citation rewrite/validation.
 
 pub mod commands;
-pub mod detection;
+pub use ari_engine::meeting_series::detection;
 pub mod ledger;
 pub mod ledger_citations;
 pub mod models;
