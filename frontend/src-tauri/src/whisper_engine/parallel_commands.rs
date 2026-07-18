@@ -1,25 +1,6 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use anyhow::Result;
 
-use crate::whisper_engine::{
-    ParallelProcessor, SystemMonitor,
-};
-
-// Global state for parallel processor
-pub struct ParallelProcessorState {
-    pub processor: Arc<RwLock<Option<ParallelProcessor>>>,
-    pub system_monitor: Arc<SystemMonitor>,
-}
-
-impl ParallelProcessorState {
-    pub fn new() -> Self {
-        Self {
-            processor: Arc::new(RwLock::new(None)),
-            system_monitor: Arc::new(SystemMonitor::new()),
-        }
-    }
-}
+pub use ari_engine::whisper_engine::ParallelProcessorState;
 
 pub async fn get_system_resources_impl(
     engine: &crate::engine::Engine,

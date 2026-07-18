@@ -341,7 +341,7 @@ impl ParallelProcessor {
             .ok_or_else(|| anyhow!("WhisperEngine not loaded for worker {}", worker_id))?;
 
         // Get language preference
-        let language = crate::get_language_preference_internal();
+        let language = crate::language_preference::get_language_preference_internal();
 
         // Transcribe with timeout to prevent hanging
         let transcription_future = engine.transcribe_audio(chunk.data.clone(), language);

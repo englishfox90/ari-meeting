@@ -204,6 +204,8 @@ dependencies = [
  "anyhow",
  "ari-protocol",
  "chrono",
+ "dirs 5.0.1",
+ "futures-util",
  "log",
  "once_cell",
  "regex",
@@ -211,9 +213,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "sysinfo",
+ "tempfile",
  "tokio",
  "tracing",
  "uuid",
+ "whisper-rs",
 ]
 
 [[package]]

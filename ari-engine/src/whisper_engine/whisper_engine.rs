@@ -372,7 +372,7 @@ impl WhisperEngine {
         // Check for obviously meaningless patterns first
         if Self::is_meaningless_output(text) {
             // Performance optimization: reduce meaningless output logging to debug level
-            perf_debug!("Detected meaningless output, returning empty: '{}'", text);
+            crate::perf_debug!("Detected meaningless output, returning empty: '{}'", text);
             return String::new();
         }
 
@@ -391,7 +391,7 @@ impl WhisperEngine {
         let final_text = cleaned_words.join(" ");
         if Self::calculate_repetition_ratio(&final_text) > 0.7 {
             // Performance optimization: reduce repetition ratio logging to debug level
-            perf_debug!("High repetition ratio detected, filtering out: '{}'", final_text);
+            crate::perf_debug!("High repetition ratio detected, filtering out: '{}'", final_text);
             return String::new();
         }
 
@@ -745,7 +745,7 @@ impl WhisperEngine {
         // Performance optimization: reduce segment completion logging
         // Only log for significant transcriptions to avoid I/O overhead
         if (should_log_transcription || num_segments > 0) && (num_segments > 3 || duration_seconds > 5.0) {
-            perf_debug!("Transcription #{} completed with {} segments ({:.1}s)", transcription_count, num_segments, duration_seconds);
+            crate::perf_debug!("Transcription #{} completed with {} segments ({:.1}s)", transcription_count, num_segments, duration_seconds);
         }
         let mut result = String::new();
 
@@ -762,7 +762,7 @@ impl WhisperEngine {
             // This was causing significant I/O overhead during transcription
             // Only log segments for very long audio (>30s) or when explicitly debugging
             if duration_seconds > 30.0 {
-                perf_trace!("Segment {} ({:.2}s-{:.2}s): '{}'",
+                crate::perf_trace!("Segment {} ({:.2}s-{:.2}s): '{}'",
                            i, _start_time as f64 / 100.0, _end_time as f64 / 100.0, segment_text);
             }
 
@@ -785,7 +785,7 @@ impl WhisperEngine {
         if cleaned_result.is_empty() {
             // Only log empty results occasionally to reduce spam
             if should_log_transcription && transcription_count % 20 == 0 {
-                perf_debug!("Transcription #{} result is empty - no speech detected", transcription_count);
+                crate::perf_debug!("Transcription #{} result is empty - no speech detected", transcription_count);
             }
         } else {
             if cleaned_result != final_result {
@@ -796,7 +796,7 @@ impl WhisperEngine {
             if transcription_count % 5 == 0 || cleaned_result.len() > 50 || duration_seconds > 10.0 {
                 log::info!("Transcription #{} result: '{}'", transcription_count, cleaned_result);
             } else {
-                perf_debug!("Transcription #{} result: '{}'", transcription_count, cleaned_result);
+                crate::perf_debug!("Transcription #{} result: '{}'", transcription_count, cleaned_result);
             }
         }
 

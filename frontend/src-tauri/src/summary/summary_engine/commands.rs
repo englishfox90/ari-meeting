@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, Runtime, State};
-use tokio::sync::Mutex;
 
 use crate::engine::Engine;
 
@@ -47,8 +46,9 @@ pub(crate) fn get_recommended_summary_model_for_current_system() -> Result<&'sta
 // Global State
 // ============================================================================
 
-/// Global model manager instance
-pub struct ModelManagerState(pub Arc<Mutex<Option<Arc<ModelManager>>>>);
+// Moved to ari-engine::summary_engine (Phase 1.5 carve, Stage B1) — the struct itself has
+// zero Tauri coupling, but the host still constructs/consumes it via `Engine`.
+pub use ari_engine::summary_engine::ModelManagerState;
 
 /// Initialize the model manager
 pub async fn init_model_manager(engine: &Engine) -> anyhow::Result<()> {

@@ -3,9 +3,11 @@
 
 pub mod client;
 pub mod commands;
-pub mod model_manager;
-pub mod models;
 pub mod sidecar;
+
+// model_manager + models moved to ari-engine::summary_engine (Phase 1.5 carve, Stage B1).
+pub use ari_engine::summary_engine::model_manager;
+pub use ari_engine::summary_engine::models;
 
 // Re-export commonly used types
 pub use client::{generate_with_builtin, generate_with_builtin_stream, is_sidecar_healthy, shutdown_sidecar_gracefully, force_shutdown_sidecar};

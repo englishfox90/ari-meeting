@@ -17,7 +17,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 ari-protocol = { path = "../ari-protocol" }
-reqwest = { version = "0.11", features = ["blocking", "json"] }
+reqwest = { version = "0.11", features = ["blocking", "json", "stream"] }
+futures-util = "0.3"
 log = "0.4"
 chrono = { version = "0.4.31", features = ["serde"] }
 sqlx = { version = "0.8", features = [ "runtime-tokio", "sqlite", "chrono"] }
@@ -25,3 +26,31 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 tracing = "0.1.40"
 regex = "1.11.0"
 once_cell = "1.17.1"
+sysinfo = "0.32"
+dirs = "5.0.1"
+
+# macOS-only project (see .claude/rules/platform-and-deps.md) — Metal+CoreML are
+# the baseline acceleration, matching frontend/src-tauri/Cargo.toml exactly.
+# Do NOT bump this pin without approval (native-ABI crate).
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.13.2", features = ["raw-api", "metal", "coreml"] }
+
+# Mirrors the host's own feature names (frontend/src-tauri/Cargo.toml) so the
+# `#[cfg(feature = "...")]` acceleration-status log lines moved along with
+# whisper_engine.rs resolve as known cfgs instead of warning. The actual GPU
+# backend selection is unconditional on macOS (WhisperCompiledBackend::current(),
+# acceleration.rs) and driven by whisper-rs's own compiled features above,
+# which unify across the workspace regardless of these flags — not yet
+# forwarded from the host's matching features (frontend/src-tauri/Cargo.toml),
+# so these particular log lines are currently unreachable from a real build.
+[features]
+metal = ["whisper-rs/metal"]
+coreml = ["whisper-rs/coreml"]
+cuda = ["whisper-rs/cuda"]
+vulkan = ["whisper-rs/vulkan"]
+hipblas = ["whisper-rs/hipblas"]
+openblas = ["whisper-rs/openblas"]
+openmp = ["whisper-rs/openmp"]
+
+[dev-dependencies]
+tempfile = "3.3.0"
