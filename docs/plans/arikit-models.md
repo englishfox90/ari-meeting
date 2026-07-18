@@ -1,5 +1,7 @@
 # AriKit `Models/` — domain value-type port (plan)
 
+> **STATUS: COMPLETE (2026-07-17).** The 10 shared domain value types + support layer (`Identifier<T>`, tolerant enums, RFC3339 date strategy, `LocalAudioReference`) are ported, Swift 6 strict-concurrency clean, `swift test` green. The two follow-ons this plan deferred to the Store port (snake→camel decode adapter; `Series` stored columns) were resolved there (`arikit-store.md`) — the `Series`/`Summary`/`MeetingNote` additions landed with the Store slices.
+
 ## 0. Decisions resolved (2026-07-17)
 
 The architect surfaced 5 open decisions; resolved here with defaults so implementation can proceed. Override any of these if you disagree — they set domain-wide patterns.

@@ -1,5 +1,7 @@
 # ari-engine carve — implementation plan
 
+> **STATUS: Stage B1 COMPLETE (2026-07-17); Stages C/D/E DEFERRED.** The `ari-engine` crate is carved and Tauri-free — the whole engine "brain" moved across Stage A (decouple-in-place) + Stage B1 (crate extraction), all reviewed + green. **Stages C (method router), D (NDJSON daemon + cross-process flip), and E (regression gate) are deferred** — the go-forward is Swift-native, not a daemon (see `plans/swift-migration-plan.md` § Where we are now). The OS/UI/STT edges (calendar/notch/audio-capture/parakeet/whisper/tray) stay host by design. This doc's Stage-B1 log below is the record of that carve; Stages C–E remain the reference for the eventual daemon if/when it's needed.
+
 Status: implementation plan for the remaining work of **Phase 1.5** (`plans/swift-migration-plan.md`). The wire protocol and service map are already designed and frozen in `docs/plans/engine-extraction.md`; this doc plans the **code carve** that implements it. Read that doc first — this one does not re-specify the protocol, it sequences the refactor that realizes it.
 
 Companion: `docs/plans/engine-extraction.md` (protocol + service map + deletion appendix + open questions), `plans/swift-migration-plan.md` §Phase 1.5.

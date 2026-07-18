@@ -1,5 +1,7 @@
 # ari-engine extraction — protocol & service map
 
+> **STATUS: DEFERRED (2026-07-17).** This doc specifies the host↔daemon **wire protocol** (carve Stages C/D) — which is **deferred**, not the current front. The `ari-engine` *crate* itself is carved and Tauri-free (Stages A+B / B1 complete — see `ari-engine-carve.md`), but the go-forward is **Swift-native, not a daemon**: the Phase-0 spikes greenlit Swift-native STT/summary/diarization, so AriKit layers are built standalone and the daemon is built later and narrowly, only for whatever Swift genuinely can't do yet. Keep this doc as the reference for that eventual protocol; do not treat it as active work.
+
 Status: design doc for **Phase 1.5** of `plans/swift-migration-plan.md` ("Engine extraction — the seam the whole plan hangs on"). This doc specifies the wire protocol between the Tauri host (first client) and the new headless `ari-engine` daemon, and maps the live `frontend/src-tauri` command/event surface onto it. It does not carve any code — that's the Phase 1.5 implementation work this doc scopes.
 
 Companion: `.claude/context/open-questions.md`, `.claude/context/architecture.md`, `plans/swift-migration-plan.md` §Phase 1.5 / §Phase 2.
