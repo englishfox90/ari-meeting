@@ -33,6 +33,8 @@ base64 = "0.22"
 tokio-util = "0.7"
 whatlang = "0.16.4"
 lazy_static = { version = "1.4.0" }
+which = "6.0.1"
+ffmpeg-sidecar = { git = "https://github.com/nathanbabcock/ffmpeg-sidecar", branch = "main" }
 
 # macOS-only project (see .claude/rules/platform-and-deps.md) — Metal+CoreML are
 # the baseline acceleration, matching frontend/src-tauri/Cargo.toml exactly.

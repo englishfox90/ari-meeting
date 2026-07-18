@@ -44,7 +44,6 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 // ============================================================================
@@ -168,7 +167,6 @@ enum HelperResponse {
 /// Surfaces a `{"type":"error"}` reply — and a missing binary/timeout/crash — as
 /// `Err`. Runs entirely off any hot path; the caller decides threading.
 pub async fn diarize(
-    app: &AppHandle,
     wav_path: &str,
     num_speakers: Option<i64>,
     threshold: Option<f32>,
@@ -186,7 +184,7 @@ pub async fn diarize(
         num_speakers,
         threshold,
     };
-    match helper_oneshot(app, &args, &req, DIARIZE_TIMEOUT).await? {
+    match helper_oneshot(&args, &req, DIARIZE_TIMEOUT).await? {
         HelperResponse::Segments { segments, clusters } => Ok(DiarizeResult { segments, clusters }),
         HelperResponse::Error { message } => Err(anyhow!("diarize-helper error: {message}")),
         HelperResponse::Embedding { .. } | HelperResponse::Unknown => {
@@ -198,12 +196,12 @@ pub async fn diarize(
 /// Embed a single 16 kHz mono WAV utterance into a voiceprint vector: spawn the
 /// `diarize-helper` with the embedding model, send one `embed` request, and
 /// return the `vector`. Surfaces an `error` reply / spawn failure as `Err`.
-pub async fn embed(app: &AppHandle, wav_path: &str, emb_model: &str) -> Result<Vec<f32>> {
+pub async fn embed(wav_path: &str, emb_model: &str) -> Result<Vec<f32>> {
     let args = ["--embedding".to_string(), emb_model.to_string()];
     let req = HelperRequest::Embed {
         wav_path: wav_path.to_string(),
     };
-    match helper_oneshot(app, &args, &req, EMBED_TIMEOUT).await? {
+    match helper_oneshot(&args, &req, EMBED_TIMEOUT).await? {
         HelperResponse::Embedding { vector, .. } => Ok(vector),
         HelperResponse::Error { message } => Err(anyhow!("diarize-helper error: {message}")),
         HelperResponse::Segments { .. } | HelperResponse::Unknown => {
@@ -216,17 +214,11 @@ pub async fn embed(app: &AppHandle, wav_path: &str, emb_model: &str) -> Result<V
 /// write exactly one request line to stdin, read exactly one response line from
 /// stdout, and parse it. Bounded by `timeout`; `kill_on_drop` reaps a
 /// timed-out/dropped child. Mirrors [`crate::apple::helper`]'s `oneshot_exchange`.
-///
-/// `app` is accepted for API consistency (and future path/state needs); binary
-/// resolution today is env/exe-relative and does not consult it.
 async fn helper_oneshot(
-    app: &AppHandle,
     args: &[String],
     req: &HelperRequest,
     timeout: Duration,
 ) -> Result<HelperResponse> {
-    let _ = app; // resolution is env/exe-relative; kept for API consistency.
-
     let exchange = async {
         let bin = resolve_diarize_binary()?;
 

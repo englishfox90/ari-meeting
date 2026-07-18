@@ -48,6 +48,7 @@ pub mod audio;
 pub mod calendar;
 pub mod config;
 pub mod database;
+pub mod diarization;
 pub mod embed_models;
 pub mod engine;
 pub mod language_preference;

@@ -2,7 +2,7 @@
 pub mod audio_processing;
 pub mod decoder;
 pub mod encode;
-pub mod ffmpeg;
+pub use ari_engine::audio::ffmpeg;
 pub mod vad;
 
 // Modularized device management

@@ -207,6 +207,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
+ "ffmpeg-sidecar",
  "futures-util",
  "lazy_static",
  "log",
@@ -223,6 +224,7 @@ dependencies = [
  "tracing",
  "uuid",
  "whatlang",
+ "which 6.0.3",
  "whisper-rs",
 ]
 
