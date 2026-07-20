@@ -35,6 +35,7 @@ What governs now is ordinary good-engineering discipline: refactor deliberately 
 @.claude/context/build-and-run.md
 @.claude/rules/tauri-ipc.md
 @.claude/rules/coding-conventions.md
+@.claude/rules/agent-model-policy.md
 @.claude/rules/platform-and-deps.md
 @.claude/rules/no-legacy-files.md
 @.claude/rules/design-system.md
