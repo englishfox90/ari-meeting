@@ -92,4 +92,8 @@ public actor AppDatabase {
     public nonisolated var recallIndex: RecallIndexRepository {
         RecallIndexRepository(dbWriter: dbWriter)
     }
+
+    public nonisolated var askConversations: AskConversationStore {
+        AskConversationStore(dbWriter: dbWriter)
+    }
 }
