@@ -29,6 +29,12 @@ struct RecallSendableTests {
         requireSendable(RecallEmbeddingRow.self)
         requireSendable(RecallIndexRepository.self)
 
+        // Recall Slice 8 (docs/plans/arikit-recall.md §6, "extend SendableInventoryTests")
+        requireSendable(RecallEngine.self)
+        requireSendable(RecallEngineError.self)
+        requireSendable(RecallModelConfig.self)
+        requireSendable(RecallStreamEvent.self)
+
         #expect(Bool(true))
     }
 }
