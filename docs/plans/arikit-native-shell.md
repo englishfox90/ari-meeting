@@ -448,7 +448,25 @@ to validate no-chunking + the 30 s checkpoint/remux path at scale before the ver
 7. **Long-recording validation** — confirm the Lane-2 checklist must include one >60 min recording
    before the vertical closes (§7, S2 caveat).
 
-## 10. Native-first vs. scoped-WebView — RECOMMENDATION
+## 10. UI direction — CONFIRMED (2026-07-20, Paul)
+
+**Confirmed by Paul** (reacting to a direction mockup built from `brand/tokens.json`; also in the
+`swift-ui-direction` memory):
+- **Native-first, Marginalia as a thin accent** — native macOS components (`NavigationSplitView`,
+  system list rows, materials, SF type, SF Symbols); brand only as accent (Shin-kai navy the sole
+  interactive ink ≤8%, Iron Gall headings, warm grounds, recording red capture-only). Feels
+  first-party, not a reskin.
+- **Frameless / unified title bar** — no top border; traffic lights + toolbar actions float over
+  the panes, sidebar/content materials run to the top edge (matches the current app).
+- **Button system — one scale, four roles:** sizes **26 px default** (toolbar/inline) and **32 px
+  large** (dialog/HUD) ONLY. Roles: **Primary** (accent solid, exactly one per view) / **Secondary**
+  (tonal + hairline) / **Quiet** (text-only, low-emphasis) / **Recording** (recording-red, live
+  capture only — never co-branded with the accent).
+- **Icons / SF Symbols, NEVER emoji — never an emoji in navigation** (hard rule).
+- The ported visual-system parity test asserts brand *tokens* are used, **not** that every surface
+  is custom-styled (brand-as-accent-over-native, not a full reskin).
+
+The rest of this section is the rationale for the native-first / no-WebView call.
 
 The v2 plan (`swift-migration-plan.md:148-151`) hosted the *hard* screens (block editor, settings,
 new-meeting/recording) in a scoped WKWebView bridging ~30–40 commands + an event push channel +
