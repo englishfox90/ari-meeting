@@ -25,7 +25,9 @@ public enum MarginaliaColorRole: String, CaseIterable, Sendable {
     case accentPressed
     case selectionWash
     case recordingRed
+    case recordingRedPressed
     case success
+    case error
 }
 
 /// The raw token strings for one color mode, exactly as they appear in `tokens.json`.
@@ -46,7 +48,9 @@ struct MarginaliaColorTokens: Sendable, Equatable {
     /// CSS `rgba(r, g, b, a)` — the one non-hex token in the palette (selectionWash).
     var selectionWashRGBA: String
     var recordingRed: String
+    var recordingRedPressed: String
     var success: String
+    var error: String
 
     // swiftlint:disable:next cyclomatic_complexity
     func hex(for role: MarginaliaColorRole) -> String? {
@@ -62,7 +66,9 @@ struct MarginaliaColorTokens: Sendable, Equatable {
         case .accentHover: accentHover
         case .accentPressed: accentPressed
         case .recordingRed: recordingRed
+        case .recordingRedPressed: recordingRedPressed
         case .success: success
+        case .error: error
         case .selectionWash: nil
         }
     }
@@ -83,7 +89,9 @@ enum MarginaliaColorTokenSource {
         accentPressed: "#122763",
         selectionWashRGBA: "rgba(27, 58, 140, 0.11)",
         recordingRed: "#C6362C",
-        success: "#42794F"
+        recordingRedPressed: "#A62B22",
+        success: "#42794F",
+        error: "#9A3327"
     )
 
     /// `brand/tokens.json` → `modes.dark`.
@@ -100,7 +108,9 @@ enum MarginaliaColorTokenSource {
         accentPressed: "#6B89DE",
         selectionWashRGBA: "rgba(126, 155, 232, 0.16)",
         recordingRed: "#FF6B5E",
-        success: "#8CC2A0"
+        recordingRedPressed: "#E85548",
+        success: "#8CC2A0",
+        error: "#EB9A8E"
     )
 }
 
@@ -185,7 +195,9 @@ public struct MarginaliaPalette: Sendable {
     public let accentPressed: Color
     public let selectionWash: Color
     public let recordingRed: Color
+    public let recordingRedPressed: Color
     public let success: Color
+    public let error: Color
 
     init(tokens: MarginaliaColorTokens) {
         canvas = MarginaliaColorParsing.color(hex: tokens.canvas)
@@ -200,7 +212,9 @@ public struct MarginaliaPalette: Sendable {
         accentPressed = MarginaliaColorParsing.color(hex: tokens.accentPressed)
         selectionWash = MarginaliaColorParsing.color(rgba: tokens.selectionWashRGBA)
         recordingRed = MarginaliaColorParsing.color(hex: tokens.recordingRed)
+        recordingRedPressed = MarginaliaColorParsing.color(hex: tokens.recordingRedPressed)
         success = MarginaliaColorParsing.color(hex: tokens.success)
+        error = MarginaliaColorParsing.color(hex: tokens.error)
     }
 
     /// Resolves a role to its `Color` in this palette. Prefer `Color.marginalia(_:in:)`
@@ -220,7 +234,9 @@ public struct MarginaliaPalette: Sendable {
         case .accentPressed: accentPressed
         case .selectionWash: selectionWash
         case .recordingRed: recordingRed
+        case .recordingRedPressed: recordingRedPressed
         case .success: success
+        case .error: error
         }
     }
 }

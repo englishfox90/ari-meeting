@@ -59,7 +59,9 @@ private struct TokensJSONPalette: Decodable {
     let accentPressed: String
     let selectionWash: String
     let recordingRed: String
+    let recordingRedPressed: String
     let success: String
+    let error: String
 }
 
 private struct TokensJSONModes: Decodable {
@@ -167,7 +169,9 @@ private func hexForRole( // swiftlint:disable:this cyclomatic_complexity
     case .accentHover: palette.accentHover
     case .accentPressed: palette.accentPressed
     case .recordingRed: palette.recordingRed
+    case .recordingRedPressed: palette.recordingRedPressed
     case .success: palette.success
+    case .error: palette.error
     case .selectionWash: nil
     }
 }

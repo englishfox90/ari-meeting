@@ -47,4 +47,39 @@ public enum MarginaliaMotion {
     public static func animation(_ duration: MarginaliaDuration) -> Animation {
         .timingCurve(easing.c1x, easing.c1y, easing.c2x, easing.c2y, duration: duration.seconds)
     }
+
+    /// Reduce-Motion-aware variant: returns `nil` (no animation) when `reduceMotion` is
+    /// true, else the same curve animation as `animation(_:)`. Prefer the
+    /// `View.marginaliaAnimation(_:value:)` convenience below at call sites — it reads the
+    /// environment for you.
+    public static func animation(_ duration: MarginaliaDuration, reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : animation(duration)
+    }
+}
+
+public extension View {
+    /// Applies a Marginalia timing-curve animation for `value` changes, honoring
+    /// `accessibilityReduceMotion` automatically (BRAND.md §8: "pulses become static,
+    /// transitions become fades" under Reduce Motion).
+    ///
+    /// ```swift
+    /// SomeView()
+    ///     .marginaliaAnimation(.fast, value: isExpanded)
+    /// ```
+    func marginaliaAnimation(_ duration: MarginaliaDuration, value: some Equatable) -> some View {
+        modifier(MarginaliaAnimationModifier(duration: duration, value: value))
+    }
+}
+
+/// Backing `ViewModifier` for `View.marginaliaAnimation(_:value:)` — a modifier (rather than
+/// a plain extension body) so it can read `@Environment(\.accessibilityReduceMotion)`.
+private struct MarginaliaAnimationModifier<Value: Equatable>: ViewModifier {
+    let duration: MarginaliaDuration
+    let value: Value
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.animation(MarginaliaMotion.animation(duration, reduceMotion: reduceMotion), value: value)
+    }
 }

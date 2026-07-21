@@ -92,13 +92,16 @@ Contrast ratios are WCAG 2.x, computed against the role's own ground (canvas unl
 | Accent pressed | `#122763` | `#6B89DE` | — | Active/pressed. |
 | Selection wash | `rgba(27,58,140,0.11)` † | `rgba(126,155,232,0.16)` | — | Selected row/​chip background; pairs with accent text. † Tune-in-build: 11 % may be invisible on bright displays — test 16–18 % alpha in the real app on a sunlit screen before locking. |
 | Recording red | `#C6362C` | `#FF6B5E` | 5.0:1 / 6.2:1 | Live capture only. |
+| Recording red pressed | `#A62B22` | `#E85548` | — | Record-button pressed/active state only. |
 | Success | `#42794F` | `#8CC2A0` | 4.6:1 / 8.9:1 | Saved, complete, verified. Always with a text/icon label. |
+| Error | `#9A3327` | `#EB9A8E` | — | Warm error ink, distinct from recording red so an error state is never mistaken for live capture. Error text and banners only; always paired with a symbol (never color alone). |
 
 Rules:
 
 - Every neutral is warm (paper, espresso, charcoal); never introduce a cool gray.
 - Semantic colors (red, green) always ship with a text or icon label — color is never the only signal.
 - No gradients, no glassmorphism of our own — translucency comes only from stock macOS materials.
+- **On-fill label convention:** any filled control or badge (primary/recording buttons, success/recording badges) labels itself with **Canvas** (paper) — never Surface. Canvas is near-white in light mode and near-black in dark mode, so it stays high-contrast against a solid fill in *both* schemes. Surface resolves to warm espresso (`#2D2925`) in dark mode, which reads as muddy brown text on a light dark-mode fill (e.g. the dark-mode recording-red `#FF6B5E`) — never use it as an on-fill label.
 
 ## 5. Typography
 
@@ -106,6 +109,7 @@ Sans-only. Two families, three roles:
 
 - **Bricolage Grotesque** — headings and display **only**, and only at **≥ 17 pt**. Below 17 pt its display cuts blur; titles under the floor use SF Pro Semibold instead. Weights used: 600 (SemiBold) and 700 (Bold). It keeps a grotesque lineage with the outgoing Space Grotesk while its ink traps carry the fountain-pen story. **Licensing/bundling:** SIL OFL — free to bundle in a commercial app. Self-host the `.ttf` in the app bundle (exactly as Space Grotesk was in the Tauri app), register under `Fonts provided by application` in Info.plist, load via `Font.custom("Bricolage Grotesque", size:)` (verify the exact PostScript names, e.g. `BricolageGrotesque-SemiBold`, from the shipped file).
 - **SF Pro** (system) — all body, controls, labels, metadata; SF Pro Semibold stands in for headings below the 17 pt floor. Use stock text styles wherever possible so Dynamic Type and optical sizing (Text ≤ 19 pt / Display ≥ 20 pt) come free.
+  - **Fixed-pt sizing is sanctioned on macOS** (brand-owner decision, 2026-07-20): the type ramp's SF Pro/SF Mono entries resolve via `Font.system(size:weight:design:)` at their exact declared point size, not `Font.system(.body)`/`relativeTo:` Dynamic Type. This is deliberate — the ramp's pt values are the spec, not a stand-in for a Dynamic-Type text style — and is lower-risk than rewrapping every font call. The **iOS "Lite" app must revisit this** for Dynamic Type support when it ships (Phase 6); macOS has no such obligation. Bricolage Grotesque keeps `relativeTo:` as-is (see `MarginaliaTypography.swift`) since headings do scale today.
 - **SF Mono** — timecodes, model identifiers, and technical values only. Always `tabular-nums`.
 
 ### Type ramp
@@ -141,7 +145,7 @@ The mark is **one continuous hand-drawn gesture in one ink line**: a cursive low
 
 ### Usage rules
 
-- **Ink-only, single color.** The mark renders in exactly one color per instance: Shin-kai (preferred), heading/body ink, or paper-white on dark/photographic grounds. SVGs use `currentColor` — tint, don't edit.
+- **Ink-only, single color.** The mark renders in exactly one color per instance: Shin-kai (preferred), heading/body ink, or paper-white on dark/photographic grounds. SVGs use `currentColor` — tint, don't edit. **Placeholder, disabled, and empty-state renderings** of the mark may additionally use **Secondary ink** — a fourth sanctioned option for a mark that is present but deliberately de-emphasized (e.g. an empty-library placeholder), not for any active/branded appearance.
 - **Clear space:** keep a margin of at least the height of the "a" bowl (≈ 50 % of mark height) on all sides.
 - **Minimum sizes:** full mark ≥ 32 px height; below that, switch to the 16 px cut (never scale the full mark down).
 - **On dark:** use the dark-mode accent `#7E9BE8` or paper white `#EDE8E1`; never the light-mode `#1B3A8C` on dark grounds.
@@ -193,7 +197,8 @@ Sanctioned animated states: the recording pulse (flick glyph / red dot breathing
 
 Token names below match `tokens.json`; mirror them as **asset-catalog Color Sets** (with Any/Dark appearances) so light/dark switching is free.
 
-- **Colors:** asset catalog names `Canvas`, `Elevated`, `Surface`, `InkBody`, `InkHeading`, `InkSecondary`, `Hairline`, `AccentShinKai` (+ `AccentHover`, `AccentPressed`), `SelectionWash`, `RecordingRed`, `Success`. Set `AccentShinKai` as the app accent and apply `.tint(Color("AccentShinKai"))` at the app root; global tint IS the Signal Rule's delivery mechanism — do not hand-color controls.
+- **Colors:** asset catalog names `Canvas`, `Elevated`, `Surface`, `InkBody`, `InkHeading`, `InkSecondary`, `Hairline`, `AccentShinKai` (+ `AccentHover`, `AccentPressed`), `SelectionWash`, `RecordingRed` (+ `RecordingRedPressed`), `Success`, `Error`. Set `AccentShinKai` as the app accent and apply `.tint(Color("AccentShinKai"))` at the app root; global tint IS the Signal Rule's delivery mechanism — do not hand-color controls.
+- **On-fill labels:** any filled control/badge (primary/recording buttons, success/recording badges) labels itself with `Color("Canvas")`, never `Color("Surface")` — see §4's on-fill label convention rule.
 - **Structure:** `NavigationSplitView` with the stock sidebar — the system applies the sidebar/Liquid Glass material; place `Elevated` only *behind* it, never replace the material. Content column on `Canvas`; cards on `Surface` with `Hairline` strokes.
 - **Typography:** `Font.custom("Bricolage Grotesque", size: 24, relativeTo: .title)` (use `relativeTo:` so Dynamic Type scales it; confirm PostScript names from the bundled TTF). Body/UI via stock styles (`.body`, `.callout`, `.caption`); sub-17 pt headings via `.system(.subheadline, weight: .semibold)`. Timecodes: `.system(.caption, design: .monospaced).monospacedDigit()`.
 - **Heading ink:** apply `Color("InkHeading")` as `foregroundStyle` on heading text styles — a view-modifier seam (e.g. an `AriHeading()` ViewModifier) so the two-ink rule lives in one place.

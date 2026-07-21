@@ -36,12 +36,12 @@ struct SidebarView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { wordmark }
         .safeAreaInset(edge: .bottom, spacing: 0) { pinnedBottom }
-        .background(Color.marginalia(.canvas, in: scheme))
+        .background(Color.marginalia(.elevated, in: scheme))
         .navigationTitle("")
         .task { await viewModel.observe() }
     }
 
-    /// The Dictation mark + "Ari Meeting", with a small uppercase eyebrow beneath. Top padding
+    /// The Dictation mark + "Ari Meetings", with a small uppercase eyebrow beneath. Top padding
     /// clears the floating traffic lights under the frameless/unified title bar.
     private var wordmark: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
@@ -52,7 +52,7 @@ struct SidebarView: View {
                     .aspectRatio(96.0 / 64.0, contentMode: .fit)
                     .frame(width: 30)
                     .foregroundStyle(Color.marginalia(.accent, in: scheme))
-                Text("Ari Meeting")
+                Text("Ari Meetings")
                     .marginaliaTextStyle(.headline, in: scheme)
                 Spacer(minLength: 0)
             }
@@ -62,7 +62,7 @@ struct SidebarView: View {
         .padding(.horizontal, MarginaliaSpacing.md.value)
         .padding(.top, MarginaliaSpacing.xxl.value)
         .padding(.bottom, MarginaliaSpacing.sm.value)
-        .background(Color.marginalia(.canvas, in: scheme))
+        .background(Color.marginalia(.elevated, in: scheme))
     }
 
     private var workbenchSection: some View {
@@ -93,6 +93,7 @@ struct SidebarView: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, MarginaliaSpacing.sm.value)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var ledgerSection: some View {
@@ -113,7 +114,7 @@ struct SidebarView: View {
                     .padding(.horizontal, MarginaliaSpacing.md.value)
             case let .failed(message):
                 Text(message)
-                    .marginaliaTextStyle(.callout, in: scheme, ink: .recordingRed)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .error)
                     .padding(.horizontal, MarginaliaSpacing.md.value)
             }
         }
@@ -133,10 +134,11 @@ struct SidebarView: View {
         .padding(.horizontal, MarginaliaSpacing.md.value)
     }
 
-    /// Start recording / Import audio route to the honest `.newMeeting` placeholder — capture
+    /// New meeting / Import audio route to the honest `.newMeeting` placeholder — capture
     /// isn't built yet (No-Fake-State), so these buttons take the owner to the same "coming
     /// soon" screen rather than pretending to start/import anything. Settings/About have no
-    /// destination at all yet, so they render as inert rows rather than claiming one.
+    /// destination at all yet, so they render as explicitly disabled rows rather than claiming
+    /// one (finding #14 — a Label alone reads as an enabled row to assistive tech).
     private var pinnedBottom: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             Divider().overlay(Color.marginalia(.hairline, in: scheme))
@@ -144,7 +146,7 @@ struct SidebarView: View {
             // Accent (primary), NOT recording-red: recording-red is reserved for the LIVE capture
             // state only (brand Signal Rule) — this is the affordance to begin, so it's the one
             // primary action on the rail.
-            Button("Start recording") {
+            Button("New meeting") {
                 selection = .newMeeting
             }
             .buttonStyle(.marginalia(.primary, .large, in: scheme))
@@ -162,21 +164,32 @@ struct SidebarView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, MarginaliaSpacing.md.value)
 
-            Label("Settings", systemImage: "gearshape")
-                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                .padding(.horizontal, MarginaliaSpacing.md.value)
-
-            HStack {
-                Label("About", systemImage: "info.circle")
+            Button {} label: {
+                Label("Settings", systemImage: "gearshape")
                     .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                Spacer(minLength: MarginaliaSpacing.sm.value)
-                Text(Self.appVersionString)
-                    .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .buttonStyle(.plain)
+            .disabled(true)
+            .accessibilityRemoveTraits(.isButton)
+            .padding(.horizontal, MarginaliaSpacing.md.value)
+
+            Button {} label: {
+                HStack {
+                    Label("About", systemImage: "info.circle")
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                    Spacer(minLength: MarginaliaSpacing.sm.value)
+                    Text(Self.appVersionString)
+                        .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(true)
+            .accessibilityRemoveTraits(.isButton)
             .padding(.horizontal, MarginaliaSpacing.md.value)
             .padding(.bottom, MarginaliaSpacing.sm.value)
         }
-        .background(Color.marginalia(.canvas, in: scheme))
+        .background(Color.marginalia(.elevated, in: scheme))
     }
 
     /// The app's real `CFBundleShortVersionString` (No-Fake-State — never a fabricated version

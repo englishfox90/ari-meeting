@@ -38,6 +38,23 @@ public extension View {
         font(style.font)
             .foregroundStyle(Color.marginalia(ink, in: scheme))
             .modifier(MarginaliaTrackingModifier(points: style.trackingPoints))
+            .modifier(MarginaliaUppercaseModifier(isUppercase: style.spec.isUppercase))
+    }
+}
+
+/// Applies `.textCase(.uppercase)` only when the ramp entry declares the transform (only
+/// `.caption` today) — kept as a small separate modifier so the conditional doesn't force
+/// `body`'s return type to branch between two different `some View` shapes, mirroring
+/// `MarginaliaTrackingModifier` above.
+private struct MarginaliaUppercaseModifier: ViewModifier {
+    let isUppercase: Bool
+
+    func body(content: Content) -> some View {
+        if isUppercase {
+            content.textCase(.uppercase)
+        } else {
+            content
+        }
     }
 }
 

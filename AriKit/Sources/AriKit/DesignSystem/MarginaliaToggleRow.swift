@@ -2,9 +2,11 @@
 //  MarginaliaToggleRow.swift — labeled toggle row (plan §5 Tier 1.5,
 //  docs/plans/arikit-component-library.md).
 //
-//  A stock `Toggle(.switch)`, tinted by the app-root global `.tint(AccentShinKai)`
-//  (BRAND.md §10) — no hand-coloring here. Gallery-only coverage: nothing to lock beyond
-//  the type-ramp roles already covered by MarginaliaTokenParityTests.
+//  A stock `Toggle(.switch)`. The app root SHOULD apply the global `.tint(AccentShinKai)`
+//  (BRAND.md §10) — that wiring lands in the app-screens wave, not here — and once it does,
+//  this switch inherits the tint for free; do not hand-color it in the meantime. Gallery-only
+//  coverage: nothing to lock beyond the type-ramp roles already covered by
+//  MarginaliaTokenParityTests.
 //
 import SwiftUI
 

@@ -77,7 +77,7 @@ public extension MarginaliaButtonRole {
         case .recording:
             // `.canvas` label for the same contrast reason as `.primary` (see above): the dark-mode
             // recording-red fill (#FF6B5E) is light, so it needs near-black paper text, not `.surface`.
-            MarginaliaButtonSpec(fill: .recordingRed, label: .canvas, stroke: nil, pressed: .recordingRed)
+            MarginaliaButtonSpec(fill: .recordingRed, label: .canvas, stroke: nil, pressed: .recordingRedPressed)
         }
     }
 }
@@ -104,7 +104,7 @@ public struct MarginaliaButtonStyle: ButtonStyle {
         let isPressed = configuration.isPressed
 
         configuration.label
-            .marginaliaTextStyle(.callout, in: scheme, ink: spec.label)
+            .marginaliaTextStyle(.body, in: scheme, ink: spec.label)
             .frame(height: size.controlHeight)
             .padding(.horizontal, MarginaliaSpacing.md.value)
             .background {

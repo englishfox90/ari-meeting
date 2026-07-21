@@ -40,68 +40,39 @@ struct HomeView: View {
         .task { await viewModel.observe() }
     }
 
+    /// Names the work rather than selling it (finding #7) — the largest type on the page is the
+    /// page identity, not a marketing tagline. Library counts below are real data from
+    /// `viewModel` (No-Fake-State), not invented.
     private var hero: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             Text("THIS DEVICE / MEETING WORKBENCH")
                 .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
-            Text("Work from what was said.")
+            Text("Home")
                 .marginaliaTextStyle(.display, in: scheme)
-            Text(
-                "Capture a conversation, keep the record local, then return to the decisions "
-                    + "without a meeting bot in the call."
-            )
-            .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
+            Text(libraryCountSummary)
+                .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
         }
     }
 
     private var cards: some View {
-        HStack(alignment: .top, spacing: MarginaliaSpacing.lg.value) {
-            captureCard
-            privacyCard
-        }
+        captureCard
     }
 
     private var captureCard: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
             Image(systemName: "mic")
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(Color.marginalia(.accent, in: scheme))
+                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
             Text("CAPTURE")
                 .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
             Text("Start a meeting")
                 .marginaliaTextStyle(.title2, in: scheme)
             Text("Record system and microphone audio without adding a bot to the call.")
                 .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
-            Button("Open recorder →") {
+            Button("New meeting") {
                 selection = .newMeeting
             }
-            .buttonStyle(.marginalia(.primary, .large, in: scheme))
-        }
-        .padding(MarginaliaSpacing.lg.value)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
-                .fill(Color.marginalia(.elevated, in: scheme))
-                .overlay {
-                    RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
-                        .strokeBorder(Color.marginalia(.hairline, in: scheme), lineWidth: 1)
-                }
-        }
-    }
-
-    /// Honest counterpart to the reference's "LOCAL MODEL / Ready" card: real library counts,
-    /// never a fabricated model-ready status (No-Fake-State — no on-device model surface exists
-    /// to report a status for yet).
-    private var privacyCard: some View {
-        VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
-            Text("PRIVATE BY DESIGN")
-                .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
-            Text("Private, on this Mac")
-                .marginaliaTextStyle(.title2, in: scheme)
-            Text("Everything stays on this Mac.")
-                .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
-            Text(libraryCountSummary)
-                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+            .buttonStyle(.marginalia(.secondary, .large, in: scheme))
         }
         .padding(MarginaliaSpacing.lg.value)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -124,7 +95,7 @@ struct HomeView: View {
         HStack {
             SectionHeader(title: "Recent meetings")
             Spacer()
-            Button("View all →") {
+            Button("View all") {
                 selection = .savedMeetings
             }
             .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
@@ -141,7 +112,7 @@ struct HomeView: View {
                     NavigationLink(value: meeting.id) {
                         HStack(spacing: MarginaliaSpacing.sm.value) {
                             Image(systemName: "mic")
-                                .foregroundStyle(Color.marginalia(.accent, in: scheme))
+                                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
                             CardRow(
                                 title: meeting.title,
                                 metadata: meeting.createdAt.formatted(date: .abbreviated, time: .shortened)
@@ -157,7 +128,7 @@ struct HomeView: View {
                 .padding(.horizontal, MarginaliaSpacing.md.value)
         case let .failed(message):
             Text(message)
-                .marginaliaTextStyle(.callout, in: scheme, ink: .recordingRed)
+                .marginaliaTextStyle(.callout, in: scheme, ink: .error)
                 .padding(.horizontal, MarginaliaSpacing.md.value)
         }
     }

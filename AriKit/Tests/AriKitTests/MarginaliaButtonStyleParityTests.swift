@@ -38,13 +38,13 @@ struct MarginaliaButtonStyleParityTests {
         #expect(spec.pressed == .selectionWash)
     }
 
-    @Test("recording role: solid recordingRed fill, canvas (paper) label, no stroke")
+    @Test("recording role: solid recordingRed fill, canvas (paper) label, no stroke, recordingRedPressed pressed")
     func recordingSpec() {
         let spec = MarginaliaButtonRole.recording.spec
         #expect(spec.fill == .recordingRed)
         #expect(spec.label == .canvas)
         #expect(spec.stroke == nil)
-        #expect(spec.pressed == .recordingRed)
+        #expect(spec.pressed == .recordingRedPressed)
     }
 
     @Test("regular size resolves to 26pt; large size resolves to 32pt")

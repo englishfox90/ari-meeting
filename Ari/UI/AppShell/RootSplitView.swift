@@ -30,6 +30,7 @@ struct RootSplitView: View {
                 LaunchStatusView(status: environment.status)
             }
         }
+        .tint(Color.marginalia(.accent, in: scheme))
         .task { await environment.bootstrap() }
     }
 
@@ -72,11 +73,11 @@ struct RootSplitView: View {
         case .people:
             PeopleListView(database: database)
         case .newMeeting:
-            placeholder("Recording isn't wired up yet — coming with the capture work")
+            placeholder("Recording isn't built yet.")
         case .ask:
-            placeholder("Ask is coming")
+            placeholder("Ask meetings isn't ready yet.")
         case .calendar:
-            placeholder("Calendar is coming")
+            placeholder("Calendar isn't connected yet.")
         }
     }
 
@@ -87,7 +88,7 @@ struct RootSplitView: View {
                 .resizable()
                 .aspectRatio(96.0 / 64.0, contentMode: .fit)
                 .frame(width: 72)
-                .foregroundStyle(Color.marginalia(.hairline, in: scheme))
+                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
             Text(text)
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
         }

@@ -57,11 +57,14 @@ struct StateContainer<Value: Sendable, Content: View>: View {
 
     private func failedView(_ message: String) -> some View {
         VStack(spacing: MarginaliaSpacing.xs.value) {
-            Text("Something went wrong")
-                .marginaliaTextStyle(.body, in: scheme, ink: .recordingRed)
-            Text(message)
-                .marginaliaTextStyle(.caption, in: scheme)
-                .multilineTextAlignment(.center)
+            Label {
+                Text(message)
+                    .marginaliaTextStyle(.body, in: scheme, ink: .error)
+                    .multilineTextAlignment(.center)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(Color.marginalia(.error, in: scheme))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(MarginaliaSpacing.xl.value)
