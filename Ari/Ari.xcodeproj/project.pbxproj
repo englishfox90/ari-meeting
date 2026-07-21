@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		1A0000000000000000000013 /* AriKit in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000012 /* AriKit */; };
 		1A0000000000000000000015 /* AriViewModels in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000014 /* AriViewModels */; };
+		1A0000000000000000000019 /* AriCapture in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000018 /* AriCapture */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +30,7 @@
 			files = (
 				1A0000000000000000000013 /* AriKit in Frameworks */,
 				1A0000000000000000000015 /* AriViewModels in Frameworks */,
+				1A0000000000000000000019 /* AriCapture in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +80,7 @@
 			packageProductDependencies = (
 				1A0000000000000000000012 /* AriKit */,
 				1A0000000000000000000014 /* AriViewModels */,
+				1A0000000000000000000018 /* AriCapture */,
 			);
 			productName = Ari;
 			productReference = 1A0000000000000000000005 /* Ari.app */;
@@ -208,6 +211,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ari records only the meetings you explicitly start.";
+				INFOPLIST_KEY_NSAudioCaptureUsageDescription = "Ari captures system audio only during meetings you explicitly record.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -236,6 +240,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ari records only the meetings you explicitly start.";
+				INFOPLIST_KEY_NSAudioCaptureUsageDescription = "Ari captures system audio only during meetings you explicitly record.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -286,6 +291,10 @@
 		1A0000000000000000000014 /* AriViewModels */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AriViewModels;
+		};
+		1A0000000000000000000018 /* AriCapture */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AriCapture;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

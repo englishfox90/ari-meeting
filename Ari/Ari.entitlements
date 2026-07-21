@@ -3,12 +3,14 @@
 <!--
   Ari.entitlements — hardened runtime, NO App Sandbox (Q6 / arikit-native-shell.md §3).
   Sandboxing would break the Core Audio process tap + sidecar/model dirs; personal-use scope
-  needs no MAS/notarization. S0 (read UI) needs no capture entitlements; the microphone /
-  audio-input keys are added when the capture vertical (S2/S3) lands.
+  needs no MAS/notarization. audio-input covers the AVAudioEngine microphone tap (R3); the
+  Core Audio process tap (R4) is TCC-gated by NSAudioCaptureUsageDescription at first use.
 -->
 <plist version="1.0">
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
 </dict>
 </plist>
