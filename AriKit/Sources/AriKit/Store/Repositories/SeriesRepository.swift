@@ -30,6 +30,55 @@ public struct SeriesRepository: Sendable {
         }
     }
 
+    /// List-row summaries: each series with its member count and most-recent member date, ordered
+    /// alphabetically by title (case-insensitive). Deleted series are excluded; deleted meetings
+    /// don't count toward `meetingCount`/`lastMeetingTime`. This is the join-aggregate read the
+    /// domain `Series` type intentionally can't express (see `SeriesSummary`).
+    public func allSummaries() async throws -> [SeriesSummary] {
+        try await dbWriter.read { db in try Self.fetchSummaries(db) }
+    }
+
+    public func observeSummaries() -> AsyncStream<[SeriesSummary]> {
+        let dbWriter = dbWriter
+        let observation = ValueObservation.tracking { db in try Self.fetchSummaries(db) }
+        return AsyncStream { continuation in
+            let task = Task {
+                do {
+                    for try await value in observation.values(in: dbWriter) {
+                        continuation.yield(value)
+                    }
+                } catch {
+                    // See observeAll(): a failure ends the stream.
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private static func fetchSummaries(_ db: Database) throws -> [SeriesSummary] {
+        let rows = try Row.fetchAll(db, sql: """
+        SELECT s.id AS id, s.title AS title, s.detectedType AS detectedType, s.cadence AS cadence,
+               COUNT(m.id) AS meetingCount, MAX(m.createdAt) AS lastMeetingTime
+        FROM series s
+        LEFT JOIN seriesMember sm ON sm.seriesId = s.id
+        LEFT JOIN meeting m ON m.id = sm.meetingId AND m.isDeleted = 0
+        WHERE s.isDeleted = 0
+        GROUP BY s.id
+        ORDER BY s.title COLLATE NOCASE ASC
+        """)
+        return rows.map { row in
+            SeriesSummary(
+                id: SeriesID(row["id"]),
+                title: row["title"],
+                detectedType: row["detectedType"],
+                cadence: row["cadence"],
+                meetingCount: row["meetingCount"],
+                lastMeetingTime: row["lastMeetingTime"]
+            )
+        }
+    }
+
     public func find(_ id: SeriesID) async throws -> Series? {
         try await dbWriter.read { db in
             guard let record = try SeriesRecord.fetchOne(db, key: id.rawValue) else { return nil }

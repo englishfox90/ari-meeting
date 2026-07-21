@@ -50,11 +50,22 @@ struct RootSplitView: View {
                     .navigationDestination(for: MeetingID.self) { meetingId in
                         MeetingDetailView(database: database, meetingId: meetingId)
                     }
+                    .navigationDestination(for: MeetingMoment.self) { moment in
+                        MeetingDetailView(
+                            database: database,
+                            meetingId: moment.meetingId,
+                            initialSeek: moment.seconds
+                        )
+                    }
                     .navigationDestination(for: PersonID.self) { personId in
                         PersonDetailView(database: database, personId: personId)
                     }
                     .navigationDestination(for: SeriesID.self) { seriesId in
-                        SeriesDetailView(database: database, seriesId: seriesId)
+                        SeriesDetailView(
+                            database: database,
+                            seriesId: seriesId,
+                            onOpenMeetingMoment: { path.append(MeetingMoment(meetingId: $0, seconds: $1)) }
+                        )
                     }
             }
         }
