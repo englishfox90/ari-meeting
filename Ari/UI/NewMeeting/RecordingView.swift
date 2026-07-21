@@ -28,7 +28,9 @@ struct RecordingView: View {
             .navigationTitle("New meeting")
             .sheet(isPresented: consentSheetPresented) {
                 ConsentSheet(
-                    onRecord: { Task { await session.confirmConsent() } },
+                    // Synchronous edge (review H3): the phase flips to `.starting` before the
+                    // sheet's dismiss can run `cancelConsent()` — Record can never lose the race.
+                    onRecord: { session.confirmConsentRequested() },
                     onCancel: { session.cancelConsent() }
                 )
             }

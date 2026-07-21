@@ -314,6 +314,30 @@ struct RecordingSessionTests {
 
     // MARK: R2 additions — idle-screen title + eager source-availability probe
 
+    @Test("confirmConsentRequested() flips to .starting synchronously — a late cancelConsent() no-ops (H3)")
+    func synchronousConsentEdgeWinsOverSheetDismiss() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let capture = SpyCaptureService()
+        let transcription = StubLiveTranscriptionService(cannedSegments: [])
+        let session = try makeSession(database: database, capture: capture, transcription: transcription)
+        await session.readinessProbeTask?.value
+
+        session.requestStart()
+        session.confirmConsentRequested()
+        // BEFORE any await: the phase must already have left .consentPrompt, so the sheet
+        // dismissal's cancelConsent() (which guards on .consentPrompt) is a guaranteed no-op.
+        #expect(session.phase != .consentPrompt)
+        session.cancelConsent()
+        #expect(session.phase != .idle)
+
+        await session.startTask?.value
+        guard case .recording = session.phase else {
+            Issue.record("expected .recording after the synchronous consent edge, got \(session.phase)")
+            return
+        }
+        await session.stop()
+    }
+
     @Test("a blank pendingTitle falls back to the honest 'Untitled meeting' default")
     func blankTitleFallsBackToDefault() async throws {
         let database = try AppDatabase.makeInMemory()

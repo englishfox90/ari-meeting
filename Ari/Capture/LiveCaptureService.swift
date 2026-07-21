@@ -59,11 +59,13 @@ struct LiveCaptureService: CaptureService {
     }
 
     /// Bridges an actor-isolated `AsyncStream` accessor into the protocol's synchronous
-    /// return shape: subscribe inside a task, forward every element.
+    /// return shape: subscribe inside a task, forward every element. The outer stream keeps
+    /// the coordinator's drop-oldest posture (review finding H2) — an unbounded re-buffer here
+    /// would silently defeat backpressure and grow without bound under a slow STT consumer.
     private func bridge<Element: Sendable>(
         _ subscribe: @escaping @Sendable () async -> AsyncStream<Element>
     ) -> AsyncStream<Element> {
-        AsyncStream { continuation in
+        AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
             let task = Task {
                 for await element in await subscribe() {
                     continuation.yield(element)

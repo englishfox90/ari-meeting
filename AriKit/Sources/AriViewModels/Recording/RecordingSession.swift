@@ -67,6 +67,9 @@ public final class RecordingSession {
     private var captureService: (any CaptureService)?
     private var segmentTask: Task<Void, Never>?
     private var levelTask: Task<Void, Never>?
+    /// The async continuation of `confirmConsentRequested()`. Internal (not `private`) so tests
+    /// can await the start deterministically — mirrors `readinessProbeTask`.
+    var startTask: Task<Void, Never>?
     /// Test-only synchronization hook for the init-time readiness probe below (`@testable`-only;
     /// not part of the plan's public surface). Lets headless tests await the probe deterministically
     /// instead of racing it with sleeps.
@@ -136,6 +139,21 @@ public final class RecordingSession {
     public func confirmConsent() async {
         guard case .consentPrompt = phase else { return }
         phase = .starting
+        await performStart()
+    }
+
+    /// The synchronous consent edge for UI actions (review finding H3): flips to `.starting`
+    /// BEFORE control returns to SwiftUI, so a sheet-dismiss `cancelConsent()` that runs after
+    /// the Record tap is guaranteed to no-op — the sole edge into capture never rides on task
+    /// scheduling order. The async start continues in a session-owned task.
+    public func confirmConsentRequested() {
+        guard case .consentPrompt = phase else { return }
+        phase = .starting
+        startTask = Task { await performStart() }
+    }
+
+    /// Everything after the `.starting` flip. Only reachable via the two consent edges above.
+    private func performStart() async {
 
         // Re-check readiness authoritatively right before committing to a start — never trust a
         // stale init-time reading to green-light capture.
@@ -189,6 +207,10 @@ public final class RecordingSession {
         do {
             try await database.meetings.upsert(meeting)
         } catch {
+            // The capture graph is already live here (review finding H1) — tear it down before
+            // failing, or the mic/tap/saver would run orphaned until app quit with no way to
+            // stop them (`stop()` guards on `.recording`).
+            _ = try? await service.finish()
             phase = .failed("Could not save the meeting: \(String(describing: error))")
             return
         }

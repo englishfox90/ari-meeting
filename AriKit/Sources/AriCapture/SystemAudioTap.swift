@@ -112,11 +112,11 @@
             let emitter = RealtimeWindowEmitter(source: .system, continuation: continuation)
             self.emitter = emitter
 
-            // Sample-rate churn (arikit-native-shell.md §4.1: "the tap ASBD sample rate can
-            // change on a default-output device switch"): `RealtimeWindowEmitter.emit` re-reads
-            // the source rate it's handed on every callback (it doesn't cache one), so a mid-
-            // recording default-output switch is honored automatically without extra plumbing
-            // here — no explicit "current sample rate" tracking needed on this side.
+            // KNOWN LIMITATION (review finding M1, recorded honestly): `tapFormat.mSampleRate`
+            // is captured ONCE at graph build. If a default-output switch changes the tap ASBD
+            // rate mid-recording (arikit-native-shell.md §4.1), system audio resamples at the
+            // wrong ratio until the recording ends. Fix when Lane-2 exercises device churn:
+            // listen for the tap format-change property and rebuild the graph.
             var newIOProcID: AudioDeviceIOProcID?
             let ioProcStatus = AudioDeviceCreateIOProcIDWithBlock(
                 &newIOProcID, newAggregateID, nil

@@ -255,10 +255,22 @@
             drainReadyWindows()
         }
 
+        /// A source stream ending while the recording is still running means that device died
+        /// mid-recording — surface it honestly in `sourceStatus()` (review finding M4) instead
+        /// of leaving a green readout over a dead source. During `finish()` (`isRunning` already
+        /// false) an ending stream is just normal teardown.
         private func sourceEnded(_ source: CaptureSource) {
             switch source {
-            case .microphone: micLive = false
-            case .system: systemLive = false
+            case .microphone:
+                micLive = false
+                if isRunning {
+                    micStatus = .unavailable(reason: "The microphone stopped delivering audio mid-recording.")
+                }
+            case .system:
+                systemLive = false
+                if isRunning {
+                    systemStatus = .unavailable(reason: "System audio stopped delivering mid-recording.")
+                }
             case .mixed: break
             }
         }
