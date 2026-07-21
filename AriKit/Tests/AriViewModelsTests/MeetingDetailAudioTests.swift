@@ -12,8 +12,8 @@ import Testing
 @Suite("AudioAvailabilityResolver")
 struct MeetingDetailAudioTests {
 
-    @Test("available when audio.mp4 exists at the referenced folder")
-    func availableWhenFileExists() {
+    @Test("folder reference: available when the legacy audio.mp4 exists inside it")
+    func availableWhenLegacyNameExistsInFolder() {
         let reference = LocalAudioReference(path: "/Users/owner/Recordings/meeting-1")
         let result = AudioAvailabilityResolver.resolve(audioReference: reference) { url in
             url.path == "/Users/owner/Recordings/meeting-1/audio.mp4"
@@ -25,7 +25,33 @@ struct MeetingDetailAudioTests {
         #expect(url.path == "/Users/owner/Recordings/meeting-1/audio.mp4")
     }
 
-    @Test("honest missing when audio.mp4 does not exist at the referenced folder")
+    @Test("folder reference: available when the native audio.m4a exists inside it")
+    func availableWhenNativeNameExistsInFolder() {
+        let reference = LocalAudioReference(path: "/Users/owner/Recordings/meeting-3")
+        let result = AudioAvailabilityResolver.resolve(audioReference: reference) { url in
+            url.path == "/Users/owner/Recordings/meeting-3/audio.m4a"
+        }
+        guard case let .available(url) = result else {
+            Issue.record("expected .available, got \(result)")
+            return
+        }
+        #expect(url.path == "/Users/owner/Recordings/meeting-3/audio.m4a")
+    }
+
+    @Test("file reference (legacy import shape): the full path is used directly")
+    func availableWhenReferenceIsAFilePath() {
+        let reference = LocalAudioReference(path: "/tmp/ari/m1/audio.mp4")
+        let result = AudioAvailabilityResolver.resolve(audioReference: reference) { url in
+            url.path == "/tmp/ari/m1/audio.mp4"
+        }
+        guard case let .available(url) = result else {
+            Issue.record("expected .available, got \(result)")
+            return
+        }
+        #expect(url.path == "/tmp/ari/m1/audio.mp4")
+    }
+
+    @Test("honest missing when no known audio file exists at the referenced folder")
     func missingWhenFileAbsent() {
         let reference = LocalAudioReference(path: "/Users/owner/Recordings/meeting-2")
         let result = AudioAvailabilityResolver.resolve(audioReference: reference) { _ in false }
@@ -33,7 +59,7 @@ struct MeetingDetailAudioTests {
             Issue.record("expected .missing, got \(result)")
             return
         }
-        #expect(reason.contains("/Users/owner/Recordings/meeting-2/audio.mp4"))
+        #expect(reason.contains("/Users/owner/Recordings/meeting-2"))
     }
 
     @Test("honest missing (never .available) when the meeting has no audio reference at all")

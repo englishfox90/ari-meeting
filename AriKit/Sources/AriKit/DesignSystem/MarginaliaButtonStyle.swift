@@ -128,6 +128,10 @@ public struct MarginaliaButtonStyle: ButtonStyle {
             // surfaces below keep the brand 6pt control radius.
             label
                 .glassEffect(.regular.tint(Color.marginalia(spec.fill!, in: scheme)).interactive(), in: Capsule())
+                // Without an explicit content shape only the label's own pixels hit-test —
+                // the glass capsule's padding would be dead space (same fix as the flat
+                // branch below; regression reported 2026-07-21).
+                .contentShape(Capsule())
         } else {
             label
                 .background {

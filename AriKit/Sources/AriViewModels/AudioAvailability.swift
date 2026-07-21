@@ -20,8 +20,10 @@ public enum AudioAvailability: Sendable, Equatable {
 }
 
 public enum AudioAvailabilityResolver {
-    /// The audio file name inside a meeting's recording folder (plan §5).
-    public static let audioFileName = "audio.mp4"
+    /// The audio file names a recording folder may contain, in resolution order:
+    /// `audio.m4a` is what the native Swift recorder writes (`CaptureCoordinator.finish()`);
+    /// `audio.mp4` is the frozen Rust app's name, present in the imported legacy library.
+    public static let audioFileNames = ["audio.m4a", "audio.mp4"]
 
     /// Resolves a meeting's `audioReference` to `.available`/`.missing`, honestly. A `nil`
     /// reference resolves to `.missing` too (plan §5: "nil reference -> bar absent" is a
@@ -34,11 +36,24 @@ public enum AudioAvailabilityResolver {
         guard let audioReference else {
             return .missing("This meeting has no recorded audio.")
         }
-        let folderURL = URL(fileURLWithPath: audioReference.path, isDirectory: true)
-        let fileURL = folderURL.appendingPathComponent(audioFileName, isDirectory: false)
-        guard fileExists(fileURL) else {
-            return .missing("Recording file not found at \(fileURL.path)")
+
+        // Two reference shapes exist: the legacy import stores the FULL FILE path
+        // (`…/audio.mp4`, see ImporterFixtureTests), the native recorder stores the meeting
+        // FOLDER. A path with an extension is treated as a direct file reference.
+        let base = URL(fileURLWithPath: audioReference.path)
+        if !base.pathExtension.isEmpty {
+            return fileExists(base)
+                ? .available(base)
+                : .missing("Recording file not found at \(base.path)")
         }
-        return .available(fileURL)
+
+        let folderURL = URL(fileURLWithPath: audioReference.path, isDirectory: true)
+        for name in audioFileNames {
+            let fileURL = folderURL.appendingPathComponent(name, isDirectory: false)
+            if fileExists(fileURL) {
+                return .available(fileURL)
+            }
+        }
+        return .missing("No recording file found in \(folderURL.path)")
     }
 }
