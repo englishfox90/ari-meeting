@@ -279,4 +279,28 @@ struct ImporterFixtureTests {
         #expect(report.sourceError != nil)
         #expect(report.tables.isEmpty)
     }
+
+    // MARK: - summary_processes.result shapes (regression: real app cache shape)
+
+    /// The app's real `summary_processes.result` is the summary-engine cache shape
+    /// `{"markdown": …, "english_cache": {"markdown": …}}` — NOT the `{"data": {…}}` shape the
+    /// mapper originally assumed. A real 15-meeting library imported 0/14 summaries until the
+    /// mapper learned this shape; these lock the three accepted shapes so it can't regress.
+    @Test("summaryBodyMarkdown reads the real cache shape (top-level + english_cache markdown)")
+    func summaryResultCacheShapes() throws {
+        let topLevel = ##"{"markdown":"# Top level","english_cache":{"markdown":"# Cache"}}"##
+        #expect(try ImportMapping.summaryBodyMarkdown(fromResultJSON: topLevel) == "# Top level")
+
+        let cacheOnly = ##"{"english_cache":{"markdown":"# Cache only","output_language":"en"}}"##
+        #expect(try ImportMapping.summaryBodyMarkdown(fromResultJSON: cacheOnly) == "# Cache only")
+
+        // The older `{"data": {"markdown": …}}` shape still works (fallback preserved).
+        let dataShape = ##"{"data":{"markdown":"# Data shape"}}"##
+        #expect(try ImportMapping.summaryBodyMarkdown(fromResultJSON: dataShape) == "# Data shape")
+
+        // Genuinely unrecognized JSON still throws (No-Fake-State — never invents a body).
+        #expect(throws: (any Error).self) {
+            try ImportMapping.summaryBodyMarkdown(fromResultJSON: ##"{"unexpected":true}"##)
+        }
+    }
 }

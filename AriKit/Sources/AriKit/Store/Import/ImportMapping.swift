@@ -291,8 +291,20 @@ enum ImportMapping {
         else {
             throw ImportMappingError.malformedSummaryResult("not a JSON object")
         }
+        // The app's `summary_processes.result` is the summary engine's cache shape:
+        // `{"markdown": "<rendered>", "english_cache": {"markdown": "<rendered>", …}}` — there is
+        // no `data` block. Prefer the rendered markdown directly (top-level, then the language
+        // cache); the `{"data": {…}}` block shape below is an older/alternate result format kept
+        // only as a fallback so both real histories import.
+        if let markdown = topLevel["markdown"] as? String, !markdown.isEmpty {
+            return markdown
+        }
+        if let cache = topLevel["english_cache"] as? [String: Any],
+           let markdown = cache["markdown"] as? String, !markdown.isEmpty {
+            return markdown
+        }
         guard let payload = topLevel["data"] as? [String: Any] else {
-            throw ImportMappingError.malformedSummaryResult("no \"data\" field")
+            throw ImportMappingError.malformedSummaryResult("no \"data\", \"markdown\", or \"english_cache\" field")
         }
         if let markdown = payload["markdown"] as? String, !markdown.isEmpty {
             return markdown
