@@ -61,13 +61,6 @@ public struct SummaryProcessRequest: Sendable {
 }
 
 public struct SummaryService: Sendable {
-    /// ← the keyless-provider set (`service.rs:353`): these providers don't require an API key
-    /// from the standard settings column (Ollama/MLX are local; CustomOpenAI has its own key
-    /// field; ClaudeCLI/AppleFoundation authenticate outside this layer entirely).
-    private static let keylessProviders: Set<ProviderKind> = [
-        .ollama, .mlx, .customOpenAI, .claudeCLI, .appleFoundation
-    ]
-
     private let db: AppDatabase
     private let settings: any SettingsReading
     private let secrets: any SecretsReading
@@ -127,27 +120,13 @@ public struct SummaryService: Sendable {
     private func runGeneration(_ request: SummaryProcessRequest) async throws -> Summary {
         try Task.checkCancellation()
 
-        guard let providerKind = ProviderKind.from(request.modelProviderKey) else {
-            throw LLMError.notConfigured("Unsupported provider: \(request.modelProviderKey)")
-        }
-
-        let apiKey = try await resolveAPIKey(providerKind: providerKind, request: request)
-        let ollamaEndpoint = providerKind == .ollama ? try? await settings.ollamaEndpoint() : nil
-
-        var customOpenAIEndpoint: String?
-        var maxTokens: Int?
-        var temperature: Double?
-        var topP: Double?
-        var finalAPIKey = apiKey
-
-        if providerKind == .customOpenAI {
-            let config = try await resolveCustomOpenAIConfig()
-            customOpenAIEndpoint = config.endpoint
-            finalAPIKey = config.apiKey ?? ""
-            maxTokens = config.maxTokens
-            temperature = config.temperature
-            topP = config.topP
-        }
+        let config = try await ProviderConfigResolution.resolve(
+            providerKey: request.modelProviderKey,
+            modelName: request.modelName,
+            settings: settings,
+            secrets: secrets
+        )
+        let providerKind = config.kind
 
         try Task.checkCancellation()
 
@@ -163,16 +142,6 @@ public struct SummaryService: Sendable {
             throw LLMError.notConfigured("Failed to load template '\(request.templateId)': \(error)")
         }
 
-        let config = ProviderConfig(
-            kind: providerKind,
-            model: request.modelName,
-            apiKey: finalAPIKey,
-            ollamaEndpoint: ollamaEndpoint,
-            customOpenAIEndpoint: customOpenAIEndpoint,
-            maxTokens: maxTokens,
-            temperature: temperature,
-            topP: topP
-        )
         let client = try clientFactory(config)
 
         try Task.checkCancellation()
@@ -195,36 +164,10 @@ public struct SummaryService: Sendable {
 
     // MARK: - Settings resolution (← service.rs:344-471)
 
-    private func resolveAPIKey(providerKind: ProviderKind, request: SummaryProcessRequest) async throws -> String {
-        guard !Self.keylessProviders.contains(providerKind) else {
-            return ""
-        }
-        let key: String?
-        do {
-            key = try await secrets.apiKey(forProvider: request.modelProviderKey)
-        } catch {
-            throw LLMError.notConfigured(
-                "Failed to retrieve API key for \(request.modelProviderKey): \(error)"
-            )
-        }
-        guard let key, !key.isEmpty else {
-            throw LLMError.notConfigured("API key not found for \(request.modelProviderKey)")
-        }
-        return key
-    }
-
-    private func resolveCustomOpenAIConfig() async throws -> CustomOpenAIConfig {
-        do {
-            guard let config = try await settings.customOpenAIConfig() else {
-                throw LLMError.notConfigured("Custom OpenAI provider selected but no configuration found")
-            }
-            return config
-        } catch let error as LLMError {
-            throw error
-        } catch {
-            throw LLMError.notConfigured("Failed to retrieve custom OpenAI config: \(error)")
-        }
-    }
+    //
+    // Provider/API-key/Custom-OpenAI-config resolution now lives in the shared
+    // `ProviderConfigResolution.resolve(...)` helper (Track H locked decision §6-7) — this
+    // section keeps only the token-threshold resolution, which stays Summary-specific.
 
     /// ← `service.rs:424-471`: the per-provider token-threshold resolution, reserving 300 tokens
     /// for prompt overhead on the two dynamic-context paths.

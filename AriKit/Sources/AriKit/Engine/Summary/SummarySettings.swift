@@ -38,6 +38,34 @@ public protocol SettingsReading: Sendable {
     /// ← the MLX/BuiltInAI model-registry context-size lookup (`service.rs:443-463`). `nil` falls
     /// back to the Rust "unknown model" default of 1748 (`2048 - 300` overhead reserve).
     func mlxContextSize(forModel model: String) async -> Int?
+
+    /// ← `SettingsRepository::get_model_config(pool)` (`persons/extraction.rs:86`,
+    /// `persons/reconciliation.rs:111`) — the CURRENTLY CONFIGURED summarization provider+model,
+    /// read directly from settings. Unlike `SummaryService` (which receives provider/model as
+    /// EXPLICIT per-call arguments already resolved by the caller, `SummaryProcessRequest`),
+    /// Persons extraction/reconciliation resolve their own provider from settings — the same read
+    /// shape already built for recall (`RecallSettingsReading.modelConfig()`,
+    /// `Recall/Orchestrator/RecallSettings.swift`), added here as the `Engine`-side mirror since
+    /// Persons depends on `Engine`'s `SettingsReading`/`SecretsReading` for the rest of its
+    /// provider resolution (Phase 3.4 Track H, `arikit-engine-extras.md` §2.2/§6-7). `nil` means
+    /// unconfigured.
+    func summaryModelConfig() async throws -> SummaryModelConfig?
+}
+
+/// ← the currently-configured summarization provider+model (`service.rs`'s `ModelConfig`, read
+/// via `SettingsRepository::get_model_config`). Mirrors `RecallModelConfig`'s shape (Recall's
+/// analogous read) without the `ollamaEndpoint` field — `ProviderConfigResolution.resolve(...)`
+/// already calls `SettingsReading.ollamaEndpoint()` itself when the resolved kind is `.ollama`.
+public struct SummaryModelConfig: Sendable, Equatable {
+    /// The raw settings-lookup provider key (e.g. `"ollama"`, `"claude"`) — parsed via
+    /// `ProviderKind.from(_:)`, same as `SummaryProcessRequest.modelProviderKey`.
+    public var providerKey: String
+    public var model: String
+
+    public init(providerKey: String, model: String) {
+        self.providerKey = providerKey
+        self.model = model
+    }
 }
 
 /// ← the Custom OpenAI settings blob (`service.rs:388-414`).

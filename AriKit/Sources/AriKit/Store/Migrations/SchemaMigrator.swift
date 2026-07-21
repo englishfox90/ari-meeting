@@ -157,6 +157,19 @@ enum SchemaMigrator {
                     .indexed()
                     .references("profileFact", onDelete: .setNull)
                 t.column("createdAt", .datetime).notNull()
+                // `supersedesFactId`/`lastConfirmedAt` (Phase 3.4 Track H, `arikit-engine-extras.md`
+                // §2.3) — Store-internal only, NOT on `AriKit.Models.ProfileFact` yet (same
+                // documented gap as `Meeting.templateId`/`Series.templateId`/
+                // `CalendarEventRecord.syncedAt`). `supersedesFactId` is the DEFERRED-supersession
+                // pointer a pending replacement carries (← `mark_supersedes`, `person.rs:632`) —
+                // forward from the new/pending fact to the old fact it proposes to replace; the
+                // OLD fact stays active until a future confirm flow retires it via the existing
+                // `supersededBy` pointer above. `lastConfirmedAt` resets the staleness clock (←
+                // `touch_confirmed`, `person.rs:699`), read by `factsNeedingReview`.
+                t.column("supersedesFactId", .text)
+                    .indexed()
+                    .references("profileFact", onDelete: .setNull)
+                t.column("lastConfirmedAt", .datetime)
                 t.column("isDeleted", .boolean).notNull().defaults(to: false)
                 t.column("deletedAt", .datetime)
             }
@@ -180,6 +193,27 @@ enum SchemaMigrator {
                 t.column("observedAt", .datetime).notNull()
                 t.column("isDeleted", .boolean).notNull().defaults(to: false)
                 t.column("deletedAt", .datetime)
+            }
+
+            // `meetingParticipant` (Phase 3.4 Track H, `arikit-engine-extras.md` §2.3/§6-5) — the
+            // real meeting↔person link table extraction/reconciliation read as their participant
+            // roster (← `list_participants`, `person.rs:370`). A pure link row (composite PK, no
+            // tombstone — mirrors `seriesMember`'s precedent, §4.7): a person either is or isn't a
+            // participant, so membership is added/removed directly via
+            // `PersonRepository.addParticipant`/`removeParticipant`. `meeting`/`person` both
+            // precede this table, so both FKs are inline.
+            try db.create(table: "meetingParticipant") { t in
+                t.column("meetingId", .text)
+                    .notNull()
+                    .indexed()
+                    .references("meeting", onDelete: .cascade)
+                t.column("personId", .text)
+                    .notNull()
+                    .indexed()
+                    .references("person", onDelete: .cascade)
+                t.column("linkSource", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.primaryKey(["meetingId", "personId"])
             }
 
             // `summary` (§4.9) — NEW, no Rust source row (resolves `arikit-models.md` decision 0.2).

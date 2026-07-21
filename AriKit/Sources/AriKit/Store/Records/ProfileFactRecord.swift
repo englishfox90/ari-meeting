@@ -12,6 +12,13 @@
 //  denormalized, driftable copy. `asModel(sourceMeetingTitle:sourceCount:)` takes both as
 //  parameters the repository supplies; there is no zero-argument `asModel()` on this record.
 //
+//  ⚠️ `supersedesFactId`/`lastConfirmedAt` (Phase 3.4 Track H, `arikit-engine-extras.md` §2.3) are
+//  Store-internal only — NOT on `AriKit.Models.ProfileFact` yet (the same documented gap as
+//  `Meeting.templateId`/`CalendarEventRecord.syncedAt`). Because they're absent from the domain
+//  model, `init(_ fact:)` always sets them `nil`; `ProfileFactRepository.upsert(_:)` guards against
+//  a plain domain-level upsert silently wiping them by fetch-then-preserve, mirroring
+//  `SeriesRepository.upsert(_:)`'s precedent for fields the domain type doesn't carry.
+//
 import Foundation
 import GRDB
 
@@ -29,6 +36,8 @@ struct ProfileFactRecord: Codable, FetchableRecord, PersistableRecord, Sendable 
     var status: String
     var supersededBy: String?
     var createdAt: Date
+    var supersedesFactId: String?
+    var lastConfirmedAt: Date?
     var isDeleted: Bool
     var deletedAt: Date?
 }
@@ -46,6 +55,8 @@ extension ProfileFactRecord {
         status = fact.status.rawValue
         supersededBy = fact.supersededBy?.rawValue
         createdAt = fact.createdAt
+        supersedesFactId = nil
+        lastConfirmedAt = nil
         isDeleted = false
         deletedAt = nil
     }

@@ -14,23 +14,29 @@
         public var customOpenAIConfigValue: CustomOpenAIConfig?
         public var ollamaContextSizeValue: Int?
         public var mlxContextSizeValue: Int?
+        public var summaryModelConfigValue: SummaryModelConfig?
         public var ollamaEndpointError: LLMError?
         public var customOpenAIConfigError: LLMError?
+        public var summaryModelConfigError: LLMError?
 
         public init(
             ollamaEndpointValue: String? = nil,
             customOpenAIConfigValue: CustomOpenAIConfig? = nil,
             ollamaContextSizeValue: Int? = nil,
             mlxContextSizeValue: Int? = nil,
+            summaryModelConfigValue: SummaryModelConfig? = nil,
             ollamaEndpointError: LLMError? = nil,
-            customOpenAIConfigError: LLMError? = nil
+            customOpenAIConfigError: LLMError? = nil,
+            summaryModelConfigError: LLMError? = nil
         ) {
             self.ollamaEndpointValue = ollamaEndpointValue
             self.customOpenAIConfigValue = customOpenAIConfigValue
             self.ollamaContextSizeValue = ollamaContextSizeValue
             self.mlxContextSizeValue = mlxContextSizeValue
+            self.summaryModelConfigValue = summaryModelConfigValue
             self.ollamaEndpointError = ollamaEndpointError
             self.customOpenAIConfigError = customOpenAIConfigError
+            self.summaryModelConfigError = summaryModelConfigError
         }
 
         public func ollamaEndpoint() async throws -> String? {
@@ -53,6 +59,13 @@
 
         public func mlxContextSize(forModel _: String) async -> Int? {
             mlxContextSizeValue
+        }
+
+        public func summaryModelConfig() async throws -> SummaryModelConfig? {
+            if let summaryModelConfigError {
+                throw summaryModelConfigError
+            }
+            return summaryModelConfigValue
         }
     }
 

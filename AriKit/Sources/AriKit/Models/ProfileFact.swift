@@ -59,17 +59,33 @@ public enum FactKind: UnknownTolerantEnum {
         }
     }
 
-    public static func unknownCase(_ rawValue: String) -> Self { .unknown(rawValue) }
-    public init(from decoder: any Decoder) throws { try self.init(tolerantFrom: decoder) }
-    public func encode(to encoder: any Encoder) throws { try encodeTolerant(to: encoder) }
+    public static func unknownCase(_ rawValue: String) -> Self {
+        .unknown(rawValue)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(tolerantFrom: decoder)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        try encodeTolerant(to: encoder)
+    }
 }
 
 /// Lifecycle status of a fact under reconciliation/supersession.
+///
+/// `.removed` (plan §6-4, `arikit-engine-extras.md`): the automated-pruning status the
+/// reconciliation engine (or the active/pending cap backstop) applies — distinct from
+/// `.rejected` (a human explicitly said no). Rust's `mark_removed` sets the same string status
+/// ("removed") on the `profile_facts.status` column (← `person.rs:688`); this is a genuinely new
+/// domain case, not a rename of an existing one, so it round-trips as a KNOWN case rather than
+/// falling through to `.unknown(_)`.
 public enum FactStatus: UnknownTolerantEnum {
     case pending
     case active
     case superseded
     case rejected
+    case removed
     case unknown(String)
 
     public init?(rawValue: String) {
@@ -78,6 +94,7 @@ public enum FactStatus: UnknownTolerantEnum {
         case "active": self = .active
         case "superseded": self = .superseded
         case "rejected": self = .rejected
+        case "removed": self = .removed
         default: return nil
         }
     }
@@ -88,13 +105,22 @@ public enum FactStatus: UnknownTolerantEnum {
         case .active: "active"
         case .superseded: "superseded"
         case .rejected: "rejected"
+        case .removed: "removed"
         case let .unknown(raw): raw
         }
     }
 
-    public static func unknownCase(_ rawValue: String) -> Self { .unknown(rawValue) }
-    public init(from decoder: any Decoder) throws { try self.init(tolerantFrom: decoder) }
-    public func encode(to encoder: any Encoder) throws { try encodeTolerant(to: encoder) }
+    public static func unknownCase(_ rawValue: String) -> Self {
+        .unknown(rawValue)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(tolerantFrom: decoder)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        try encodeTolerant(to: encoder)
+    }
 }
 
 /// How a fact/source was obtained (Rust `source_kind`; the Store skill's `origin`). Reconciles
@@ -120,9 +146,17 @@ public enum FactOrigin: UnknownTolerantEnum {
         }
     }
 
-    public static func unknownCase(_ rawValue: String) -> Self { .unknown(rawValue) }
-    public init(from decoder: any Decoder) throws { try self.init(tolerantFrom: decoder) }
-    public func encode(to encoder: any Encoder) throws { try encodeTolerant(to: encoder) }
+    public static func unknownCase(_ rawValue: String) -> Self {
+        .unknown(rawValue)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(tolerantFrom: decoder)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        try encodeTolerant(to: encoder)
+    }
 }
 
 /// A source's relation to the fact it backs.
@@ -150,9 +184,17 @@ public enum FactSourceRelation: UnknownTolerantEnum {
         }
     }
 
-    public static func unknownCase(_ rawValue: String) -> Self { .unknown(rawValue) }
-    public init(from decoder: any Decoder) throws { try self.init(tolerantFrom: decoder) }
-    public func encode(to encoder: any Encoder) throws { try encodeTolerant(to: encoder) }
+    public static func unknownCase(_ rawValue: String) -> Self {
+        .unknown(rawValue)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(tolerantFrom: decoder)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        try encodeTolerant(to: encoder)
+    }
 }
 
 // MARK: - ProfileFact (tier 2 row)

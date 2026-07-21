@@ -101,4 +101,62 @@ public struct PersonRepository: Sendable {
             continuation.onTermination = { _ in task.cancel() }
         }
     }
+
+    // MARK: - Participant roster (`meetingParticipant` — Phase 3.4 Track H, §2.3/§6-5)
+
+    /// The persons linked to `meetingId` as participants (← `list_participants`, `person.rs:370`),
+    /// alphabetical by display name, excluding soft-deleted persons (a documented improvement over
+    /// Rust, which has no person-level soft-delete concept). Persons extraction/reconciliation's
+    /// "no linked participants — nothing to do" degrade gate reads this.
+    public func participants(inMeeting meetingId: MeetingID) async throws -> [Person] {
+        try await dbWriter.read { db in
+            let personIds = try MeetingParticipantRecord
+                .filter(Column("meetingId") == meetingId.rawValue)
+                .fetchAll(db)
+                .map(\.personId)
+            guard !personIds.isEmpty else { return [] }
+            return try PersonRecord
+                .filter(personIds.contains(Column("id")))
+                .filter(Column("isDeleted") == false)
+                .order(Column("displayName"))
+                .fetchAll(db)
+                .map { $0.asModel() }
+        }
+    }
+
+    /// Insert-or-ignore a meeting/person participant link (← `link_participant`, `person.rs:348`
+    /// — `INSERT OR IGNORE`, so re-linking the same pair is a no-op rather than overwriting an
+    /// existing `linkSource`/`createdAt`). Population (e.g. auto-link from calendar attendees) is
+    /// a Phase-2 concern (plan §6-5) — this is the additive primitive only.
+    public func addParticipant(
+        meetingId: MeetingID,
+        personId: PersonID,
+        linkSource: String? = nil,
+        at date: Date = Date()
+    ) async throws {
+        try await dbWriter.write { db in
+            let arguments: [DatabaseValueConvertible?] = [
+                meetingId.rawValue, personId.rawValue, linkSource, date
+            ]
+            try db.execute(
+                sql: """
+                INSERT OR IGNORE INTO meetingParticipant (meetingId, personId, linkSource, createdAt)
+                VALUES (?, ?, ?, ?)
+                """,
+                arguments: StatementArguments(arguments)
+            )
+        }
+    }
+
+    /// A genuine hard delete of the link row — no tombstone column exists on `meetingParticipant`
+    /// (mirrors `seriesMember`'s precedent). Returns whether a row was actually removed.
+    @discardableResult
+    public func removeParticipant(meetingId: MeetingID, personId: PersonID) async throws -> Bool {
+        try await dbWriter.write { db in
+            try MeetingParticipantRecord.deleteOne(
+                db,
+                key: ["meetingId": meetingId.rawValue, "personId": personId.rawValue]
+            )
+        }
+    }
 }

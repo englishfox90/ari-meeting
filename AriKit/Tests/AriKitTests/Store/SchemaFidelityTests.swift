@@ -176,9 +176,11 @@ struct SchemaFidelityTests {
         // managed shadow tables (`_data`/`_content`/`_idx`/`_docsize`/`_config`) that back the
         // virtual table's storage even though it is declared standalone (non-external-content) —
         // SQLite's own FTS5 module always creates these regardless of the `content=` option.
+        // Phase 3.4 Track H (`arikit-engine-extras.md` §2.3/§6-5) appended `meetingParticipant`.
         #expect(Set(tableNames) == [
             "meeting", "speaker", "speakerSegment", "transcript",
-            "person", "profileFact", "profileFactSource", "summary", "meetingNote",
+            "person", "profileFact", "profileFactSource", "meetingParticipant",
+            "summary", "meetingNote",
             "series", "seriesLedger", "seriesMember", "calendarEvent", "calendarSyncSetting",
             "recallChunk", "recallIndexState", "askConversation", "askMessage",
             "recallFts", "recallFts_data", "recallFts_content", "recallFts_idx",
@@ -230,6 +232,10 @@ struct SchemaFidelityTests {
             ExpectedColumn(name: "status", type: "TEXT", notNull: true),
             ExpectedColumn(name: "supersededBy", type: "TEXT", notNull: false),
             ExpectedColumn(name: "createdAt", type: "DATETIME", notNull: true),
+            // Phase 3.4 Track H (`arikit-engine-extras.md` §2.3) — Store-internal only, not on
+            // `AriKit.Models.ProfileFact` yet (see `Records/ProfileFactRecord.swift`'s header).
+            ExpectedColumn(name: "supersedesFactId", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "lastConfirmedAt", type: "DATETIME", notNull: false),
             ExpectedColumn(name: "isDeleted", type: "BOOLEAN", notNull: true),
             ExpectedColumn(name: "deletedAt", type: "DATETIME", notNull: false)
         ], table: "profileFact")
@@ -237,6 +243,16 @@ struct SchemaFidelityTests {
         let names = Set(actual.map(\.name))
         #expect(!names.contains("sourceMeetingTitle"))
         #expect(!names.contains("sourceCount"))
+    }
+
+    @Test("profileFact.supersedesFactId carries an inline self-referencing FK")
+    func profileFactSupersedesForeignKey() throws {
+        let queue = try migratedQueue()
+        let foreignKeys = try queue.read { db in try db.foreignKeys(on: "profileFact") }
+        let supersedesFK = foreignKeys.first {
+            $0.destinationTable == "profileFact" && $0.originColumns.contains("supersedesFactId")
+        }
+        #expect(supersedesFK != nil, "profileFact.supersedesFactId should reference profileFact(id)")
     }
 
     @Test("profileFactSource table matches §4.6 (tombstones folded in per slice-2 scope)")
