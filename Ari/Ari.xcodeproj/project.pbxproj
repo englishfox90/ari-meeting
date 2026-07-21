@@ -19,6 +19,7 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		1A0000000000000000000004 /* App */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFolders = (); explicitFileTypes = {}; path = App; sourceTree = "<group>"; };
 		1A0000000000000000000016 /* UI */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFolders = (); explicitFileTypes = {}; path = UI; sourceTree = "<group>"; };
+		1A0000000000000000000017 /* Capture */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFolders = (); explicitFileTypes = {}; path = Capture; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -39,6 +40,7 @@
 			children = (
 				1A0000000000000000000004 /* App */,
 				1A0000000000000000000016 /* UI */,
+				1A0000000000000000000017 /* Capture */,
 				1A0000000000000000000006 /* Ari.entitlements */,
 				1A0000000000000000000003 /* Products */,
 			);
@@ -70,6 +72,7 @@
 			fileSystemSynchronizedGroups = (
 				1A0000000000000000000004 /* App */,
 				1A0000000000000000000016 /* UI */,
+				1A0000000000000000000017 /* Capture */,
 			);
 			name = Ari;
 			packageProductDependencies = (

@@ -75,7 +75,11 @@ struct RootSplitView: View {
         case .people:
             PeopleListView(database: database)
         case .newMeeting:
-            placeholder("Recording isn't built yet.")
+            if let session = environment.recordingSession {
+                RecordingView(session: session, onOpenMeeting: { path.append($0) })
+            } else {
+                placeholder("Recording isn't built yet.")
+            }
         case .ask:
             placeholder("Ask meetings isn't ready yet.")
         case .calendar:

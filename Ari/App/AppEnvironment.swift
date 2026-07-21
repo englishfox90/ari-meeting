@@ -10,6 +10,7 @@
 //  render real meetings. The legacy dir is only ever read — never written, never deleted.
 //
 import AriKit
+import AriViewModels
 import Foundation
 import Observation
 
@@ -35,6 +36,11 @@ final class AppEnvironment {
     /// counts (No-Fake-State) — `nil` when nothing was imported (already-populated DB, or no
     /// legacy library present).
     private(set) var importReport: ImportReport?
+
+    /// The single app-wide recording session (docs/plans/ari-recording-page.md §4.1). Constructed
+    /// once `database` exists (`status == .ready`) so it survives navigation — the recording
+    /// page only ever renders it, never owns capture state itself.
+    private(set) var recordingSession: RecordingSession?
 
     /// Bundle identifier decided 2026-07-20 (arikit-native-shell.md §9): the fresh Swift app.
     static let bundleIdentifier = "com.arivo.ari"
@@ -68,6 +74,14 @@ final class AppEnvironment {
             }
 
             meetingCount = try await db.meetings.all().count
+
+            recordingSession = RecordingSession(
+                database: db,
+                recordingsRoot: try Self.recordingsRootURL(),
+                makeCaptureService: { _ in StubCaptureService() },
+                transcription: StubLiveTranscriptionService()
+            )
+
             status = .ready
         } catch {
             status = .failed(String(describing: error))
@@ -86,6 +100,23 @@ final class AppEnvironment {
         let dir = support.appendingPathComponent(bundleIdentifier, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("ari.sqlite", isDirectory: false)
+    }
+
+    /// `~/Library/Application Support/com.arivo.ari/recordings`, creating the directory if
+    /// needed (plan §5: "the app resolves the path; the Store never touches FileManager"). Each
+    /// recording gets its own `<meetingID>/` subfolder, created by `RecordingSession` per-recording.
+    private static func recordingsRootURL() throws -> URL {
+        let support = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let dir = support
+            .appendingPathComponent(bundleIdentifier, isDirectory: true)
+            .appendingPathComponent("recordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     /// Sentinel marking that a legacy import ran to completion. Its presence — not the meeting
