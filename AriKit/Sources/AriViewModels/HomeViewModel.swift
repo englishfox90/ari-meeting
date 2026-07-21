@@ -24,6 +24,9 @@ public final class HomeViewModel {
     public private(set) var meetingCount: Int = 0
     public private(set) var personCount: Int = 0
     public private(set) var seriesCount: Int = 0
+    /// The owner's display name from the persons table (`isOwner`), if one exists — real
+    /// profile data for Home's greeting, never a fabricated name.
+    public private(set) var ownerName: String?
 
     private let database: AppDatabase
     private var observationTask: Task<Void, Never>?
@@ -46,7 +49,9 @@ public final class HomeViewModel {
         }
 
         do {
-            personCount = try await database.persons.all().count
+            let persons = try await database.persons.all()
+            personCount = persons.count
+            ownerName = persons.first(where: \.isOwner)?.displayName
         } catch {
             // personCount is a secondary readout; a person-table failure shouldn't blank the
             // already-loaded meetings state. Leave it at its last honest value.

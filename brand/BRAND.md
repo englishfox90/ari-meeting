@@ -117,7 +117,7 @@ Sans-only. Two families, three roles:
 
 | Style | Face · weight | Size (pt) | Ink | Use |
 |---|---|---|---|---|
-| Display | Bricolage 700 | 32 | Heading ink | Route-defining titles only. Never a greeting. |
+| Display | Bricolage 700 | 32 | Heading ink | Route-defining titles only. Never a greeting — except Home's sanctioned owner greeting (see the product voice rule below). |
 | Title 1 | Bricolage 700 | 24 | Heading ink | Meeting titles, primary workspace sections. |
 | Title 2 | Bricolage 600 | 19 | Heading ink | Panel and dialog titles. |
 | Headline | Bricolage 600 | 17 | Heading ink | High-value rows; the floor of the Bricolage range. |
@@ -127,7 +127,7 @@ Sans-only. Two families, three roles:
 | Caption / label | SF Pro Text 600 | 11 | Secondary ink | Uppercase eyebrows (+0.07 em tracking). Never in accent or heading ink. |
 | Timecode | SF Mono 500 | 12 | Body or accent | Timestamps, durations, model ids. Tabular numerals. |
 
-Product voice rule: the largest type on screen names the work currently open — no marketing-scale greetings inside the app.
+Product voice rule: the largest type on screen names the work currently open — no marketing-scale greetings inside the app. **One sanctioned exception (owner decision, 2026-07-20): the Home screen's display title is a time-of-day greeting to the owner** ("Good morning, Paul") — a fixed deterministic list (morning/afternoon/evening/hello), never generated, addressed to a real name only (owner profile, else the macOS account name; no name → the phrase alone). Its two-ink rendering puts the greeting phrase in Shin-kai and the name in heading ink — a deliberate, Home-only exception to accent-is-interactive; it does not license accent on any other non-interactive text.
 
 ## 6. Mark & logo — the "Dictation" family (R2)
 

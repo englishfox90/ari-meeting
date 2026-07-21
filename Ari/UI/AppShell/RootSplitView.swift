@@ -39,7 +39,9 @@ struct RootSplitView: View {
             SidebarView(
                 selection: $selectedSection,
                 database: database,
-                onSelectMeeting: { path.append($0) }
+                onSelectMeeting: { path.append($0) },
+                onSelectPerson: { path.append($0) },
+                onSelectSeries: { path.append($0) }
             )
             .navigationSplitViewColumnWidth(min: 236, ideal: 252, max: 300)
         } detail: {

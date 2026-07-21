@@ -135,6 +135,10 @@ public struct MarginaliaButtonStyle: ButtonStyle {
                         shape.strokeBorder(Color.marginalia(stroke, in: scheme), lineWidth: 1)
                     }
                 }
+                // `.quiet` has no fill (and a `.clear` fill isn't hit-tested), so without an
+                // explicit content shape only the label's own pixels are clickable — the
+                // control's padding would be dead space.
+                .contentShape(shape)
         }
     }
 
