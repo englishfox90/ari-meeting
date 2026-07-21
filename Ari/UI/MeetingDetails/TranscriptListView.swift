@@ -1,0 +1,68 @@
+//
+//  TranscriptListView.swift — speaker-labelled, timecode-tappable transcript lines
+//  (plan §2.2 MeetingDetails).
+//
+import AriKit
+import AriViewModels
+import SwiftUI
+
+struct TranscriptListView: View {
+    let transcript: [Transcript]
+    let displayName: (SpeakerID?) -> String?
+    let onSeek: (Double) -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        if transcript.isEmpty {
+            VStack(spacing: MarginaliaSpacing.xs.value) {
+                Text("No transcript yet")
+                    .marginaliaTextStyle(.body, in: scheme)
+                Text("This meeting has no transcribed speech.")
+                    .marginaliaTextStyle(.callout, in: scheme)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(MarginaliaSpacing.xl.value)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+                    ForEach(transcript) { line in
+                        TranscriptLineView(line: line, speakerName: displayName(line.speakerId), onSeek: onSeek)
+                    }
+                }
+                .padding(MarginaliaSpacing.md.value)
+            }
+        }
+    }
+}
+
+private struct TranscriptLineView: View {
+    let line: Transcript
+    let speakerName: String?
+    let onSeek: (Double) -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+            HStack(spacing: MarginaliaSpacing.sm.value) {
+                if let speakerName {
+                    Text(speakerName)
+                        .marginaliaTextStyle(.subheadline, in: scheme)
+                }
+                if let audioStartTime = line.audioStartTime {
+                    Button(Self.timecode(audioStartTime)) {
+                        onSeek(audioStartTime)
+                    }
+                    .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+                    .font(MarginaliaTextStyle.timecode.font)
+                }
+            }
+            Text(line.transcript)
+                .marginaliaTextStyle(.body, in: scheme)
+        }
+    }
+
+    private static func timecode(_ seconds: Double) -> String {
+        let totalSeconds = Int(seconds.rounded())
+        return String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
+}

@@ -427,12 +427,23 @@ to validate no-chunking + the 30 s checkpoint/remux path at scale before the ver
 
 ## 9. Open decisions for the human
 
+> **DECIDED (2026-07-20, Paul):** #5 native-first = **YES** (no WebView bridge, §10). #6 bundle id
+> = **`com.arivo.ari`**. **Sequencing (revises #1's recommendation):** build **read UI FIRST** —
+> after the S0 app skeleton, do **S6 (native read UI over the imported library)** before the
+> capture slices, then return to the recording vertical (S1–S5). Rationale Paul chose: the read UI
+> is the fastest way to *see* the confirmed Marginalia-native direction on real data, it is the
+> lowest-risk work (read-only — the OS-permission/device risk all lives in capture), and it needs
+> no stable signing identity or TCC (ad-hoc signing suffices), so it is unblocked today. The
+> capture→STT recording vertical remains the plan spine and is picked up right after S6. Working
+> order is therefore **S0 → S8-lite (first-run import, for data to render) → S6 → S1–S5 → S7**.
+
 1. **WIP-limit framing (the big one).** Confirm treating **capture (3.2) + STT (3.3, in flight) +
    a minimal recording shell** as one indivisible "native recording vertical," with the rest of
    Phase 2 (full read UI, calendar, import) and all of Phase 4 sequenced after. Alternative: hold
    3.2 until 3.3 lands (serializes, but respects one-phase-at-a-time literally). *Recommendation:
    the vertical* — none of the three is independently shippable, and the seam (§5) is cheaper to
-   design once, together.
+   design once, together. **↳ Superseded by the DECIDED block above: read UI goes first; the
+   vertical follows.**
 2. **`AriCapture` as a package product vs. app-target folder** (§2.2). *Recommendation: package
    product* for the headless DSP test lane; live-device classes stay `#if os(macOS)`.
 3. **VAD: Apple `SpeechDetector` vs. CoreML silero, and where it sits relative to STT** (§4.5, §5).
@@ -445,6 +456,7 @@ to validate no-chunking + the 30 s checkpoint/remux path at scale before the ver
    explicit yes/no before Phase-2 UI slices open.*
 6. **Bundle identifier** — keep `com.meetily.ai` or move to `com.arivo.ari` (§3). *Recommendation:
    `com.arivo.ari`* (a fresh Swift app importing from the old dir has no orphaning constraint).
+   **↳ DECIDED: `com.arivo.ari`.**
 7. **Long-recording validation** — confirm the Lane-2 checklist must include one >60 min recording
    before the vertical closes (§7, S2 caveat).
 

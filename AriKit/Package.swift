@@ -63,6 +63,14 @@ let package = Package(
         .library(
             name: "AriCapture",
             targets: ["AriCapture"]
+        ),
+        // Phase 2 slice S6 (docs/plans/arikit-native-read-ui.md) — read-UI view models.
+        // @Observable-MVVM state, pure of SwiftUI/AVFoundation: depends only on AriKit
+        // (AppDatabase + Sendable repositories) so it tests headlessly via `swift test` over
+        // AppDatabase.makeInMemory(). SwiftUI views + AVPlayer live in the `Ari` app target.
+        .library(
+            name: "AriViewModels",
+            targets: ["AriViewModels"]
         )
     ],
     dependencies: [
@@ -109,6 +117,21 @@ let package = Package(
         .testTarget(
             name: "AriCaptureTests",
             dependencies: ["AriCapture", "AriKit"],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        // Phase 2 slice S6 — read-UI view models (docs/plans/arikit-native-read-ui.md §2.1).
+        .target(
+            name: "AriViewModels",
+            dependencies: ["AriKit"],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .testTarget(
+            name: "AriViewModelsTests",
+            dependencies: ["AriViewModels", "AriKit"],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]

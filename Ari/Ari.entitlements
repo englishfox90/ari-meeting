@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Ari.entitlements — hardened runtime, NO App Sandbox (Q6 / arikit-native-shell.md §3).
+  Sandboxing would break the Core Audio process tap + sidecar/model dirs; personal-use scope
+  needs no MAS/notarization. S0 (read UI) needs no capture entitlements; the microphone /
+  audio-input keys are added when the capture vertical (S2/S3) lands.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+</dict>
+</plist>
