@@ -21,8 +21,11 @@ struct MeetingDetailView: View {
     var initialSeek: Double?
 
     /// Below this detail-column width the two panes stack into one scrolling column with a
-    /// section switcher (a right rail can't earn its keep on a narrow window).
-    private static let twoPaneMinWidth: CGFloat = 860
+    /// section switcher (a right rail can't earn its keep on a narrow window). 800 = the
+    /// design's own floor (minSummaryWidth 480 + minRailWidth 300 + divider) — the previous
+    /// 860 left the DEFAULT window size (~865pt detail column) on a knife edge that collapsed
+    /// to narrow mode with any extra chrome.
+    private static let twoPaneMinWidth: CGFloat = 800
     private static let defaultRailWidth: CGFloat = 380
     private static let minRailWidth: CGFloat = 300
     /// The summary column keeps at least this much width — the rail can't be dragged wider than

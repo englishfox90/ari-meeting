@@ -28,9 +28,9 @@ struct AriApp: App {
         // content material a run to the top edge, matching the current app's overlay title bar.
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
-        // Design default window target ~1100×700 (design-system.md); comfortable for the
-        // 3-column read shell without forcing a size on the user after first launch.
-        .defaultSize(width: 1120, height: 720)
+        // Slightly wider than the old ~1100 design target so the meeting detail's two-pane
+        // layout (threshold 800pt of detail width) clears comfortably beside the sidebar.
+        .defaultSize(width: 1240, height: 760)
 
         #if DEBUG
         // DEBUG-only Marginalia design-system validator (colors, type, buttons, materials, and
