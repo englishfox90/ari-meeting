@@ -58,7 +58,13 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/groue/GRDB.swift", from: "7.11.0")
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.11.0"),
+        // AriKitEngineMLX-only dependencies (plan §1.2, docs/plans/arikit-engine-extras.md). Core
+        // `AriKit` does NOT depend on these — they exist only so the `AriKitEngineMLX` target below
+        // can resolve them; core AriKit stays headless/Metal-toolchain-free.
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", exact: "3.31.4"),
+        .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0")
     ],
     targets: [
         .target(
@@ -78,6 +84,44 @@ let package = Package(
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
+            ]
+        ),
+        // Track E (docs/plans/arikit-engine-extras.md §1) — the on-device MLX summary backend.
+        // Separate product/target depending on `AriKit`, never the reverse (§1.2): core `AriKit`
+        // gains no MLX dependency, so `swift build`/`swift test AriKit` stays headless and
+        // Metal-toolchain-free. Text-only client — `MLXVLM` (the spike's VLM loader) is dropped.
+        //
+        // Swift-6 mode (§1.5b / §6-1): pinned to `.swiftLanguageMode(.v5)` as a documented,
+        // ISOLATED exception — see the target's `swiftSettings` comment below for why. This
+        // exception is scoped to `AriKitEngineMLX` only; it never leaks to core `AriKit`, which
+        // stays `.v6` above.
+        .target(
+            name: "AriKitEngineMLX",
+            dependencies: [
+                "AriKit",
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
+                .product(name: "HuggingFace", package: "swift-huggingface"),
+                .product(name: "Tokenizers", package: "swift-transformers")
+            ],
+            swiftSettings: [
+                // ← §1.5b / §6-1: `mlx-swift-lm` 3.31.4's transitive graph (MLXArray-carrying
+                // closures, `consuming` parameters designed for Swift 5-style ownership, etc.)
+                // does not compile clean under `.swiftLanguageMode(.v6)` strict concurrency when
+                // this target imports `ChatSession`/`ModelContainer` types directly. The spike
+                // itself (`spikes/mlx-swift-s1/Package.swift`) also compiled WITHOUT
+                // `.swiftLanguageMode(.v6)` pinned. Per `swift-conventions.md`'s sanctioned escape
+                // hatch ("pin the target only... as a documented exception"), this target is
+                // pinned to `.v5`. Core `AriKit` (above) is unaffected and stays `.v6`.
+                .swiftLanguageMode(.v5)
+            ]
+        ),
+        .testTarget(
+            name: "AriKitEngineMLXTests",
+            dependencies: ["AriKitEngineMLX"],
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
             ]
         )
     ]
