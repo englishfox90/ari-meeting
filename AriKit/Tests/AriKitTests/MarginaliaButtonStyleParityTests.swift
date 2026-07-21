@@ -52,4 +52,12 @@ struct MarginaliaButtonStyleParityTests {
         #expect(MarginaliaButtonSize.regular.controlHeight == 26)
         #expect(MarginaliaButtonSize.large.controlHeight == 32)
     }
+
+    @Test("only filled roles (primary/recording) render as Liquid Glass; secondary/quiet stay flat")
+    func rendersAsGlass() {
+        #expect(MarginaliaButtonRole.primary.rendersAsGlass)
+        #expect(MarginaliaButtonRole.recording.rendersAsGlass)
+        #expect(!MarginaliaButtonRole.secondary.rendersAsGlass)
+        #expect(!MarginaliaButtonRole.quiet.rendersAsGlass)
+    }
 }

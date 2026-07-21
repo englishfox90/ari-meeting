@@ -4,8 +4,9 @@
 //  Mirrors `MeetingsListViewModel`'s load pattern (one-shot read for an honest `.failed`, then
 //  live updates via `observeAll()`), but bounds the exposed list to the `recentLimit` most
 //  recent meetings — Home shows a short "Recent meetings" rail, not the full library (that's
-//  `MeetingsListViewModel`/the Saved-meetings screen). `meetingCount`/`personCount` are real,
-//  unbounded counts from the repositories — No-Fake-State: never a fabricated library size.
+//  `MeetingsListViewModel`/the Saved-meetings screen). `meetingCount`/`personCount`/
+//  `seriesCount` are real, unbounded counts from the repositories — No-Fake-State: never a
+//  fabricated library size.
 //
 import AriKit
 import Foundation
@@ -22,6 +23,7 @@ public final class HomeViewModel {
     public private(set) var state: LoadState<[Meeting]> = .loading
     public private(set) var meetingCount: Int = 0
     public private(set) var personCount: Int = 0
+    public private(set) var seriesCount: Int = 0
 
     private let database: AppDatabase
     private var observationTask: Task<Void, Never>?
@@ -48,6 +50,12 @@ public final class HomeViewModel {
         } catch {
             // personCount is a secondary readout; a person-table failure shouldn't blank the
             // already-loaded meetings state. Leave it at its last honest value.
+        }
+
+        do {
+            seriesCount = try await database.series.all().count
+        } catch {
+            // Same tolerance as personCount: a secondary readout, never worth failing Home over.
         }
 
         guard observationTask == nil else { return }

@@ -36,7 +36,10 @@ struct SidebarView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { wordmark }
         .safeAreaInset(edge: .bottom, spacing: 0) { pinnedBottom }
-        .background(Color.marginalia(.elevated, in: scheme))
+        // Stock translucent system material, not a flat Marginalia surface — the macOS 26 sidebar
+        // reads as system Liquid Glass chrome (docs/plans/liquid-glass-adoption.md §2). Still
+        // satisfies the two-world rail↔canvas separation; content stays opaque `.canvas`.
+        .background(.regularMaterial)
         .navigationTitle("")
         .task { await viewModel.observe() }
     }
@@ -62,7 +65,7 @@ struct SidebarView: View {
         .padding(.horizontal, MarginaliaSpacing.md.value)
         .padding(.top, MarginaliaSpacing.xxl.value)
         .padding(.bottom, MarginaliaSpacing.sm.value)
-        .background(Color.marginalia(.elevated, in: scheme))
+        .background(.regularMaterial)
     }
 
     private var workbenchSection: some View {
@@ -189,7 +192,7 @@ struct SidebarView: View {
             .padding(.horizontal, MarginaliaSpacing.md.value)
             .padding(.bottom, MarginaliaSpacing.sm.value)
         }
-        .background(Color.marginalia(.elevated, in: scheme))
+        .background(.regularMaterial)
     }
 
     /// The app's real `CFBundleShortVersionString` (No-Fake-State — never a fabricated version

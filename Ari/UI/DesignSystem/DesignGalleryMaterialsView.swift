@@ -1,11 +1,11 @@
 #if DEBUG
 //
 //  DesignGalleryMaterialsView.swift — section 7 of `DesignGalleryView` (DEBUG only), and the
-//  key one: BRAND.md §4/§9 say Marginalia's translucency comes ONLY from stock macOS
-//  materials, never a hand-rolled glass effect. This section renders the real system
-//  materials — including a genuinely live `NavigationSplitView` sidebar — and, separately, a
-//  macOS 26 Liquid Glass demo (the `glassEffect` API) so the owner can evaluate it against the
-//  stock-materials-only rule; it is NOT adopted anywhere in Marginalia today.
+//  key one: BRAND.md §4/§9 say Marginalia's translucency comes from stock macOS materials —
+//  Apple's Liquid Glass (`glassEffect`) included, per the 2026-07-20 adoption decision
+//  (docs/plans/liquid-glass-adoption.md). This section renders the real system materials —
+//  including a genuinely live `NavigationSplitView` sidebar — and, separately, the
+//  macOS 26 Liquid Glass demo now adopted for the primary/recording buttons + sidebar chrome.
 //
 import AriKit
 import SwiftUI
@@ -84,7 +84,7 @@ struct DesignGalleryMaterialsSection: View {
 
     private var liquidGlassSection: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-            Text("macOS 26 Liquid Glass (glassEffect) — NOT currently adopted in Marginalia; shown so you can evaluate it.")
+            Text("macOS 26 Liquid Glass (glassEffect) — adopted for the primary action + sidebar chrome (BRAND.md §4/§9).")
                 .marginaliaTextStyle(.callout, in: scheme)
 
             ZStack {

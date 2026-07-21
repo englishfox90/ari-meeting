@@ -18,6 +18,16 @@ public enum MarginaliaButtonRole: Sendable, Equatable {
     case secondary
     case quiet
     case recording
+
+    /// Filled roles (`.primary`, `.recording`) render as accent/red-tinted Liquid Glass
+    /// (`docs/plans/liquid-glass-adoption.md` — chrome/action layer only). `.secondary`/`.quiet`
+    /// stay flat tonal/text surfaces — they're not the Signal.
+    public var rendersAsGlass: Bool {
+        switch self {
+        case .primary, .recording: true
+        case .secondary, .quiet: false
+        }
+    }
 }
 
 /// The two control heights a Marginalia button renders at (plan §4).
@@ -102,23 +112,34 @@ public struct MarginaliaButtonStyle: ButtonStyle {
     public func makeBody(configuration: Configuration) -> some View {
         let spec = role.spec
         let isPressed = configuration.isPressed
+        let shape = RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
 
-        configuration.label
+        let label = configuration.label
             .marginaliaTextStyle(.body, in: scheme, ink: spec.label)
             .frame(height: size.controlHeight)
             .padding(.horizontal, MarginaliaSpacing.md.value)
-            .background {
-                RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
-                    .fill(fillColor(spec: spec, isPressed: isPressed))
-            }
-            .overlay {
-                if let stroke = spec.stroke {
-                    RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
-                        .strokeBorder(Color.marginalia(stroke, in: scheme), lineWidth: 1)
+
+        if role.rendersAsGlass {
+            // Filled roles (primary/recording) → accent/recording-red-tinted Liquid Glass, the
+            // chrome/action-layer Signal (`docs/plans/liquid-glass-adoption.md`). `.interactive()`
+            // supplies its own press response, so no manual pressed-fill branch applies here.
+            label
+                .glassEffect(.regular.tint(Color.marginalia(spec.fill!, in: scheme)).interactive(), in: shape)
+        } else {
+            label
+                .background {
+                    shape.fill(fillColor(spec: spec, isPressed: isPressed))
                 }
-            }
+                .overlay {
+                    if let stroke = spec.stroke {
+                        shape.strokeBorder(Color.marginalia(stroke, in: scheme), lineWidth: 1)
+                    }
+                }
+        }
     }
 
+    /// Pressed-fill resolution for the non-glass roles only (`.secondary`/`.quiet`) — the glass
+    /// roles get their press response from `.interactive()` and never call this.
     private func fillColor(spec: MarginaliaButtonSpec, isPressed: Bool) -> Color {
         guard isPressed else {
             guard let fill = spec.fill else { return .clear }

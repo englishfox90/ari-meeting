@@ -101,6 +101,7 @@ Rules:
 - Every neutral is warm (paper, espresso, charcoal); never introduce a cool gray.
 - Semantic colors (red, green) always ship with a text or icon label — color is never the only signal.
 - No gradients, no glassmorphism of our own — translucency comes only from stock macOS materials.
+- **Liquid Glass (macOS 26, decided 2026-07-20):** `glassEffect` is Apple's own stock system material/API, so it satisfies the stock-materials-only rule above and is adopted on the **chrome/action layer only** — the sidebar, toolbar/title-bar chrome, floating controls, the primary/recording action buttons, and the notch HUD. **Never on content** — transcript, summary, and notes stay on opaque paper (content-owns-canvas). Accent-tinted glass (`.glassEffect(.regular.tint(accent))`) is reserved for THE primary action (and recording-red glass for live capture) — one per view, counts against the ≤ 8 % Signal budget; neutral untinted `.regular` glass is for passive chrome (sidebar, toolbar). Flat-by-default still holds elsewhere — cards/rows/fields stay flat Marginalia surfaces. The system degrades `glassEffect` to an opaque material automatically under Reduce Transparency; don't fight it or layer our own translucency on top. Glass changes the *surface*, not the color system — labels on tinted glass still follow the on-fill convention below.
 - **On-fill label convention:** any filled control or badge (primary/recording buttons, success/recording badges) labels itself with **Canvas** (paper) — never Surface. Canvas is near-white in light mode and near-black in dark mode, so it stays high-contrast against a solid fill in *both* schemes. Surface resolves to warm espresso (`#2D2925`) in dark mode, which reads as muddy brown text on a light dark-mode fill (e.g. the dark-mode recording-red `#FF6B5E`) — never use it as an on-fill label.
 
 ## 5. Typography
@@ -186,7 +187,7 @@ Sanctioned animated states: the recording pulse (flick glyph / red dot breathing
 |---|---|
 | Use warm paper grounds and the two-ink text system as the primary structure. | Introduce cool grays, pure black/white text, or a third ink. |
 | Keep Shin-kai on selection, citations, links, speaker names — and count it against 8 %; reserve solid accent fill for the one primary action per view. | Put accent on labels, eyebrows, or decoration; fill anything but the primary action; use heading ink interactively. |
-| Use stock SwiftUI materials, controls, and SF Symbols first. | Build custom chrome, glassmorphism, gradients, or a bespoke icon set. |
+| Use stock SwiftUI materials, controls, and SF Symbols first. | Don't hand-roll glassmorphism — use Apple's Liquid Glass (`glassEffect`) on the chrome/action layer only. |
 | Let transcript/summary/notes own the space at a 72 ch reading measure. | Wrap content in nested-card grids or decorative containers. |
 | Ship honest empty/loading/error states with plain-language copy. | Invent progress, counts, citations, or chirpy filler ("Oops!"). |
 | Animate only real state (recording, live transcription, sync). | Add decorative motion, permanent shadows, or attention-seeking pulses. |
