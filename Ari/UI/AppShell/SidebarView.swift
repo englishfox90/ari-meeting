@@ -33,6 +33,7 @@ struct SidebarView: View {
     @State private var viewModel: HomeViewModel
     @State private var searchViewModel: SidebarSearchViewModel
     @State private var query = ""
+    @State private var showingAbout = false
     @Environment(\.colorScheme) private var scheme
 
     init(
@@ -227,9 +228,9 @@ struct SidebarView: View {
     }
 
     /// New meeting / Import audio route to the honest `.newMeeting` placeholder — capture
-    /// isn't built yet (No-Fake-State). Settings/About have no destination at all yet, so
-    /// they render as explicitly disabled rows rather than claiming one (finding #14 — a
-    /// Label alone reads as an enabled row to assistive tech).
+    /// isn't built yet (No-Fake-State). About opens the real `AboutView` sheet. Settings has
+    /// no destination yet, so it renders as an explicitly disabled row rather than claiming one
+    /// (finding #14 — a Label alone reads as an enabled row to assistive tech).
     private var pinnedBottom: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             Divider().overlay(Color.marginalia(.hairline, in: scheme))
@@ -266,7 +267,9 @@ struct SidebarView: View {
             .accessibilityRemoveTraits(.isButton)
             .padding(.horizontal, MarginaliaSpacing.md.value)
 
-            Button {} label: {
+            Button {
+                showingAbout = true
+            } label: {
                 HStack {
                     Label("About", systemImage: "info.circle")
                         .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
@@ -274,12 +277,14 @@ struct SidebarView: View {
                     Text(Self.appVersionString)
                         .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(true)
-            .accessibilityRemoveTraits(.isButton)
             .padding(.horizontal, MarginaliaSpacing.md.value)
             .padding(.bottom, MarginaliaSpacing.sm.value)
+        }
+        .sheet(isPresented: $showingAbout) {
+            AboutView()
         }
     }
 
