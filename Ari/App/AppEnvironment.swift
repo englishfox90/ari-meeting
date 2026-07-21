@@ -75,12 +75,12 @@ final class AppEnvironment {
 
             meetingCount = try await db.meetings.all().count
 
-            // Real device capture (R5); live transcription stays the honest stub until R6.
+            // The real recording vertical (R5 capture + R6 live SpeechTranscriber).
             recordingSession = RecordingSession(
                 database: db,
                 recordingsRoot: try Self.recordingsRootURL(),
                 makeCaptureService: { folder in LiveCaptureService(meetingFolder: folder) },
-                transcription: StubLiveTranscriptionService()
+                transcription: SpeechLiveTranscriptionService()
             )
 
             status = .ready

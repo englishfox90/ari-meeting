@@ -35,6 +35,7 @@ struct SidebarView: View {
     @State private var query = ""
     @State private var showingAbout = false
     @Environment(\.colorScheme) private var scheme
+    @Environment(AppEnvironment.self) private var appEnvironment
 
     init(
         selection: Binding<SidebarSection>,
@@ -227,18 +228,18 @@ struct SidebarView: View {
         .buttonStyle(.plain)
     }
 
-    /// New meeting / Import audio route to the honest `.newMeeting` placeholder — capture
-    /// isn't built yet (No-Fake-State). About opens the real `AboutView` sheet. Settings has
-    /// no destination yet, so it renders as an explicitly disabled row rather than claiming one
-    /// (finding #14 — a Label alone reads as an enabled row to assistive tech).
+    /// New meeting routes to the real recording page. About opens the real `AboutView` sheet.
+    /// Settings has no destination yet, so it renders as an explicitly disabled row rather than
+    /// claiming one (finding #14 — a Label alone reads as an enabled row to assistive tech).
     private var pinnedBottom: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             Divider().overlay(Color.marginalia(.hairline, in: scheme))
 
             // Accent (primary), NOT recording-red: recording-red is reserved for the LIVE capture
             // state only (brand Signal Rule) — this is the affordance to begin, so it's the one
-            // primary action on the rail.
-            Button("New meeting") {
+            // primary action on the rail. While a session is live it reads "Recording…" and just
+            // returns to the live page (one session at a time — plan §4.4).
+            Button(appEnvironment.recordingSession?.isActive == true ? "Recording…" : "New meeting") {
                 selection = .newMeeting
             }
             .buttonStyle(.marginalia(.primary, .large, in: scheme))
