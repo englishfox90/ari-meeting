@@ -1,10 +1,24 @@
 # AriKit `Engine/STT/` — SpeechAnalyzer / SpeechTranscriber port (plan)
 
-> **Gate status (2026-07-20): APPROVED with overrides.** See **§11 Gate decisions** at the
-> end — it is authoritative where it differs from §9. Headline overrides: the accuracy-eval
-> harness is **NOT** added to `AriKit/Package.swift` (built main-loop-side at the final gate);
-> implementation slices touch **only** `AriKit/Sources/AriKit/Engine/STT/**` + `AriKit/Tests/**`,
-> zero `Package.swift`, zero new deps; Lane-2 commits **no audio**.
+> **Status (2026-07-20): ✅ COMPLETE — shipped, gate PASSED.** Slices A/B/C/D/E landed on `main`
+> (`db7cac0`→`9e3e8c7`, plan `f8bf35b`) via the Sonnet-implement / Haiku-verify / Sonnet-review
+> workflow (zero blockers). Final gate (main loop): `swift build` + full `swift test` green
+> (**427 tests / 62 suites, 0 warnings, Swift 6 strict**); scope pristine (only `Engine/STT/**` +
+> tests; `Package.swift` untouched, no committed audio). **Lane-3 S2 accuracy gate PASSED** — the
+> product `SpeechTranscriberProvider` scored **mean core WER 0.2345 ≤ Parakeet baseline 0.2814**
+> over the 5 held-out meetings (reproduces the S2 spike ~0.234; beats Parakeet on 4/5, the `metro2`
+> loss being the anticipated documented exception), **100% word-timestamp coverage** and punctuation
+> on every meeting, and the longest real file (~45 min) transcribed single-pass with **no
+> truncation** (the rig's "~78/80 min" labels are the known 2× `audio_end_time` DB bug, which the
+> harness's real `AVAudioFile` durations of ~39–40 min independently confirmed). WhisperKit remains
+> deferred; the **live-stream path is designed + shape/cancellation-tested only — it awaits its real
+> mic feed from Phase 3.2**.
+>
+> **Original gate rulings (still authoritative for the record):** See **§11 Gate decisions** —
+> authoritative where it differs from §9. Headline overrides: the accuracy-eval harness was **NOT**
+> added to `AriKit/Package.swift` (built main-loop-side at the final gate); implementation slices
+> touched **only** `AriKit/Sources/AriKit/Engine/STT/**` + `AriKit/Tests/**`, zero `Package.swift`,
+> zero new deps; Lane-2 commits **no audio**.
 
 ## 0. Status & scope guard
 
