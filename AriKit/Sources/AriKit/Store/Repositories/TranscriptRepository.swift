@@ -43,6 +43,23 @@ public struct TranscriptRepository: Sendable {
         }
     }
 
+    /// Insert-or-update a batch of segments in ONE write transaction (additive; ari-recording-
+    /// page.md §2.3/§5 — the deferred batch write assigned to this slice). `dbWriter.write`
+    /// already runs its whole closure inside a single GRDB transaction, rolling back entirely on
+    /// any thrown error — so a mid-batch failure leaves NONE of the batch persisted (atomicity),
+    /// and a batch containing an already-persisted id is a plain idempotent re-`save`, same as
+    /// the scalar `upsert(_:)` above. Preserves `transcripts`' order (irrelevant to storage, but
+    /// keeps behavior deterministic for callers who care). Used for the recording session's
+    /// burst-drain at `stop()` (plan §5); the live per-segment path can keep calling the scalar
+    /// `upsert(_:)`.
+    public func upsert(_ transcripts: [Transcript]) async throws {
+        try await dbWriter.write { db in
+            for transcript in transcripts {
+                try TranscriptRecord(transcript).save(db)
+            }
+        }
+    }
+
     /// Tombstone — sets `isDeleted`/`deletedAt`, never issues a hard `DELETE`.
     public func softDelete(_ id: TranscriptID, at date: Date) async throws {
         try await dbWriter.write { db in
