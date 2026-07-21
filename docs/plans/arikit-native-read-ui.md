@@ -180,10 +180,15 @@ Role → `MarginaliaColorRole` (resolved via `Color.marginalia(_:in:)`):
 
 | Role | Fill | Label | Stroke | Pressed |
 |------|------|-------|--------|---------|
-| **primary** | `.accent` solid | `.surface` | none | `.accentPressed` |
+| **primary** | `.accent` solid | `.canvas` (paper) | none | `.accentPressed` |
 | **secondary** | `.elevated` tonal | `.inkBody` | `.hairline` 1px | `.selectionWash` overlay |
 | **quiet** | clear | `.accent` (or `.inkSecondary` neutral) | none | `.selectionWash` |
-| **recording** | `.recordingRed` solid | `.surface` | none | darkened red |
+| **recording** | `.recordingRed` solid | `.canvas` (paper) | none | darkened red |
+
+The filled roles (**primary**, **recording**) label with `.canvas`, not `.surface`: `.canvas` is
+near-white in light mode and near-black in dark mode, so it stays high-contrast on the solid fill in
+*both* schemes. `.surface` resolves to warm-espresso in dark mode → muddy brown text on the light
+dark-mode accent/recording fills (caught in the design-gallery review, 2026-07-20).
 
 Radius `.control` (6pt); press animation gated on Reduce Motion by the caller. "Exactly one Primary
 per view" is a reviewer-checklist invariant (`MarginaliaRules.accentSolidFillExclusive`), not statically

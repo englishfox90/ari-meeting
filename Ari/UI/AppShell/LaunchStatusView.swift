@@ -54,8 +54,7 @@ struct LaunchStatusView: View {
         case let .failed(message):
             VStack(spacing: MarginaliaSpacing.xs.value) {
                 Text("Couldn't open your library")
-                    .marginaliaTextStyle(.body, in: scheme)
-                    .foregroundStyle(Color.marginalia(.recordingRed, in: scheme))
+                    .marginaliaTextStyle(.body, in: scheme, ink: .recordingRed)
                 Text(message)
                     .marginaliaTextStyle(.caption, in: scheme)
                     .multilineTextAlignment(.center)

@@ -49,7 +49,7 @@ private struct TranscriptLineView: View {
                         .marginaliaTextStyle(.subheadline, in: scheme)
                 }
                 if let audioStartTime = line.audioStartTime {
-                    Button(Self.timecode(audioStartTime)) {
+                    Button(MarginaliaTimecode.mmss(audioStartTime)) {
                         onSeek(audioStartTime)
                     }
                     .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
@@ -59,10 +59,5 @@ private struct TranscriptLineView: View {
             Text(line.transcript)
                 .marginaliaTextStyle(.body, in: scheme)
         }
-    }
-
-    private static func timecode(_ seconds: Double) -> String {
-        let totalSeconds = Int(seconds.rounded())
-        return String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 }

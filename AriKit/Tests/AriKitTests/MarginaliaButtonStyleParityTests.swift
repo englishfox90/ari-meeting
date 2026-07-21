@@ -9,11 +9,13 @@ import Testing
 @Suite("Marginalia button style parity (role -> color-role, size -> control height)")
 struct MarginaliaButtonStyleParityTests {
 
-    @Test("primary role: solid accent fill, surface label, no stroke, accentPressed pressed")
+    @Test("primary role: solid accent fill, canvas (paper) label, no stroke, accentPressed pressed")
     func primarySpec() {
         let spec = MarginaliaButtonRole.primary.spec
         #expect(spec.fill == .accent)
-        #expect(spec.label == .surface)
+        // `.canvas`, not `.surface`: stays high-contrast on the accent fill in both schemes
+        // (see the rationale comment in MarginaliaButtonStyle).
+        #expect(spec.label == .canvas)
         #expect(spec.stroke == nil)
         #expect(spec.pressed == .accentPressed)
     }
@@ -36,11 +38,11 @@ struct MarginaliaButtonStyleParityTests {
         #expect(spec.pressed == .selectionWash)
     }
 
-    @Test("recording role: solid recordingRed fill, surface label, no stroke")
+    @Test("recording role: solid recordingRed fill, canvas (paper) label, no stroke")
     func recordingSpec() {
         let spec = MarginaliaButtonRole.recording.spec
         #expect(spec.fill == .recordingRed)
-        #expect(spec.label == .surface)
+        #expect(spec.label == .canvas)
         #expect(spec.stroke == nil)
         #expect(spec.pressed == .recordingRed)
     }

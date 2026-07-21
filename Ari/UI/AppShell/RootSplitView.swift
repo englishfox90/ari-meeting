@@ -89,8 +89,7 @@ struct RootSplitView: View {
                 .frame(width: 72)
                 .foregroundStyle(Color.marginalia(.hairline, in: scheme))
             Text(text)
-                .marginaliaTextStyle(.callout, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.marginalia(.canvas, in: scheme))

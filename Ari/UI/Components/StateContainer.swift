@@ -58,8 +58,7 @@ struct StateContainer<Value: Sendable, Content: View>: View {
     private func failedView(_ message: String) -> some View {
         VStack(spacing: MarginaliaSpacing.xs.value) {
             Text("Something went wrong")
-                .marginaliaTextStyle(.body, in: scheme)
-                .foregroundStyle(Color.marginalia(.recordingRed, in: scheme))
+                .marginaliaTextStyle(.body, in: scheme, ink: .recordingRed)
             Text(message)
                 .marginaliaTextStyle(.caption, in: scheme)
                 .multilineTextAlignment(.center)

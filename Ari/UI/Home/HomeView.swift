@@ -43,16 +43,14 @@ struct HomeView: View {
     private var hero: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             Text("THIS DEVICE / MEETING WORKBENCH")
-                .marginaliaTextStyle(.caption, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
             Text("Work from what was said.")
                 .marginaliaTextStyle(.display, in: scheme)
             Text(
                 "Capture a conversation, keep the record local, then return to the decisions "
                     + "without a meeting bot in the call."
             )
-            .marginaliaTextStyle(.body, in: scheme)
-            .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+            .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
         }
     }
 
@@ -69,13 +67,11 @@ struct HomeView: View {
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(Color.marginalia(.accent, in: scheme))
             Text("CAPTURE")
-                .marginaliaTextStyle(.caption, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
             Text("Start a meeting")
                 .marginaliaTextStyle(.title2, in: scheme)
             Text("Record system and microphone audio without adding a bot to the call.")
-                .marginaliaTextStyle(.body, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
             Button("Open recorder →") {
                 selection = .newMeeting
             }
@@ -99,16 +95,13 @@ struct HomeView: View {
     private var privacyCard: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
             Text("PRIVATE BY DESIGN")
-                .marginaliaTextStyle(.caption, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
             Text("Private, on this Mac")
                 .marginaliaTextStyle(.title2, in: scheme)
             Text("Everything stays on this Mac.")
-                .marginaliaTextStyle(.body, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
             Text(libraryCountSummary)
-                .marginaliaTextStyle(.callout, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
         }
         .padding(MarginaliaSpacing.lg.value)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -160,13 +153,11 @@ struct HomeView: View {
             }
         case .empty:
             Text("No meetings yet")
-                .marginaliaTextStyle(.callout, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                 .padding(.horizontal, MarginaliaSpacing.md.value)
         case let .failed(message):
             Text(message)
-                .marginaliaTextStyle(.callout, in: scheme)
-                .foregroundStyle(Color.marginalia(.recordingRed, in: scheme))
+                .marginaliaTextStyle(.callout, in: scheme, ink: .recordingRed)
                 .padding(.horizontal, MarginaliaSpacing.md.value)
         }
     }

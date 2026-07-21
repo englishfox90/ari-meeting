@@ -22,16 +22,11 @@ struct AudioPlayerBar: View {
             }
             .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
 
-            Text(Self.timecode(controller.currentTime))
+            Text(MarginaliaTimecode.mmss(controller.currentTime))
                 .marginaliaTextStyle(.timecode, in: scheme)
         }
         .padding(.horizontal, MarginaliaSpacing.md.value)
         .padding(.vertical, MarginaliaSpacing.sm.value)
         .background(Color.marginalia(.elevated, in: scheme))
-    }
-
-    private static func timecode(_ seconds: Double) -> String {
-        let totalSeconds = Int(seconds.rounded())
-        return String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 }

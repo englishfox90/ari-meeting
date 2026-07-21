@@ -18,8 +18,25 @@ public extension View {
     ///     .marginaliaTextStyle(.caption, in: colorScheme)
     /// ```
     func marginaliaTextStyle(_ style: MarginaliaTextStyle, in scheme: ColorScheme) -> some View {
+        marginaliaTextStyle(style, in: scheme, ink: style.spec.ink)
+    }
+
+    /// Same as `marginaliaTextStyle(_:in:)` but with an explicit ink role, for the cases
+    /// where a component needs a non-default foreground (a button/badge label on a colored
+    /// fill, an error line in `.recordingRed`, an accent link).
+    ///
+    /// USE THIS instead of `.marginaliaTextStyle(style, in:).foregroundStyle(ink)` — that
+    /// pattern is a silent trap: `marginaliaTextStyle` already sets the text's foreground to
+    /// the style's *default* ink, and SwiftUI resolves a `Text`'s color from the INNERMOST
+    /// `foregroundStyle`, so the trailing override never wins and the default ink renders
+    /// instead. Folding the ink into one modifier is the only correct form.
+    func marginaliaTextStyle(
+        _ style: MarginaliaTextStyle,
+        in scheme: ColorScheme,
+        ink: MarginaliaColorRole
+    ) -> some View {
         font(style.font)
-            .foregroundStyle(Color.marginalia(style.spec.ink, in: scheme))
+            .foregroundStyle(Color.marginalia(ink, in: scheme))
             .modifier(MarginaliaTrackingModifier(points: style.trackingPoints))
     }
 }

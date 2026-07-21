@@ -31,5 +31,15 @@ struct AriApp: App {
         // Design default window target ~1100×700 (design-system.md); comfortable for the
         // 3-column read shell without forcing a size on the user after first launch.
         .defaultSize(width: 1120, height: 720)
+
+        #if DEBUG
+        // DEBUG-only Marginalia design-system validator (colors, type, buttons, materials, and
+        // Liquid Glass evaluation). Adds a "Design Gallery" item to the Window menu; never
+        // opens automatically and never ships in release — see `DesignGalleryView.swift`.
+        Window("Design Gallery", id: "design-gallery") {
+            DesignGalleryView()
+        }
+        .defaultSize(width: 980, height: 820)
+        #endif
     }
 }

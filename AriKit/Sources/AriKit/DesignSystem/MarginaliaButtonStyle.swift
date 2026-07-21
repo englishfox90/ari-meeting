@@ -13,7 +13,7 @@
 import SwiftUI
 
 /// The four button roles in the Marginalia system (plan §4).
-public enum MarginaliaButtonRole: Sendable {
+public enum MarginaliaButtonRole: Sendable, Equatable {
     case primary
     case secondary
     case quiet
@@ -65,13 +65,19 @@ public extension MarginaliaButtonRole {
     var spec: MarginaliaButtonSpec {
         switch self {
         case .primary:
-            MarginaliaButtonSpec(fill: .accent, label: .surface, stroke: nil, pressed: .accentPressed)
+            // Label is `.canvas` (paper), NOT `.surface`: `.canvas` is near-white in light and
+            // near-black in dark, so it stays high-contrast against the solid accent fill in BOTH
+            // schemes. `.surface` resolves to warm-espresso (#2D2925) in dark mode, which reads as
+            // muddy brown text on the light dark-mode accent fill.
+            MarginaliaButtonSpec(fill: .accent, label: .canvas, stroke: nil, pressed: .accentPressed)
         case .secondary:
             MarginaliaButtonSpec(fill: .elevated, label: .inkBody, stroke: .hairline, pressed: .selectionWash)
         case .quiet:
             MarginaliaButtonSpec(fill: nil, label: .accent, stroke: nil, pressed: .selectionWash)
         case .recording:
-            MarginaliaButtonSpec(fill: .recordingRed, label: .surface, stroke: nil, pressed: .recordingRed)
+            // `.canvas` label for the same contrast reason as `.primary` (see above): the dark-mode
+            // recording-red fill (#FF6B5E) is light, so it needs near-black paper text, not `.surface`.
+            MarginaliaButtonSpec(fill: .recordingRed, label: .canvas, stroke: nil, pressed: .recordingRed)
         }
     }
 }
@@ -98,8 +104,7 @@ public struct MarginaliaButtonStyle: ButtonStyle {
         let isPressed = configuration.isPressed
 
         configuration.label
-            .marginaliaTextStyle(.callout, in: scheme)
-            .foregroundStyle(Color.marginalia(spec.label, in: scheme))
+            .marginaliaTextStyle(.callout, in: scheme, ink: spec.label)
             .frame(height: size.controlHeight)
             .padding(.horizontal, MarginaliaSpacing.md.value)
             .background {

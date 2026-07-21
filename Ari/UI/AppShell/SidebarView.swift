@@ -57,8 +57,7 @@ struct SidebarView: View {
                 Spacer(minLength: 0)
             }
             Text("LOCAL MEETING DESK")
-                .marginaliaTextStyle(.caption, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
         }
         .padding(.horizontal, MarginaliaSpacing.md.value)
         .padding(.top, MarginaliaSpacing.xxl.value)
@@ -81,10 +80,7 @@ struct SidebarView: View {
             selection = section
         } label: {
             Label(section.title, systemImage: section.symbolName)
-                .marginaliaTextStyle(.body, in: scheme)
-                .foregroundStyle(
-                    Color.marginalia(isSelected ? .accent : .inkBody, in: scheme)
-                )
+                .marginaliaTextStyle(.body, in: scheme, ink: isSelected ? .accent : .inkBody)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, MarginaliaSpacing.xs.value)
                 .padding(.horizontal, MarginaliaSpacing.sm.value)
@@ -113,13 +109,11 @@ struct SidebarView: View {
                 }
             case .empty:
                 Text("No meetings yet")
-                    .marginaliaTextStyle(.callout, in: scheme)
-                    .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                     .padding(.horizontal, MarginaliaSpacing.md.value)
             case let .failed(message):
                 Text(message)
-                    .marginaliaTextStyle(.callout, in: scheme)
-                    .foregroundStyle(Color.marginalia(.recordingRed, in: scheme))
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .recordingRed)
                     .padding(.horizontal, MarginaliaSpacing.md.value)
             }
         }
@@ -130,8 +124,7 @@ struct SidebarView: View {
             onSelectMeeting(meeting.id)
         } label: {
             Text(meeting.title)
-                .marginaliaTextStyle(.callout, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkBody, in: scheme))
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkBody)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -163,26 +156,22 @@ struct SidebarView: View {
                 selection = .newMeeting
             } label: {
                 Label("Import audio", systemImage: "square.and.arrow.down")
-                    .marginaliaTextStyle(.callout, in: scheme)
-                    .foregroundStyle(Color.marginalia(.accent, in: scheme))
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .accent)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
             .padding(.horizontal, MarginaliaSpacing.md.value)
 
             Label("Settings", systemImage: "gearshape")
-                .marginaliaTextStyle(.callout, in: scheme)
-                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                 .padding(.horizontal, MarginaliaSpacing.md.value)
 
             HStack {
                 Label("About", systemImage: "info.circle")
-                    .marginaliaTextStyle(.callout, in: scheme)
-                    .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                 Spacer(minLength: MarginaliaSpacing.sm.value)
                 Text(Self.appVersionString)
-                    .marginaliaTextStyle(.caption, in: scheme)
-                    .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                    .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
             }
             .padding(.horizontal, MarginaliaSpacing.md.value)
             .padding(.bottom, MarginaliaSpacing.sm.value)
