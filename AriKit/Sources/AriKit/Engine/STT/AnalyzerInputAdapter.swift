@@ -13,18 +13,15 @@
 //  never a fabricated dropped-window stand-in, see `PCMWindow`'s own doc comment) are skipped
 //  entirely: no zero-length/fabricated buffer is ever handed to the analyzer.
 //
-//  Plan-documented format-conversion note: the plan's §2.2 comment mentions using
-//  `SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith:)` + `AVAudioConverter` "only if the
-//  transcriber's preferred format differs" (mirroring `Transcribe.swift:257-294`). That negotiation
-//  needs a live `SpeechTranscriber` instance, which this adapter's plan-specified signature
-//  (`analyzerInputs(from:)`, windows only — no transcriber parameter) deliberately does not carry:
-//  the transcriber lives inside `SpeechTranscriberProvider`/`SpeechLiveTranscriptionService` (the
-//  app-target R6 conformer, out of R1's scope), one layer downstream of this adapter. This adapter
-//  therefore emits buffers at the window's own native format (48 kHz mono Float32) verbatim and
-//  leaves any further resampling to whichever layer actually holds the transcriber — exactly
-//  mirroring how the file path (`SpeechTranscriberProvider.transcribe(fileURL:language:)`) already
-//  hands `AVAudioFile` straight to `analyzer.analyzeSequence(from:)` without a manual pre-convert
-//  step and lets the framework negotiate format internally.
+//  Format-conversion note: this adapter emits buffers at the window's own native format
+//  (48 kHz mono Float32) VERBATIM — the negotiation to the analyzer's preferred format happens
+//  one layer downstream, inside `SpeechTranscriberProvider.transcribe(liveInputs:language:)`
+//  (`convertLiveBuffer`, via `SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith:)`), because
+//  it needs the live `SpeechTranscriber` instance this signature deliberately doesn't carry.
+//  That conversion is MANDATORY, not cosmetic: feeding SpeechAnalyzer's live input a format it
+//  didn't agree to traps inside the Speech framework (SIGTRAP in
+//  `SpeechRecognizerWorker.processAudio` — found in Lane 2, 2026-07-21). Only the file path may
+//  skip a manual convert, since `analyzeSequence(from: AVAudioFile)` negotiates internally.
 //
 import AVFoundation
 import Foundation

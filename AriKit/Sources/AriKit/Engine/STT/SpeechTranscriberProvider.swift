@@ -280,12 +280,28 @@ public struct SpeechTranscriberProvider: TranscriptionProvider, Sendable {
                         )
                     }
 
-                    // 3. Forward the caller-owned sequence in, non-blocking (plain relay — no
-                    //    inference on this loop). Cooperative cancellation lets a cancelled outer
-                    //    task stop forwarding promptly even if `liveInputs` itself is open-ended.
+                    // 3. Forward the caller-owned sequence in, non-blocking — CONVERTING each
+                    //    buffer to the analyzer's negotiated format first. SpeechAnalyzer traps
+                    //    (SIGTRAP inside SpeechRecognizerWorker.processAudio) when handed a
+                    //    format it didn't agree to, so raw 48 kHz capture buffers must never
+                    //    reach it directly (crash found in Lane 2, 2026-07-21). One converter
+                    //    is reused across the loop so sample-rate-conversion filter state stays
+                    //    continuous between buffers.
+                    let preferredFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
+                        compatibleWith: [transcriber]
+                    )
+                    var conversion: (converter: AVAudioConverter, from: AVAudioFormat)?
                     for await input in liveInputs {
                         try Task.checkCancellation()
-                        internalContinuation.yield(input)
+                        guard let preferredFormat else {
+                            internalContinuation.yield(input)
+                            continue
+                        }
+                        if let converted = try Self.convertLiveBuffer(
+                            input.buffer, to: preferredFormat, reusing: &conversion
+                        ) {
+                            internalContinuation.yield(AnalyzerInput(buffer: converted))
+                        }
                     }
                     internalContinuation.finish()
 
@@ -318,5 +334,66 @@ public struct SpeechTranscriberProvider: TranscriptionProvider, Sendable {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Converts one live capture buffer to the analyzer's negotiated format, reusing a single
+    /// `AVAudioConverter` across calls (fresh only when the source format changes) so the
+    /// sample-rate converter's filter state stays continuous — per-buffer converters produce
+    /// audible seams. Returns `nil` for an honestly-empty conversion (no fabricated audio).
+    private static func convertLiveBuffer(
+        _ buffer: AVAudioPCMBuffer,
+        to format: AVAudioFormat,
+        reusing state: inout (converter: AVAudioConverter, from: AVAudioFormat)?
+    ) throws -> AVAudioPCMBuffer? {
+        if buffer.format == format { return buffer }
+
+        let converter: AVAudioConverter
+        if let existing = state, existing.from == buffer.format {
+            converter = existing.converter
+        } else {
+            guard let fresh = AVAudioConverter(from: buffer.format, to: format) else {
+                throw TranscriptionError.engineFailed(
+                    "could not create a live-audio converter from \(buffer.format) to \(format)"
+                )
+            }
+            state = (fresh, buffer.format)
+            converter = fresh
+        }
+
+        let ratio = format.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 64
+        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
+            throw TranscriptionError.engineFailed("could not allocate a live-audio conversion buffer")
+        }
+
+        // `@unchecked Sendable`, justified: `AVAudioConverterInputBlock` is typed `@Sendable`,
+        // but `convert(to:error:withInputFrom:)` documents calling it synchronously on the
+        // calling thread during this one call — there is no actual concurrent access to `fed`
+        // or the buffer.
+        final class InputFeed: @unchecked Sendable {
+            var fed = false
+            let buffer: AVAudioPCMBuffer
+            init(buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+        }
+        let feed = InputFeed(buffer: buffer)
+        var conversionError: NSError?
+        let status = converter.convert(to: output, error: &conversionError) { _, outStatus in
+            if feed.fed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            feed.fed = true
+            outStatus.pointee = .haveData
+            return feed.buffer
+        }
+        if let conversionError {
+            throw TranscriptionError.engineFailed(
+                "live audio conversion failed: \(conversionError.localizedDescription)"
+            )
+        }
+        guard status != .error else {
+            throw TranscriptionError.engineFailed("live audio conversion failed")
+        }
+        return output.frameLength > 0 ? output : nil
     }
 }
