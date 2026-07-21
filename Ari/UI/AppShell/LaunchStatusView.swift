@@ -12,14 +12,20 @@ struct LaunchStatusView: View {
 
     var body: some View {
         VStack(spacing: MarginaliaSpacing.lg.value) {
-            Image(systemName: "waveform")
-                .font(.system(size: 44, weight: .regular))
+            // The Marginalia "Dictation" mark — the brand logo, not an audio glyph. Rendered as a
+            // tintable template vector; Shin-kai accent is the one hero element on the launch field.
+            Image("DictationMark")
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(96.0 / 64.0, contentMode: .fit)
+                .frame(width: 108)
                 .foregroundStyle(Color.marginalia(.accent, in: scheme))
 
-            Text("Ari")
-                .marginaliaTextStyle(.display, in: scheme)
+            Text("Ari Meetings")
+                .marginaliaTextStyle(.title2, in: scheme)
 
             statusView
+                .padding(.top, MarginaliaSpacing.sm.value)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(MarginaliaSpacing.xxl.value)

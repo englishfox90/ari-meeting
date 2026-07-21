@@ -23,5 +23,8 @@ struct AriApp: App {
         // content material a run to the top edge, matching the current app's overlay title bar.
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
+        // Design default window target ~1100×700 (design-system.md); comfortable for the
+        // 3-column read shell without forcing a size on the user after first launch.
+        .defaultSize(width: 1120, height: 720)
     }
 }

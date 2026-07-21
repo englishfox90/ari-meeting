@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 64" fill="none" stroke="currentColor" stroke-linecap="round" role="img" aria-label="Ari Meetings mark — Dictation: a cursive a whose tail runs out as a hand-drawn waveform">
+  <!-- R2 "Dictation" — one continuous gesture; render >= 32px height; tint via currentColor -->
+  <path d="M46 26 C37 18 23 23 21 34 C19 46 31 54 41 48" stroke-width="8"/>
+  <path d="M46 26 C43.5 23 40 21.4 36.5 21.6" stroke-width="4.2"/>
+  <path d="M47 20 C45.3 30 45.3 40 48 47" stroke-width="8"/>
+  <path d="M48 47 C50.5 51.5 55 49.5 57 43 C58.6 38 60 34.5 62.5 34.5" stroke-width="6"/>
+  <path d="M62.5 34.5 C66 34.5 65.5 45 69.5 45 C73.5 45 73.5 29.5 78 29" stroke-width="4.4"/>
+  <path d="M78 29 C81.5 28.7 82 38 86 40 C88.3 41 90.5 40 92.5 37.5" stroke-width="2.8"/>
+</svg>

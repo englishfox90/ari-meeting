@@ -86,9 +86,18 @@ struct RootSplitView: View {
     }
 
     private func placeholder(_ text: String) -> some View {
-        Text(text)
-            .marginaliaTextStyle(.body, in: scheme)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.marginalia(.canvas, in: scheme))
+        VStack(spacing: MarginaliaSpacing.md.value) {
+            Image("DictationMark")
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(96.0 / 64.0, contentMode: .fit)
+                .frame(width: 72)
+                .foregroundStyle(Color.marginalia(.hairline, in: scheme))
+            Text(text)
+                .marginaliaTextStyle(.callout, in: scheme)
+                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.marginalia(.canvas, in: scheme))
     }
 }

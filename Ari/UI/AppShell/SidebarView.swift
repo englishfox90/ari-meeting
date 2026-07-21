@@ -14,6 +14,27 @@ struct SidebarView: View {
             Label(section.title, systemImage: section.symbolName)
                 .marginaliaTextStyle(.body, in: scheme)
         }
-        .navigationTitle("Ari")
+        .safeAreaInset(edge: .top, spacing: 0) { wordmark }
+        .navigationTitle("")
+    }
+
+    /// The wordmark: the Dictation mark + "Ari Meetings" (composed in SwiftUI rather than the
+    /// wordmark SVG, whose `<text>` element Xcode can't render). Top padding clears the floating
+    /// traffic lights under the frameless/unified title bar.
+    private var wordmark: some View {
+        HStack(spacing: MarginaliaSpacing.sm.value) {
+            Image("DictationMark")
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(96.0 / 64.0, contentMode: .fit)
+                .frame(width: 30)
+                .foregroundStyle(Color.marginalia(.accent, in: scheme))
+            Text("Ari Meetings")
+                .marginaliaTextStyle(.headline, in: scheme)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, MarginaliaSpacing.md.value)
+        .padding(.top, MarginaliaSpacing.xxl.value)
+        .padding(.bottom, MarginaliaSpacing.sm.value)
     }
 }
