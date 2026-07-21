@@ -21,7 +21,7 @@ import Testing
 
 /// The HF repo id the S1 spike closed GO on (`swift-migration-plan.md:104`) — kept as a single
 /// source of truth here so both tests below reference the same model.
-private let s1RepoID = "mlx-community/Qwen3.5-4B-4bit"
+private let s1RepoID = "mlx-community/Qwen3.5-4B-MLX-4bit"
 
 private var mlxLiveTestsEnabled: Bool {
     ProcessInfo.processInfo.environment["ARIKIT_MLX_LIVE_TESTS"] == "1"

@@ -25,39 +25,58 @@ public actor ModelHost {
     /// Production singleton — one warm model set shared by every `MLXClient` in the process.
     public static let shared = ModelHost()
 
-    private var containers: [String: ModelContainer] = [:]
+    /// Cache of the *in-flight or completed load Task* per repo id — NOT the resolved value.
+    /// Caching the `Task` (inserted synchronously, before the first `await`) is what makes the
+    /// cache single-flight under actor reentrancy: a value cache would let a second caller observe
+    /// an empty dict while the first load is suspended at its `await` and start a duplicate
+    /// multi-GB download. Every concurrent caller for the same repo id awaits the same `Task`.
+    private var loads: [String: Task<ModelContainer, Error>] = [:]
 
     public init() {}
 
     /// Returns the cached `ModelContainer` for `repoId`, loading (and downloading, if needed) it
     /// exactly once. Concurrent callers requesting the same `repoId` before the first load
-    /// completes will each await the same in-flight load (actor-serialized), not race a second
-    /// download.
+    /// completes all await the same in-flight load `Task` — never a second download. A *failed*
+    /// load is not cached (the `Task` is dropped), so a later call can retry after a transient
+    /// download/network failure.
+    ///
+    /// Note: only the first caller's `progressHandler` is wired to the underlying load; concurrent
+    /// callers awaiting the same in-flight `Task` do not receive progress callbacks (progress is a
+    /// best-effort side channel, not part of the result contract).
     public func container(
         forRepoId repoId: String,
         progressHandler: @Sendable @escaping (Progress) -> Void = { _ in }
     ) async throws -> ModelContainer {
-        if let cached = containers[repoId] {
-            return cached
+        if let existing = loads[repoId] {
+            return try await existing.value
         }
 
-        // ← the S1 spike's downloader/tokenizer-loader macros (`Entry.swift:99-100`).
-        let downloader = #hubDownloader()
-        let tokenizerLoader = #huggingFaceTokenizerLoader()
+        let load = Task<ModelContainer, Error> {
+            // ← the S1 spike's downloader/tokenizer-loader macros (`Entry.swift:99-100`).
+            let downloader = #hubDownloader()
+            let tokenizerLoader = #huggingFaceTokenizerLoader()
+            return try await loadModelContainer(
+                from: downloader,
+                using: tokenizerLoader,
+                id: repoId,
+                progressHandler: progressHandler
+            )
+        }
+        // Insert synchronously — before any suspension — so a reentrant caller sees this Task.
+        loads[repoId] = load
 
-        let container = try await loadModelContainer(
-            from: downloader,
-            using: tokenizerLoader,
-            id: repoId,
-            progressHandler: progressHandler
-        )
-        containers[repoId] = container
-        return container
+        do {
+            return try await load.value
+        } catch {
+            // Don't cache failures — allow a retry to re-attempt the load.
+            loads[repoId] = nil
+            throw error
+        }
     }
 
-    /// Test/debug seam — drops a cached container so a subsequent `container(forRepoId:)` call
+    /// Test/debug seam — drops a cached load so a subsequent `container(forRepoId:)` call
     /// reloads it. Not used by production code paths.
     public func evict(repoId: String) {
-        containers.removeValue(forKey: repoId)
+        loads[repoId] = nil
     }
 }

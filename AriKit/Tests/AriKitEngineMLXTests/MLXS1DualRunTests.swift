@@ -55,7 +55,7 @@ struct MLXS1DualRunTests {
 
     @Test func productPathReproducesCallThreeShapeWithoutThinkLeak() async throws {
         let client = MLXClient(
-            config: ProviderConfig(kind: .mlx, model: "mlx-community/Qwen3.5-4B-4bit")
+            config: ProviderConfig(kind: .mlx, model: "mlx-community/Qwen3.5-4B-MLX-4bit")
         )
 
         let result = try await client.generate(
@@ -72,7 +72,7 @@ struct MLXS1DualRunTests {
 
     @Test func streamingProducesTheSameShapeAsGenerate() async throws {
         let client = MLXClient(
-            config: ProviderConfig(kind: .mlx, model: "mlx-community/Qwen3.5-4B-4bit")
+            config: ProviderConfig(kind: .mlx, model: "mlx-community/Qwen3.5-4B-MLX-4bit")
         )
 
         var streamed = ""
