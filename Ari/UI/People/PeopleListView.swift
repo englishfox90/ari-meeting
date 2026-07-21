@@ -1,5 +1,7 @@
 //
-//  PeopleListView.swift — the People list (content) column (plan §2.2 People, §9 S6e).
+//  PeopleListView.swift — the full-width People screen (plan §2.2 People, §9 S6e; reworked
+//  for the home + left-rail shell — see `MeetingsListView`'s header comment for the push-nav
+//  rationale).
 //
 import AriKit
 import AriViewModels
@@ -7,14 +9,12 @@ import SwiftUI
 
 struct PeopleListView: View {
     let database: AppDatabase
-    @Binding var selection: PersonID?
 
     @State private var viewModel: PeopleListViewModel
     @Environment(\.colorScheme) private var scheme
 
-    init(database: AppDatabase, selection: Binding<PersonID?>) {
+    init(database: AppDatabase) {
         self.database = database
-        _selection = selection
         _viewModel = State(initialValue: PeopleListViewModel(database: database))
     }
 
@@ -24,11 +24,12 @@ struct PeopleListView: View {
             emptyTitle: "No people yet",
             emptyMessage: "People from meetings and calendar attendees will show up here."
         ) { people in
-            List(people, selection: $selection) { person in
-                CardRow(title: person.displayName, metadata: metadata(for: person))
-                    .tag(person.id)
+            List(people) { person in
+                NavigationLink(value: person.id) {
+                    CardRow(title: person.displayName, metadata: metadata(for: person))
+                }
             }
-            .listStyle(.sidebar)
+            .listStyle(.inset)
         }
         .background(Color.marginalia(.canvas, in: scheme))
         .navigationTitle("People")

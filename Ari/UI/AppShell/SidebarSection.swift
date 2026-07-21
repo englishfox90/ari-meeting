@@ -1,16 +1,21 @@
 //
-//  SidebarSection.swift — the sidebar's top-level sections (plan §6 Navigation model).
+//  SidebarSection.swift — the sidebar's top-level WORKBENCH sections (home-centric shell
+//  rework; see the home + left-rail layout plan).
 //
-//  `ask` is reserved for the future Ask/recall UI (out of scope for S6 — no screen ships)
-//  so the enum shape doesn't need to change when that lands.
+//  `newMeeting`, `ask`, and `calendar` render honest "coming soon" placeholders today — the
+//  capture, recall, and calendar features aren't built yet (No-Fake-State: the sidebar rows
+//  exist because the destinations exist, even if the destination is an honest placeholder).
 //
 import SwiftUI
 
 enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
-    case meetings
-    case people
+    case home
+    case newMeeting
+    case savedMeetings
     case series
     case ask
+    case calendar
+    case people
 
     var id: String {
         rawValue
@@ -18,24 +23,30 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
 
     var title: String {
         switch self {
-        case .meetings: "Meetings"
-        case .people: "People"
+        case .home: "Home"
+        case .newMeeting: "New meeting"
+        case .savedMeetings: "Saved meetings"
         case .series: "Series"
-        case .ask: "Ask"
+        case .ask: "Ask meetings"
+        case .calendar: "Calendar"
+        case .people: "People"
         }
     }
 
     var symbolName: String {
         switch self {
-        case .meetings: "list.bullet.rectangle"
-        case .people: "person.2"
+        case .home: "house"
+        case .newMeeting: "mic"
+        case .savedMeetings: "text.rectangle.page"
         case .series: "arrow.triangle.2.circlepath"
         case .ask: "sparkle.magnifyingglass"
+        case .calendar: "calendar"
+        case .people: "person.2"
         }
     }
 
-    /// Sections actually rendered in S6 — `ask` is reserved but ships no screen yet.
-    static var built: [SidebarSection] {
-        [.meetings, .people, .series]
+    /// The WORKBENCH nav list, in display order.
+    static var workbench: [SidebarSection] {
+        [.home, .newMeeting, .savedMeetings, .series, .ask, .calendar, .people]
     }
 }

@@ -1,5 +1,9 @@
 //
-//  MeetingsListView.swift — the Meetings list (content) column (plan §2.2 MeetingsList).
+//  MeetingsListView.swift — the full-width Saved-meetings screen (home + left-rail rework).
+//
+//  Rows push `MeetingDetailView` via the shared detail `NavigationStack`'s
+//  `navigationDestination(for: MeetingID.self)` (registered in `RootSplitView`) rather than a
+//  third-column selection binding.
 //
 import AriKit
 import AriViewModels
@@ -7,14 +11,12 @@ import SwiftUI
 
 struct MeetingsListView: View {
     let database: AppDatabase
-    @Binding var selection: MeetingID?
 
     @State private var viewModel: MeetingsListViewModel
     @Environment(\.colorScheme) private var scheme
 
-    init(database: AppDatabase, selection: Binding<MeetingID?>) {
+    init(database: AppDatabase) {
         self.database = database
-        _selection = selection
         _viewModel = State(initialValue: MeetingsListViewModel(database: database))
     }
 
@@ -24,14 +26,15 @@ struct MeetingsListView: View {
             emptyTitle: "No meetings yet",
             emptyMessage: "Recorded and imported meetings will show up here."
         ) { meetings in
-            List(meetings, selection: $selection) { meeting in
-                CardRow(title: meeting.title, metadata: metadata(for: meeting))
-                    .tag(meeting.id)
+            List(meetings) { meeting in
+                NavigationLink(value: meeting.id) {
+                    CardRow(title: meeting.title, metadata: metadata(for: meeting))
+                }
             }
-            .listStyle(.sidebar)
+            .listStyle(.inset)
         }
         .background(Color.marginalia(.canvas, in: scheme))
-        .navigationTitle("Meetings")
+        .navigationTitle("Saved meetings")
         .task { await viewModel.observe() }
     }
 

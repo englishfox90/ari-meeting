@@ -135,12 +135,10 @@ public extension MarginaliaTextStyle {
         let spec = spec
         switch spec.face {
         case "Bricolage Grotesque":
-            // TODO: once the app target bundles the real Bricolage Grotesque .ttf, confirm
-            // whether it ships as a single variable font or static per-weight files. If
-            // static, `.weight(_:)` will NOT resolve the right cut via the family name
-            // above — switch to the explicit PostScript names instead
-            // (`BricolageGrotesque-Bold` / `BricolageGrotesque-SemiBold`). Tracked as a
-            // follow-up for whoever bundles the font; not resolvable from AriKit alone.
+            // The `Ari` app bundles the real face as a SINGLE variable font whose family name is
+            // "Bricolage Grotesque" (registered via CoreText at launch — see `AppFonts`), so
+            // `.weight(_:)` drives the `wght` axis and resolves the right cut. Falls back to the
+            // system font (harmless) if the app hasn't registered it.
             return Font.custom(spec.face, size: spec.sizePt, relativeTo: relativeTextStyle)
                 .weight(spec.weight)
         case "SF Mono":

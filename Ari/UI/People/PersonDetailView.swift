@@ -11,7 +11,6 @@ struct PersonDetailView: View {
     let personId: PersonID
 
     @State private var viewModel: PersonDetailViewModel
-    @State private var selectedMeetingId: MeetingID?
     @Environment(\.colorScheme) private var scheme
 
     init(database: AppDatabase, personId: PersonID) {
@@ -20,21 +19,18 @@ struct PersonDetailView: View {
         _viewModel = State(initialValue: PersonDetailViewModel(database: database))
     }
 
+    /// No own `NavigationStack`: pushed onto the shell's outer stack (which owns the MeetingID
+    /// destination); participant-meeting rows push via `NavigationLink(value:)`.
     var body: some View {
-        NavigationStack {
-            StateContainer(
-                state: viewModel.person,
-                emptyTitle: "No person",
-                emptyMessage: nil
-            ) { person in
-                content(for: person)
-            }
-            .background(Color.marginalia(.canvas, in: scheme))
-            .navigationTitle(viewModel.person.value?.displayName ?? "Person")
-            .navigationDestination(item: $selectedMeetingId) { meetingId in
-                MeetingDetailView(database: database, meetingId: meetingId)
-            }
+        StateContainer(
+            state: viewModel.person,
+            emptyTitle: "No person",
+            emptyMessage: nil
+        ) { person in
+            content(for: person)
         }
+        .background(Color.marginalia(.canvas, in: scheme))
+        .navigationTitle(viewModel.person.value?.displayName ?? "Person")
         .task(id: personId) {
             await viewModel.load(personId)
         }
@@ -85,9 +81,7 @@ struct PersonDetailView: View {
         } else {
             VStack(spacing: 0) {
                 ForEach(viewModel.participantMeetings) { meeting in
-                    Button {
-                        selectedMeetingId = meeting.id
-                    } label: {
+                    NavigationLink(value: meeting.id) {
                         CardRow(
                             title: meeting.title,
                             metadata: meeting.createdAt.formatted(date: .abbreviated, time: .shortened)

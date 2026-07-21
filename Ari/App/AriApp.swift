@@ -13,6 +13,11 @@ struct AriApp: App {
     /// The single root environment for the whole app. `@State` so its lifetime is the app's.
     @State private var environment = AppEnvironment()
 
+    init() {
+        // Register bundled brand fonts before any view renders, so Bricolage headings resolve.
+        AppFonts.register()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootSplitView()

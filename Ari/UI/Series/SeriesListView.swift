@@ -1,5 +1,7 @@
 //
-//  SeriesListView.swift — the Series list (content) column (plan §2.2 Series, §9 S6f).
+//  SeriesListView.swift — the full-width Series screen (plan §2.2 Series, §9 S6f; reworked
+//  for the home + left-rail shell — see `MeetingsListView`'s header comment for the push-nav
+//  rationale).
 //
 import AriKit
 import AriViewModels
@@ -7,14 +9,12 @@ import SwiftUI
 
 struct SeriesListView: View {
     let database: AppDatabase
-    @Binding var selection: SeriesID?
 
     @State private var viewModel: SeriesListViewModel
     @Environment(\.colorScheme) private var scheme
 
-    init(database: AppDatabase, selection: Binding<SeriesID?>) {
+    init(database: AppDatabase) {
         self.database = database
-        _selection = selection
         _viewModel = State(initialValue: SeriesListViewModel(database: database))
     }
 
@@ -24,11 +24,12 @@ struct SeriesListView: View {
             emptyTitle: "No series yet",
             emptyMessage: "Recurring meetings will be grouped into a series here."
         ) { series in
-            List(series, selection: $selection) { item in
-                CardRow(title: item.title, metadata: metadata(for: item))
-                    .tag(item.id)
+            List(series) { item in
+                NavigationLink(value: item.id) {
+                    CardRow(title: item.title, metadata: metadata(for: item))
+                }
             }
-            .listStyle(.sidebar)
+            .listStyle(.inset)
         }
         .background(Color.marginalia(.canvas, in: scheme))
         .navigationTitle("Series")

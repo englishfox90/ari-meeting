@@ -10,7 +10,6 @@ struct SeriesDetailView: View {
     let seriesId: SeriesID
 
     @State private var viewModel: SeriesDetailViewModel
-    @State private var selectedMeetingId: MeetingID?
     @Environment(\.colorScheme) private var scheme
 
     init(database: AppDatabase, seriesId: SeriesID) {
@@ -19,21 +18,19 @@ struct SeriesDetailView: View {
         _viewModel = State(initialValue: SeriesDetailViewModel(database: database))
     }
 
+    // No own `NavigationStack`: this view is pushed onto the shell's outer stack, which owns the
+    // `navigationDestination(for: MeetingID.self)`. Member-meeting rows push via `NavigationLink
+    // (value:)` so back-navigation and the toolbar stay consistent (no nested stack / double bar).
     var body: some View {
-        NavigationStack {
-            StateContainer(
-                state: viewModel.series,
-                emptyTitle: "No series",
-                emptyMessage: nil
-            ) { series in
-                content(for: series)
-            }
-            .background(Color.marginalia(.canvas, in: scheme))
-            .navigationTitle(viewModel.series.value?.title ?? "Series")
-            .navigationDestination(item: $selectedMeetingId) { meetingId in
-                MeetingDetailView(database: database, meetingId: meetingId)
-            }
+        StateContainer(
+            state: viewModel.series,
+            emptyTitle: "No series",
+            emptyMessage: nil
+        ) { series in
+            content(for: series)
         }
+        .background(Color.marginalia(.canvas, in: scheme))
+        .navigationTitle(viewModel.series.value?.title ?? "Series")
         .task(id: seriesId) {
             await viewModel.load(seriesId)
         }
@@ -91,9 +88,7 @@ struct SeriesDetailView: View {
         } else {
             VStack(spacing: 0) {
                 ForEach(viewModel.memberMeetings) { meeting in
-                    Button {
-                        selectedMeetingId = meeting.id
-                    } label: {
+                    NavigationLink(value: meeting.id) {
                         CardRow(
                             title: meeting.title,
                             metadata: meeting.createdAt.formatted(date: .abbreviated, time: .shortened)

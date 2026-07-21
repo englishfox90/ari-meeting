@@ -1,9 +1,16 @@
 //
-//  RootSplitView.swift — the 3-column NavigationSplitView host (plan §6 Navigation model).
+//  RootSplitView.swift — the 2-column NavigationSplitView host (home + left-rail rework of the
+//  original 3-column read shell).
 //
-//  Replaces the S0 `ContentView` as the `WindowGroup` root. Before `AppEnvironment.status ==
-//  .ready`, renders `LaunchStatusView` (honest launching/importing/failed) instead of the
-//  real shell — never a fake-ready 3-column view over a database that isn't open yet.
+//  Before `AppEnvironment.status == .ready`, renders `LaunchStatusView` (honest
+//  launching/importing/failed) instead of the real shell — never a fake-ready shell over a
+//  database that isn't open yet.
+//
+//  Navigation model: the left rail's WORKBENCH selection (`selectedSection`) picks the detail
+//  `NavigationStack`'s ROOT content; a shared `NavigationPath` (`path`) drives pushes on top of
+//  that root (meeting/person/series detail). Changing `selectedSection` resets `path` to empty
+//  — switching workbench sections always lands on that section's root, never mid-stack in a
+//  previous section's push history.
 //
 import AriKit
 import SwiftUI
@@ -12,10 +19,8 @@ struct RootSplitView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
 
-    @State private var selectedSection: SidebarSection? = .meetings
-    @State private var selectedMeetingId: MeetingID?
-    @State private var selectedPersonId: PersonID?
-    @State private var selectedSeriesId: SeriesID?
+    @State private var selectedSection: SidebarSection = .home
+    @State private var path = NavigationPath()
 
     var body: some View {
         Group {
@@ -30,59 +35,49 @@ struct RootSplitView: View {
 
     private func readyShell(database: AppDatabase) -> some View {
         NavigationSplitView {
-            SidebarView(selection: $selectedSection)
-        } content: {
-            contentColumn(database: database)
+            SidebarView(
+                selection: $selectedSection,
+                database: database,
+                onSelectMeeting: { path.append($0) }
+            )
+            .navigationSplitViewColumnWidth(min: 236, ideal: 252, max: 300)
         } detail: {
-            detailColumn(database: database)
+            NavigationStack(path: $path) {
+                rootContent(database: database)
+                    .navigationDestination(for: MeetingID.self) { meetingId in
+                        MeetingDetailView(database: database, meetingId: meetingId)
+                    }
+                    .navigationDestination(for: PersonID.self) { personId in
+                        PersonDetailView(database: database, personId: personId)
+                    }
+                    .navigationDestination(for: SeriesID.self) { seriesId in
+                        SeriesDetailView(database: database, seriesId: seriesId)
+                    }
+            }
+        }
+        .onChange(of: selectedSection) { _, _ in
+            path = NavigationPath()
         }
     }
 
     @ViewBuilder
-    private func contentColumn(database: AppDatabase) -> some View {
-        switch selectedSection ?? .meetings {
-        case .meetings:
-            MeetingsListView(database: database, selection: $selectedMeetingId)
-        case .people:
-            PeopleListView(database: database, selection: $selectedPersonId)
+    private func rootContent(database: AppDatabase) -> some View {
+        switch selectedSection {
+        case .home:
+            HomeView(database: database, selection: $selectedSection)
+        case .savedMeetings:
+            MeetingsListView(database: database)
         case .series:
-            SeriesListView(database: database, selection: $selectedSeriesId)
-        case .ask:
-            // Reserved slot — no Ask screen ships in S6 (plan §6). Unreachable via the
-            // sidebar today (`SidebarSection.built` excludes `.ask`), but kept honest rather
-            // than falling through to an unrelated screen if the enum is ever driven directly.
-            askReservedPlaceholder
-        }
-    }
-
-    @ViewBuilder
-    private func detailColumn(database: AppDatabase) -> some View {
-        switch selectedSection ?? .meetings {
-        case .meetings:
-            if let selectedMeetingId {
-                MeetingDetailView(database: database, meetingId: selectedMeetingId)
-            } else {
-                placeholder("Select a meeting")
-            }
+            SeriesListView(database: database)
         case .people:
-            if let selectedPersonId {
-                PersonDetailView(database: database, personId: selectedPersonId)
-            } else {
-                placeholder("Select a person")
-            }
-        case .series:
-            if let selectedSeriesId {
-                SeriesDetailView(database: database, seriesId: selectedSeriesId)
-            } else {
-                placeholder("Select a series")
-            }
+            PeopleListView(database: database)
+        case .newMeeting:
+            placeholder("Recording isn't wired up yet — coming with the capture work")
         case .ask:
-            askReservedPlaceholder
+            placeholder("Ask is coming")
+        case .calendar:
+            placeholder("Calendar is coming")
         }
-    }
-
-    private var askReservedPlaceholder: some View {
-        placeholder("Ask is not built yet")
     }
 
     private func placeholder(_ text: String) -> some View {
