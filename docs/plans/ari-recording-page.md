@@ -457,6 +457,28 @@ human granting TCC once.
 4. **Indicator placement:** bottom-leading floating glass capsule over the detail pane
    (glass-over-chrome, safeAreaInset per Liquid Glass v2).
 
+## Status & review follow-ups (2026-07-21)
+
+**R1–R7 landed** (commits `c86d06e`, `b85c352`, `a0fe338`, `1e3f057`, `b99a92e`). Reviewed by
+swift-code-reviewer; HIGHs H1–H3 + M1/M4 fixed in `b99a92e`. **Open follow-ups from the review**
+(do before/at the R8/Rf close-out):
+- **M2:** `Resampler` allocates an `AVAudioConverter` per realtime callback (glitch risk +
+  filter-state discontinuities at chunk boundaries when source rate ≠ 48 kHz). Cache one
+  converter per source rate in `RealtimeWindowEmitter`, or move resampling to the coordinator.
+- **M3:** a stalled-but-unfinished source starves windowing and grows the other buffer
+  unboundedly — add a staleness deadline that demotes a silent live source.
+- **M1 (real fix):** rebuild the system-tap graph on a tap-format change (comment records the
+  limitation for now).
+- **L2:** R8's orphan scan must ignore empty `.checkpoints/` dirs with no Meeting row.
+- **L3 (R9):** progressive `downloadingAssets` readiness while the first-run model installs.
+- **L4:** consider a stop-drain timeout so `.stopping` can't hang forever on an analyzer bug.
+- The session's `micStatus`/`systemStatus` are snapshots from start; poll or observe
+  `sourceStatus()` during recording so M4's mid-recording status flips reach the UI banner.
+
+**R8 (crash recovery) and Rf (Lane-2 close-out: TCC grants, live transcript, navigate-away,
+AirPods churn, kill-recovery, >60 min, dual-run) remain open.** Lane 2 needs the signed app and
+the owner's one-time permission grants.
+
 ## Sources / grounding
 
 `docs/plans/arikit-native-shell.md` (§2-§11), `docs/plans/arikit-stt.md` (§2-§11),
