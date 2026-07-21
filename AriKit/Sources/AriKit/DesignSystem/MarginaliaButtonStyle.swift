@@ -123,8 +123,11 @@ public struct MarginaliaButtonStyle: ButtonStyle {
             // Filled roles (primary/recording) → accent/recording-red-tinted Liquid Glass, the
             // chrome/action-layer Signal (`docs/plans/liquid-glass-adoption.md`). `.interactive()`
             // supplies its own press response, so no manual pressed-fill branch applies here.
+            // Glass controls take the SYSTEM's capsule curvature (macOS 26 controls are round,
+            // concentric with window corners — liquid-glass-adoption.md v2); flat Marginalia
+            // surfaces below keep the brand 6pt control radius.
             label
-                .glassEffect(.regular.tint(Color.marginalia(spec.fill!, in: scheme)).interactive(), in: shape)
+                .glassEffect(.regular.tint(Color.marginalia(spec.fill!, in: scheme)).interactive(), in: Capsule())
         } else {
             label
                 .background {

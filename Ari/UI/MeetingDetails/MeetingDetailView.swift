@@ -50,10 +50,20 @@ struct MeetingDetailView: View {
                 sectionSwitcher
                 Divider().overlay(Color.marginalia(.hairline, in: scheme))
                 sectionContent
-                audioBar
+                missingAudioNotice
+            }
+            // The glass transport floats in the bottom safe area so section content scrolls
+            // beneath it (the glass keeps it legible — liquid-glass-adoption.md v2), instead
+            // of sitting in the VStack as an opaque band.
+            .safeAreaInset(edge: .bottom, alignment: .leading) {
+                if case .available = viewModel.audio, viewModel.meeting.value?.audioReference != nil {
+                    AudioPlayerBar(controller: audioController)
+                        .padding(.horizontal, MarginaliaSpacing.md.value)
+                        .padding(.bottom, MarginaliaSpacing.sm.value)
+                }
             }
         }
-        .background(Color.marginalia(.canvas, in: scheme))
+        .background(MarginaliaCanvasWash(scheme: scheme))
         .navigationTitle(viewModel.meeting.value?.title ?? "Meeting")
         .task(id: meetingId) {
             // Reset first: the detail view is REUSED across meetings in the split detail column
@@ -110,23 +120,15 @@ struct MeetingDetailView: View {
         }
     }
 
+    /// The honest missing-file reason, shown inline (opaque content layer, not floating
+    /// glass — it's a status note, not a control). Reserved for a REAL `audioReference`
+    /// that just didn't resolve to a file; a `nil` reference renders nothing (plan §5).
     @ViewBuilder
-    private var audioBar: some View {
-        // A `nil` audioReference means "the bar is absent" (plan §5) — the missing-file
-        // reason text is reserved for a REAL reference that just didn't resolve to a file.
-        if viewModel.meeting.value?.audioReference == nil {
-            EmptyView()
-        } else {
-            switch viewModel.audio {
-            case .available:
-                AudioPlayerBar(controller: audioController)
-            case let .missing(reason):
-                Text(reason)
-                    .marginaliaTextStyle(.caption, in: scheme)
-                    .padding(MarginaliaSpacing.sm.value)
-            case .unresolved:
-                EmptyView()
-            }
+    private var missingAudioNotice: some View {
+        if viewModel.meeting.value?.audioReference != nil, case let .missing(reason) = viewModel.audio {
+            Text(reason)
+                .marginaliaTextStyle(.caption, in: scheme)
+                .padding(MarginaliaSpacing.sm.value)
         }
     }
 }

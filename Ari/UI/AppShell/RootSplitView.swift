@@ -95,6 +95,6 @@ struct RootSplitView: View {
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.marginalia(.canvas, in: scheme))
+        .background(MarginaliaCanvasWash(scheme: scheme))
     }
 }

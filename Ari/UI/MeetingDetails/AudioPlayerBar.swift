@@ -5,6 +5,11 @@
 //  `nil` audio reference (plan §5); `.missing` renders its own honest reason text instead
 //  (see `MeetingDetailView`), never a dead scrubber.
 //
+//  A floating Liquid Glass capsule (chrome/action layer — liquid-glass-adoption.md v2),
+//  not an opaque band: `MeetingDetailView` places it in a bottom `safeAreaInset` so the
+//  transcript scrolls beneath it and the glass keeps it legible. Neutral `.regular` glass
+//  — the transport is passive chrome, not the Signal.
+//
 import AriKit
 import AriViewModels
 import SwiftUI
@@ -26,7 +31,7 @@ struct AudioPlayerBar: View {
                 .marginaliaTextStyle(.timecode, in: scheme)
         }
         .padding(.horizontal, MarginaliaSpacing.md.value)
-        .padding(.vertical, MarginaliaSpacing.sm.value)
-        .background(Color.marginalia(.elevated, in: scheme))
+        .padding(.vertical, MarginaliaSpacing.xs.value)
+        .glassEffect(.regular, in: Capsule())
     }
 }

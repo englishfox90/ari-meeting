@@ -47,7 +47,11 @@ struct HomeView: View {
             .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .background(Color.marginalia(.canvas, in: scheme))
+        // Soft scroll-edge effect keeps the header legible as it scrolls under the floating
+        // title-bar chrome; the ambient wash (canvas → elevated) gives the glass sidebar and
+        // toolbar tonal variation to refract (liquid-glass-adoption.md v2).
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .background(MarginaliaCanvasWash(scheme: scheme))
         .navigationTitle("Home")
         .task { await viewModel.observe() }
     }

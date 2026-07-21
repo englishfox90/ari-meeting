@@ -36,6 +36,43 @@ struct DesignGalleryMaterialsSection: View {
             materialSwatches
 
             liquidGlassSection
+
+            stockPresentationSection
+        }
+    }
+
+    // MARK: - Stock presentations (automatic glass)
+
+    /// Menus, popovers, and sheets pick up Liquid Glass automatically on macOS 26 when they
+    /// are STOCK presentations — the standard is "present with stock APIs, never paint a
+    /// custom background on them" (liquid-glass-adoption.md v2). This demo proves it live.
+    @State private var showsPopover = false
+
+    private var stockPresentationSection: some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+            Text("Stock menus/popovers/sheets = automatic Liquid Glass. Never add custom backgrounds to presented surfaces.")
+                .marginaliaTextStyle(.callout, in: scheme)
+
+            HStack(spacing: MarginaliaSpacing.md.value) {
+                Menu("Menu (stock glass)") {
+                    Button("Rename meeting") {}
+                    Button("Copy summary") {}
+                    Divider()
+                    Button("Delete meeting", role: .destructive) {}
+                }
+                .fixedSize()
+
+                Button("Popover (stock glass)") {
+                    showsPopover.toggle()
+                }
+                .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                .popover(isPresented: $showsPopover) {
+                    Text("A stock popover — the system supplies the glass; no custom background.")
+                        .marginaliaTextStyle(.callout, in: scheme)
+                        .padding(MarginaliaSpacing.lg.value)
+                        .frame(width: 260)
+                }
+            }
         }
     }
 

@@ -30,8 +30,11 @@ struct CardListScaffold<Item: Identifiable & Sendable, Destination: Hashable>: V
                 }
             }
             .listStyle(.inset)
+            // Hide the List's own opaque backdrop so the ambient canvas wash shows through
+            // (rows keep their stock appearance; only the page ground changes).
+            .scrollContentBackground(.hidden)
         }
-        .background(Color.marginalia(.canvas, in: scheme))
+        .background(MarginaliaCanvasWash(scheme: scheme))
         .navigationTitle(navigationTitle)
     }
 }
