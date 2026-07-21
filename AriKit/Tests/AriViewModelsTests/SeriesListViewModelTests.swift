@@ -41,6 +41,31 @@ struct SeriesListViewModelTests {
         #expect(all.map(\.id) == [series.id])
     }
 
+    @Test("searchText filters loaded series by title; hasNoMatches on a miss")
+    func searchFilter() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        try await database.series.upsert(Series(id: "s-taylor", title: "Taylor Sync", createdAt: now, updatedAt: now))
+        try await database.series.upsert(Series(id: "s-brian", title: "Brian 1:1", createdAt: now, updatedAt: now))
+
+        let viewModel = SeriesListViewModel(database: database)
+        await viewModel.observe()
+
+        // No query → everything (alphabetical from the repository).
+        #expect(viewModel.filtered.map(\.title) == ["Brian 1:1", "Taylor Sync"])
+        #expect(!viewModel.hasNoMatches)
+
+        // Case-insensitive title match.
+        viewModel.searchText = "tay"
+        #expect(viewModel.filtered.map(\.id) == [SeriesID("s-taylor")])
+        #expect(!viewModel.hasNoMatches)
+
+        // A miss is an honest no-matches, distinct from .empty.
+        viewModel.searchText = "zzz"
+        #expect(viewModel.filtered.isEmpty)
+        #expect(viewModel.hasNoMatches)
+    }
+
     @Test("honest failed on a real read error")
     func honestFailed() async throws {
         let database = try AppDatabase.makeInMemory()

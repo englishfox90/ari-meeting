@@ -75,6 +75,7 @@ Models/
 
 - **`Summary`** — no Rust row; Store-port decision (decision 0.2).
 - **Response/aggregate DTOs → app/view layer later:** `PersonSummary`, `PersonDetail`, `ProfileFactWithPerson`, the `SeriesSummary` count-view, `SeriesMember`, `SeriesForMeeting`, `CalendarEventDetail`, `LinkedMeeting`, `MeetingCandidate`, `CalendarInfo`. Rationale: they carry computed counts / joins / nav position (`activeFactCount`, `meetingCount`, `position`) — deferring keeps domain types free of stale aggregates (No-Fake-State at the type level).
+  - **Landed (2026-07-21):** `SeriesSummary` is now implemented (`Models/SeriesSummary.swift`) as the read-only count-view for the Series list — `meetingCount` + `lastMeetingTime`, produced only by `SeriesRepository.allSummaries()`/`observeSummaries()`, never persisted. NB it revises decision 3 (§ "Key decisions") for THIS DTO: `lastMeetingTime` is a real `Date?` (the most-recent member `meeting.createdAt`, an unambiguous instant), NOT the `String` uncertainty that still applies to `SeriesMember.occurrenceTime`. The domain `Series` type stays aggregate-free.
 - **Input DTO → command layer later:** `NewPerson`.
 - **Engine-op results → Engine module:** `ExtractionResult`, `ReconciliationResult`.
 - **Job/process bookkeeping → Engine:** `SummaryProcess`, `TranscriptChunk` (summarizer cache).

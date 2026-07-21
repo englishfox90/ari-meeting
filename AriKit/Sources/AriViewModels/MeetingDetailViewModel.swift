@@ -29,6 +29,9 @@ public final class MeetingDetailViewModel {
     public private(set) var participants: [Person] = []
     public private(set) var speakerNames: [SpeakerID: String] = [:]
     public private(set) var audio: AudioAvailability = .unresolved
+    /// Recording-relative seconds of every citation marker in the summary, sorted and unique
+    /// (empty when there is no summary or it carries no markers — never fabricated).
+    public private(set) var referencedMoments: [Double] = []
 
     private let database: AppDatabase
 
@@ -46,6 +49,7 @@ public final class MeetingDetailViewModel {
 
             transcript = try await database.transcripts.forMeeting(id)
             summary = try await database.summaries.forMeeting(id)
+            referencedMoments = ReferencedMoments.parse(from: summary?.bodyMarkdown ?? "")
             notes = try await database.meetingNotes.find(id)
             participants = try await database.persons.participants(inMeeting: id)
             speakerNames = try await Self.resolveSpeakerNames(

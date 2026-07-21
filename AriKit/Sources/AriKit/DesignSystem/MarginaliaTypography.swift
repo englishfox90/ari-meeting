@@ -135,12 +135,17 @@ public extension MarginaliaTextStyle {
         let spec = spec
         switch spec.face {
         case "Bricolage Grotesque":
-            // The `Ari` app bundles the real face as a SINGLE variable font whose family name is
-            // "Bricolage Grotesque" (registered via CoreText at launch — see `AppFonts`), so
-            // `.weight(_:)` drives the `wght` axis and resolves the right cut. Falls back to the
-            // system font (harmless) if the app hasn't registered it.
-            return Font.custom(spec.face, size: spec.sizePt, relativeTo: relativeTextStyle)
-                .weight(spec.weight)
+            // The app bundles the brand face as two STATIC cuts — "Bricolage Grotesque SemiBold"
+            // (600) and "…Bold" (700) — registered via CoreText at launch (`AppFonts`). Select
+            // the concrete family by declared weight rather than driving a variable `wght` axis:
+            // SwiftUI's `.weight(_:)` does NOT reliably move a registered variable font's axis, so
+            // a variable file rendered at its (heavy) default instead of the intended cut. Static
+            // outlines make the weight deterministic and avoid synthetic emboldening. Falls back
+            // to the system font (harmless) if the app hasn't registered them.
+            let family = spec.weightValue >= 700
+                ? "Bricolage Grotesque Bold"
+                : "Bricolage Grotesque SemiBold"
+            return Font.custom(family, size: spec.sizePt, relativeTo: relativeTextStyle)
         case "SF Mono":
             return Font.system(size: spec.sizePt, weight: spec.weight, design: .monospaced)
                 .monospacedDigit()

@@ -1,6 +1,7 @@
 # AriKit — Native macOS Read UI (Phase 2, slice S6) — plan
 
-> **STATUS: PLAN / IN PROGRESS.** This is the S6 detail promised by `docs/plans/arikit-native-shell.md`
+> **STATUS: LANDED (2026-07-20), then polished (2026-07-21).** All six slices shipped; the read UI
+> runs on the real imported library. This is the S6 detail promised by `docs/plans/arikit-native-shell.md`
 > (§11 S6); the DECIDED block there sequenced it FIRST (after S0 + S8-lite import), ahead of the
 > capture vertical.
 >
@@ -8,6 +9,20 @@
 > + `AriViewModelsTests` (headless `swift test`; mirrors the `AriCapture` split). (2) Button-style
 > home = **`AriKit/DesignSystem`** (shared, parity-testable). (3) Audio path = **`<audioReference.path>/audio.mp4`**
 > with an honest `.missing` fallback; reconcile with S8's audio-file adoption before S6d closes.
+>
+> **Post-S6 polish (2026-07-21) — beyond the original spec, all landed:**
+> - **Meeting detail** redesigned to a resizable two-pane (summary-first + transcript/audio rail),
+>   with `MarginaliaMarkdownView` block rendering (headings/lists/tables) and inline `[MM:SS]`
+>   citation chips (replaces the flattened `MarkdownText`).
+> - **Series detail** rebuilt as the "connected record": rich ledger via `MarginaliaMarkdownView`,
+>   SERIES eyebrow + count/last-meeting summary line, bordered ledger/timeline panels, and — the
+>   defining feature — the ledger's cross-meeting `@mref(m<N>@TS)` citations render as tappable
+>   chips that open the referenced member meeting **at the cited moment** (new `MeetingMoment`
+>   nav value + `MeetingDetailView(initialSeek:)`). Emphasis (`*italic*`/`**bold**`) that straddles
+>   a citation is preserved via sentinel-substitution before inline parsing.
+> - **Series list** upgraded from bare rows to searchable + alphabetically sorted, each row carrying
+>   real `meetingCount` + relative last-meeting date (new `SeriesSummary` DTO + repository
+>   aggregate; see `arikit-models.md` §7.7 and `arikit-component-library.md`).
 
 ## 1. Goal & seam
 
@@ -138,8 +153,10 @@ public enum AudioAvailability: Sendable, Equatable {
 ```
 
 `PeopleListViewModel` (`state: LoadState<[Person]>`, marks `isOwner`), `PersonDetailViewModel`
-(`person`, participant `meetings`), `SeriesListViewModel` (`state: LoadState<[Series]>`),
-`SeriesDetailViewModel` (`series`, `memberMeetings`, honest nil `ledgerMarkdown`).
+(`person`, participant `meetings`), `SeriesListViewModel` (`state: LoadState<[SeriesSummary]>` +
+`searchText`/`filtered`/`hasNoMatches` — updated post-S6 from `[Series]` for count/last-meeting rows
+and client-side search), `SeriesDetailViewModel` (`series`, `memberMeetings`, honest nil
+`ledgerMarkdown`).
 
 **Load pattern.** List VMs consume `repository.observeAll()` in `.task` for live updates; detail VMs
 do one-shot `find`/`forMeeting` reads. All reads `async throws`; a thrown error maps to
@@ -147,8 +164,9 @@ do one-shot `find`/`forMeeting` reads. All reads `async throws`; a thrown error 
 
 Data sources per screen: meetings list `meetings.observeAll()`; meeting detail `meetings.find`,
 `transcripts.forMeeting`, `summaries.forMeeting`, `meetingNotes.find`, `persons.participants(inMeeting:)`,
-`speakers.all()` (build `[SpeakerID: label]`); people `persons.all()`/`find`/`owner()`; series
-`series.all()`/`find` (ledger-hydrated) / `series.meetingIds(inSeries:)`.
+`speakers.all()` (build `[SpeakerID: label]`); people `persons.all()`/`find`/`owner()`; series list
+`series.allSummaries()`/`observeSummaries()` (aggregate count + last-meeting, sorted; post-S6),
+series detail `series.find` (ledger-hydrated) / `series.meetingIds(inSeries:)`.
 
 ## 3. @Observable-MVVM discipline & AppEnvironment injection
 
