@@ -7,11 +7,42 @@ import AriKit
 import AriViewModels
 import SwiftUI
 
+/// Local, gallery-only sample item — a simple `Identifiable` to drive the `CardListScaffold`
+/// sample without depending on a real domain model.
+private struct GallerySampleCardItem: Identifiable, Hashable, Sendable {
+    let id: String
+    let title: String
+    let metadata: String?
+}
+
 struct DesignGalleryComponentsSection: View {
     let scheme: ColorScheme
     let glass: Bool
 
     private let sampleNames = ["Dana Kim", "Priya Shah", "Elliott Marsh"]
+
+    private let sampleTranscriptLines: [Transcript] = [
+        Transcript(
+            id: "gallery-transcript-1",
+            meetingId: "gallery-meeting",
+            transcript: "Let's start with the roadmap review — where are we on the Q3 milestones?",
+            timestamp: "00:00",
+            audioStartTime: 4.0
+        ),
+        Transcript(
+            id: "gallery-transcript-2",
+            meetingId: "gallery-meeting",
+            transcript: "On track. The Store port lands this week; Recall UI is next.",
+            timestamp: "00:12",
+            audioStartTime: 91.6
+        ),
+    ]
+
+    private let sampleCardItems: [GallerySampleCardItem] = [
+        GallerySampleCardItem(id: "1", title: "1:1 with Dana", metadata: "Yesterday · 32 min"),
+        GallerySampleCardItem(id: "2", title: "Weekly sync", metadata: "Recurring · Thursdays"),
+        GallerySampleCardItem(id: "3", title: "Design review", metadata: "3 attendees"),
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
@@ -24,7 +55,45 @@ struct DesignGalleryComponentsSection: View {
             Text("StateContainer — all four LoadState cases")
                 .marginaliaTextStyle(.callout, in: scheme)
             stateContainerGrid
+
+            Text("TranscriptSegmentRow")
+                .marginaliaTextStyle(.callout, in: scheme)
+            transcriptSegmentRowSample
+
+            Text("CardListScaffold")
+                .marginaliaTextStyle(.callout, in: scheme)
+            cardListScaffoldSample
         }
+    }
+
+    private var transcriptSegmentRowSample: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(sampleTranscriptLines) { line in
+                TranscriptSegmentRow(line: line, speakerName: "Priya Shah", onSeek: { _ in })
+            }
+        }
+        .padding(MarginaliaSpacing.md.value)
+        .galleryComponentSurface(glass: glass, scheme: scheme)
+    }
+
+    private var cardListScaffoldSample: some View {
+        NavigationStack {
+            CardListScaffold(
+                state: .loaded(sampleCardItems),
+                emptyTitle: "No items yet",
+                emptyMessage: "Sample empty state for the gallery.",
+                navigationTitle: "Sample list",
+                destination: { $0.id },
+                rowTitle: { $0.title },
+                rowMetadata: { $0.metadata }
+            )
+        }
+        .frame(height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
+                .strokeBorder(Color.marginalia(.hairline, in: scheme), lineWidth: 1)
+        )
     }
 
     private var surfaceCard: some View {

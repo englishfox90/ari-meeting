@@ -11,7 +11,6 @@ struct PeopleListView: View {
     let database: AppDatabase
 
     @State private var viewModel: PeopleListViewModel
-    @Environment(\.colorScheme) private var scheme
 
     init(database: AppDatabase) {
         self.database = database
@@ -19,20 +18,15 @@ struct PeopleListView: View {
     }
 
     var body: some View {
-        StateContainer(
+        CardListScaffold(
             state: viewModel.state,
             emptyTitle: "No people yet",
-            emptyMessage: "People from meetings and calendar attendees will show up here."
-        ) { people in
-            List(people) { person in
-                NavigationLink(value: person.id) {
-                    CardRow(title: person.displayName, metadata: metadata(for: person))
-                }
-            }
-            .listStyle(.inset)
-        }
-        .background(Color.marginalia(.canvas, in: scheme))
-        .navigationTitle("People")
+            emptyMessage: "People from meetings and calendar attendees will show up here.",
+            navigationTitle: "People",
+            destination: { $0.id },
+            rowTitle: { $0.displayName },
+            rowMetadata: metadata(for:)
+        )
         .task { await viewModel.observe() }
     }
 

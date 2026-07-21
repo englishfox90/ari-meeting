@@ -11,7 +11,6 @@ struct SeriesListView: View {
     let database: AppDatabase
 
     @State private var viewModel: SeriesListViewModel
-    @Environment(\.colorScheme) private var scheme
 
     init(database: AppDatabase) {
         self.database = database
@@ -19,20 +18,15 @@ struct SeriesListView: View {
     }
 
     var body: some View {
-        StateContainer(
+        CardListScaffold(
             state: viewModel.state,
             emptyTitle: "No series yet",
-            emptyMessage: "Recurring meetings will be grouped into a series here."
-        ) { series in
-            List(series) { item in
-                NavigationLink(value: item.id) {
-                    CardRow(title: item.title, metadata: metadata(for: item))
-                }
-            }
-            .listStyle(.inset)
-        }
-        .background(Color.marginalia(.canvas, in: scheme))
-        .navigationTitle("Series")
+            emptyMessage: "Recurring meetings will be grouped into a series here.",
+            navigationTitle: "Series",
+            destination: { $0.id },
+            rowTitle: { $0.title },
+            rowMetadata: metadata(for:)
+        )
         .task { await viewModel.observe() }
     }
 

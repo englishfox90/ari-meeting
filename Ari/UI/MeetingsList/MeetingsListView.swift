@@ -13,7 +13,6 @@ struct MeetingsListView: View {
     let database: AppDatabase
 
     @State private var viewModel: MeetingsListViewModel
-    @Environment(\.colorScheme) private var scheme
 
     init(database: AppDatabase) {
         self.database = database
@@ -21,20 +20,15 @@ struct MeetingsListView: View {
     }
 
     var body: some View {
-        StateContainer(
+        CardListScaffold(
             state: viewModel.state,
             emptyTitle: "No meetings yet",
-            emptyMessage: "Recorded and imported meetings will show up here."
-        ) { meetings in
-            List(meetings) { meeting in
-                NavigationLink(value: meeting.id) {
-                    CardRow(title: meeting.title, metadata: metadata(for: meeting))
-                }
-            }
-            .listStyle(.inset)
-        }
-        .background(Color.marginalia(.canvas, in: scheme))
-        .navigationTitle("Saved meetings")
+            emptyMessage: "Recorded and imported meetings will show up here.",
+            navigationTitle: "Saved meetings",
+            destination: { $0.id },
+            rowTitle: { $0.title },
+            rowMetadata: { metadata(for: $0) }
+        )
         .task { await viewModel.observe() }
     }
 

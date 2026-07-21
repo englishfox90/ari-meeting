@@ -26,38 +26,11 @@ struct TranscriptListView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
                     ForEach(transcript) { line in
-                        TranscriptLineView(line: line, speakerName: displayName(line.speakerId), onSeek: onSeek)
+                        TranscriptSegmentRow(line: line, speakerName: displayName(line.speakerId), onSeek: onSeek)
                     }
                 }
                 .padding(MarginaliaSpacing.md.value)
             }
-        }
-    }
-}
-
-private struct TranscriptLineView: View {
-    let line: Transcript
-    let speakerName: String?
-    let onSeek: (Double) -> Void
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-            HStack(spacing: MarginaliaSpacing.sm.value) {
-                if let speakerName {
-                    Text(speakerName)
-                        .marginaliaTextStyle(.subheadline, in: scheme)
-                }
-                if let audioStartTime = line.audioStartTime {
-                    Button(MarginaliaTimecode.mmss(audioStartTime)) {
-                        onSeek(audioStartTime)
-                    }
-                    .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
-                    .font(MarginaliaTextStyle.timecode.font)
-                }
-            }
-            Text(line.transcript)
-                .marginaliaTextStyle(.body, in: scheme)
         }
     }
 }
