@@ -2,6 +2,30 @@
 
 ## 0. Status & scope guard
 
+> **PROGRESS (2026-07-20): Track E + Track H LANDED, pushed to `main` `731a2d7`.** Track I (Series)
+> remains deferred (Phase-2-blocked). Built as parallel Sonnet-implementer worktrees, Opus-reviewed
+> + integrated; combined AriKit suite **506 tests / 76 suites** green, Swift 6 strict.
+> - **E (MLX) — LANDED, mechanism-GO (NOT yet full numeric-GO).** `AriKitEngineMLX` product exists
+>   (`MLXClient`, `ModelHost`, `MLXRegistration`; `MLXVLM` dropped; `.v5` isolated to this target
+>   only). True streaming confirmed (`ChatSession.streamResponse(to:)` yields `String`). The live
+>   gate passes on the product path — real Qwen3.5-4B-**MLX**-4bit inference, no `<think>` leak,
+>   honest `providerUnavailable` — run via `xcrun xctest` on the xcodebuild-built bundle (bare
+>   `swift test` has no metallib; the `.enabled(if:)` env gate does not propagate through
+>   `xcodebuild test`, so run the built `.xctest` directly with `ARIKIT_MLX_LIVE_TESTS=1`). ⚠️ The
+>   **real repo id is `mlx-community/Qwen3.5-4B-MLX-4bit`** (the `-MLX-` infix) — this doc's prose
+>   label "Qwen3.5-4B-4bit" (§1, §1.6) does NOT resolve on HF. **Still open:** the full 3-axis
+>   meet-or-beat scoring (citation/owner/name %, §1.6) is not ported to Swift — `MLXS1DualRunTests`
+>   is a shape/smoke reproduction; the numeric gate is inherited from the S1 spike. A HIGH review
+>   finding (ModelHost async-cache reentrancy → duplicate multi-GB downloads) was fixed by caching
+>   the in-flight `Task`, not the value.
+> - **H (Persons) — LANDED.** `Engine/Persons/{PersonExtraction,PersonReconciliation,PersonResolve,
+>   LabeledTranscript}.swift`; Store hand-offs done (`meetingParticipant` table + repo methods,
+>   `FactStatus.removed`, 7 additive `ProfileFactRepository` methods on the still-unshipped
+>   `v1_baseline`); the §6-7 shared `ProviderConfigResolution` helper was lifted out of
+>   `SummaryService` (behavior-preserving; `SummaryServiceTests` unchanged). Note: real-world value
+>   is thin until a participant roster is populated (Phase-2 calendar or manual linking).
+> - **I (Series) — NOT STARTED, deferred to post-Phase-2** (§3.1 blocker unchanged).
+
 This plan **extends** `docs/plans/arikit-engine-providers.md` (the Phase-3.4 plan). It does not
 re-derive §8 (MLX) or §5 Slices H/I — it consolidates them into three concrete, independently-
 gated tracks and fills the gaps the providers plan flagged. Read the providers plan first; where
@@ -11,9 +35,9 @@ this doc and that one disagree, this doc is the newer refinement for these three
 `Engine/Providers/{LLMClient,ProviderConfig,ProviderFactory,StubLLMClient,OpenAICompatibleClient,
 AnthropicClient,ClaudeCLIClient,FoundationModelsClient}.swift` and `Engine/Summary/{Template,
 TemplateRegistry,TemplateSelector,Chunking,LanguageResolution,SummaryCitations,SummaryGenerator,
-SummaryService,SummarySettings,StubSettings,TaskCancellationCoordinator}.swift`. The three tracks
-here are the **remaining Slices E, H, I** of that plan. `Engine/Persons/` and `Engine/Series/`
-do **not** exist yet.
+SummaryService,SummarySettings,StubSettings,TaskCancellationCoordinator}.swift`, plus (2026-07-20)
+**Track E `Engine`-adjacent `AriKitEngineMLX/**`** and **Track H `Engine/Persons/**`** — see the
+PROGRESS block above. `Engine/Series/` does **not** exist yet (Track I deferred).
 
 **Honest framing (principle 8, `swift-migration-plan.md:45`).** All three are **ports of frozen
 features**, not net-new capability:
@@ -382,11 +406,11 @@ inherited via `ProviderFactory`.
 
 ## 4. Sequencing & WIP (honor: one implemented at a time)
 
-| Track | Doable now? | Blocker | Verification |
+| Track | Status | Blocker | Verification |
 |---|---|---|---|
-| **E — MLX** | **Yes** (provider layer A–G landed; STT/S2 GO) | none structural | **needs real machine + model download** — not headless-autonomous |
-| **H — Persons** | **Yes** (fully headless-testable) | additive `meetingParticipant` table + repo methods (Store hand-off); real-world *value* needs participants populated (calendar = Phase 2, or manual linking) | headless `swift test` against stub |
-| **I — Series** | **No** | **Phase 2** (EventKit-synced `calendarEvent` rows for the primary detection path) | headless once unblocked |
+| **E — MLX** | **✅ LANDED (mechanism-GO)** 2026-07-20 | numeric 3-axis gate not yet Swift-ported (inherited from S1 spike) | live inference passed via `xcrun xctest` on xcodebuild bundle |
+| **H — Persons** | **✅ LANDED** 2026-07-20 | real-world *value* needs participants populated (calendar = Phase 2, or manual linking) | headless `swift test` against stub — green |
+| **I — Series** | **⏳ deferred** | **Phase 2** (EventKit-synced `calendarEvent` rows for the primary detection path) | headless once unblocked |
 
 **Recommended order: E → H → (Phase 2) → I.**
 - **E first**: completes the provider layer, retires `llama-helper`, and confirms the already-GO S1
