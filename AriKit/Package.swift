@@ -55,6 +55,14 @@ let package = Package(
         .library(
             name: "AriKit",
             targets: ["AriKit"]
+        ),
+        // macOS-only: capture's pure DSP core (arikit-native-shell.md §2.2, §11 S1). Depends on
+        // AriKit (for the `PCMWindow` seam type), never the reverse, so `AriKit.Engine` stays
+        // capture-agnostic and iOS-buildable. The live-device classes (SystemAudioTap,
+        // MicrophoneCapture, CaptureCoordinator — plan §11 S2-S4) are NOT part of this slice.
+        .library(
+            name: "AriCapture",
+            targets: ["AriCapture"]
         )
     ],
     dependencies: [
@@ -76,6 +84,25 @@ let package = Package(
             resources: [
                 .copy("Fixtures")
             ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        // Phase 3.2 slice S1 (docs/plans/arikit-native-shell.md §11) — the pure, headless-
+        // testable DSP core: Resampler, AudioMixer, SpeechVAD segmenter, AACRecorder,
+        // IncrementalSaver. All AVFoundation-backed code is `#if os(macOS)`-gated in source
+        // (the product is conceptually macOS-only per plan §2.2; only the macOS `Ari` app
+        // target ever depends on it — `Ari Lite`/iOS supplies its own mic-only capture, Phase 6).
+        .target(
+            name: "AriCapture",
+            dependencies: ["AriKit"],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .testTarget(
+            name: "AriCaptureTests",
+            dependencies: ["AriCapture", "AriKit"],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
