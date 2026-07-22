@@ -121,7 +121,7 @@ Each section is `SectionHeader` + a `VStack(spacing:.md)` of `SettingsGroup`s. A
 |---|---|---|
 | Appearance (System/Light/Dark) | stock `Picker(.segmented)` trailing a `SettingsRow`, bound to `@AppStorage`/`AppearanceStore` | **LIVE** (native theme) |
 | Show meeting notch | `SettingsToggleRow` + `.disabled(availability.isDisabled)`, reason as subtitle | **HONEST-DISABLED** — notch is a Rust sidecar |
-| Show in menu bar | `SettingsToggleRow` (honest-disabled) | **HONEST-DISABLED** — no menu-bar item yet |
+| Show in menu bar | `SettingsToggleRow` bound to `MenuBarVisibilityStore` (`@AppStorage`, like theme) | **LIVE** — gates the `MenuBarExtra` (docs/plans/menu-bar-item.md) |
 | Recording alerts / notifications | `SettingsToggleRow` (honest-disabled) | **HONEST-DISABLED** — notifications not built Swift-side |
 | Recordings path (read-only) + Open Folder | `Text` + `.marginalia(.secondary)` button → `NSWorkspace.open`, block row | **LIVE** — real path from `AppEnvironment` |
 

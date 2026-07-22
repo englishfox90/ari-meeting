@@ -88,7 +88,6 @@ struct SettingsViewModelTests {
 
         let groups: [Availability] = [
             viewModel.notchAvailability,
-            viewModel.menuBarAvailability,
             viewModel.recordingAlertsAvailability,
             viewModel.recordingStartNotificationAvailability
         ]
@@ -204,6 +203,46 @@ struct SettingsViewModelTests {
     func recordingsSystemDeviceKeyIsRetired() {
         let keys = SettingKey.allCases.map(\.rawValue)
         #expect(!keys.contains("recordingsSystemDevice"))
+    }
+
+    @Test("SettingKey no longer has a generalShowInMenuBar case — moved to @AppStorage")
+    func generalShowInMenuBarKeyIsRetired() {
+        // Menu-bar visibility gates a Scene, so it lives in UserDefaults/@AppStorage
+        // (MenuBarVisibilityStore), not the setting table — exactly like theme.
+        let keys = SettingKey.allCases.map(\.rawValue)
+        #expect(!keys.contains("generalShowInMenuBar"))
+    }
+
+    @Test("menuBarAvailability is live — the Swift MenuBarExtra is wired")
+    func menuBarIsLive() throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(database: database)
+
+        #expect(viewModel.menuBarAvailability == .live)
+    }
+
+    @Test("MenuBarVisibilityStore round-trips through UserDefaults, defaults false")
+    func menuBarVisibilityStoreRoundTrips() {
+        let store = MenuBarVisibilityStore()
+        // Save + restore the shared key so this test never leaks into others.
+        let original = UserDefaults.standard.object(forKey: MenuBarVisibilityStore.defaultsKey)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: MenuBarVisibilityStore.defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: MenuBarVisibilityStore.defaultsKey)
+            }
+        }
+
+        UserDefaults.standard.removeObject(forKey: MenuBarVisibilityStore.defaultsKey)
+        #expect(store.isVisible == false) // absent key → honest OFF default (parity with Rust)
+
+        store.isVisible = true
+        #expect(store.isVisible == true)
+        #expect(UserDefaults.standard.bool(forKey: MenuBarVisibilityStore.defaultsKey) == true)
+
+        store.isVisible = false
+        #expect(store.isVisible == false)
     }
 
     @Test("a persisted mic-device UID is what the recording-start seam reads (end-to-end plumbing)")

@@ -32,7 +32,6 @@ public final class SettingsViewModel {
     /// Honest default constants — applied only when the store has no row for that key yet.
     public enum Defaults {
         public static let showNotch = false
-        public static let showInMenuBar = false
         public static let recordingAlerts = true
         /// Calendar meeting reminders (F5) default ON — the ported feature is enabled out of the
         /// box, though nothing actually fires until the OS grants notification authorization.
@@ -63,15 +62,20 @@ public final class SettingsViewModel {
     // MARK: - General
 
     public private(set) var showNotch: Bool = Defaults.showNotch
-    public private(set) var showInMenuBar: Bool = Defaults.showInMenuBar
     public private(set) var recordingAlerts: Bool = Defaults.recordingAlerts
+
+    /// Menu-bar visibility is a device-local UI preference read at app-scene scope (it gates the
+    /// `MenuBarExtra`), so — like theme (`appearance`) — it lives in `UserDefaults`, NOT the
+    /// `setting` table. The Settings toggle binds through this store; `AriApp` reads the same key
+    /// via `@AppStorage` (docs/plans/menu-bar-item.md).
+    public let menuBar: MenuBarVisibilityStore
 
     public let notchAvailability: Availability = .disabled(
         reason: "The meeting notch runs in the frozen Rust app; the Swift shell doesn't drive it yet."
     )
-    public let menuBarAvailability: Availability = .disabled(
-        reason: "There is no menu-bar item in the Swift app yet."
-    )
+    /// LIVE — the Swift `MenuBarExtra` is wired (docs/plans/menu-bar-item.md). Visibility is the
+    /// `menuBar` store above; there is no honest-disabled reason to surface anymore.
+    public let menuBarAvailability: Availability = .live
     /// Recording start/stop alerts are a DISTINCT notification from the two ported here (calendar
     /// reminders + summary-ready) — they'd hook the recording lifecycle, which isn't wired yet, so
     /// this stays honestly disabled with a specific reason (No-Fake-State), not the stale
@@ -186,6 +190,7 @@ public final class SettingsViewModel {
         database: AppDatabase,
         secrets: SecretsStoring,
         appearance: AppearanceStore,
+        menuBar: MenuBarVisibilityStore = MenuBarVisibilityStore(),
         speechAssets: SpeechAssetProviding = SpeechAssetManager(),
         audioDevices: AudioDeviceProviding = CoreAudioDeviceEnumerator(),
         notifications: (any NotificationAuthorizing)? = nil,
@@ -194,6 +199,7 @@ public final class SettingsViewModel {
         self.database = database
         self.secrets = secrets
         self.appearance = appearance
+        self.menuBar = menuBar
         self.speechAssets = speechAssets
         self.audioDevices = audioDevices
         self.notifications = notifications
@@ -210,8 +216,7 @@ public final class SettingsViewModel {
         let settings = database.settings
 
         showNotch = await (try? settings.bool(forKey: .generalShowNotch)) ?? Defaults.showNotch
-        showInMenuBar = await (try? settings.bool(forKey: .generalShowInMenuBar))
-            ?? Defaults.showInMenuBar
+        // `menuBar` visibility is UserDefaults-backed (like `appearance`), not read here.
         recordingAlerts = await (try? settings.bool(forKey: .generalRecordingAlerts))
             ?? Defaults.recordingAlerts
 
@@ -265,11 +270,6 @@ public final class SettingsViewModel {
     public func setShowNotch(_ value: Bool) async throws {
         try await database.settings.setBool(value, forKey: .generalShowNotch)
         showNotch = value
-    }
-
-    public func setShowInMenuBar(_ value: Bool) async throws {
-        try await database.settings.setBool(value, forKey: .generalShowInMenuBar)
-        showInMenuBar = value
     }
 
     public func setRecordingAlerts(_ value: Bool) async throws {

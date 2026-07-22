@@ -345,6 +345,33 @@ final class AppEnvironment {
         session.confirmConsentRequested()
     }
 
+    /// The menu-bar item's generic "Start recording" (no calendar event): prime an untitled
+    /// recording and start immediately, surfacing the recording page. Mirrors
+    /// `startRecordingFromReminder` minus the event priming — a menu click is the explicit
+    /// initiation (never a silent auto-record), and the sole capture edge (`requestStart()` +
+    /// `confirmConsentRequested()`) is still what starts it. Event-named starts from the menu bar
+    /// go through `startRecordingFromReminder(eventId:)` instead. (docs/plans/menu-bar-item.md)
+    func startRecordingFromMenuBar() {
+        pendingNavigation = .section(.newMeeting)
+        guard let session = recordingSession else { return }
+        switch session.phase {
+        case .idle, .saved, .failed:
+            break
+        case .consentPrompt, .starting, .recording, .stopping:
+            return
+        }
+        session.reset()
+        session.requestStart()
+        session.confirmConsentRequested()
+    }
+
+    /// Raise a navigation intent to a workbench section from outside the view tree (the menu-bar
+    /// item's "Settings"/"Open Ari"). `RootSplitView` observes `pendingNavigation` and applies it,
+    /// then clears it via `consumePendingNavigation()`.
+    func navigate(to section: SidebarSection) {
+        pendingNavigation = .section(section)
+    }
+
     /// Clear a consumed navigation intent so it fires exactly once (`RootSplitView` calls this after
     /// applying it).
     func consumePendingNavigation() {

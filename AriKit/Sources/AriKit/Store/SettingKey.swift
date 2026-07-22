@@ -24,8 +24,12 @@ public enum SettingKey: String, Sendable, CaseIterable {
 
     // General
     case generalShowNotch
-    case generalShowInMenuBar
     case generalRecordingAlerts
+    // NOTE: `.generalShowInMenuBar` was retired (docs/plans/menu-bar-item.md) — menu-bar
+    // visibility is a device-local UI preference read at app-scene scope to gate the
+    // `MenuBarExtra`, so it moved to `UserDefaults`/`@AppStorage` (via `MenuBarVisibilityStore`),
+    // exactly like theme (see the theme note below). Any orphaned rows from an older build are
+    // simply unread.
 
     // Notifications (the Swift-native port — calendar reminders + summary-ready alerts).
     /// Whether a "meeting starts soon" reminder fires ahead of each synced calendar event.

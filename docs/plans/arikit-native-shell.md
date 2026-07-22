@@ -563,8 +563,9 @@ Calendar grant works under the signed bundle (impossible under a bare binary, `b
 > Settings landed per `docs/plans/arikit-calendar.md`; the Lane-2 grant/sync/auto-link checklist
 > was run by Paul under the signed bundle. The native Calendar page (week grid, detail sheet with
 > HTML-notes parsing, link/unlink, start-meeting handoff) shipped per
-> `docs/plans/arikit-calendar-ui.md`. **Still open from S7:** notch panel absorption (§2.4),
-> notifications/menu bar, and the F5 record prompt.
+> `docs/plans/arikit-calendar-ui.md`. The menu-bar item (`MenuBarExtra` — start/stop recording,
+> upcoming-meeting record, open/settings/quit) shipped per `docs/plans/menu-bar-item.md`.
+> **Still open from S7:** notch panel absorption (§2.4) and the F5 record prompt.
 
 **S8 — "import existing library" milestone.** Drive `LegacyDatabaseImporter` from the app + audio-
 file adoption + verification counts + honest key re-prompt. *Accept:* imported meeting counts

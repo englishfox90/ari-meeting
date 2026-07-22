@@ -47,7 +47,7 @@ struct SettingsGeneralSection: View {
                     SettingsToggleRow(
                         "Show in menu bar",
                         description: viewModel.menuBarAvailability.disabledReason
-                            ?? "A quick-access menu-bar item.",
+                            ?? "A quick-access menu-bar item for recording and upcoming meetings.",
                         isOn: showInMenuBarBinding
                     )
                     .disabled(viewModel.menuBarAvailability.isDisabled)
@@ -137,10 +137,14 @@ struct SettingsGeneralSection: View {
         )
     }
 
+    /// Menu-bar visibility is UserDefaults-backed (like `appearanceBinding`), not a
+    /// `SettingsRepository` row — writing the store synchronously flips `AriApp`'s
+    /// `@AppStorage(MenuBarVisibilityStore.defaultsKey)` gate, inserting/removing the `MenuBarExtra`
+    /// live (docs/plans/menu-bar-item.md).
     private var showInMenuBarBinding: Binding<Bool> {
         Binding(
-            get: { viewModel.showInMenuBar },
-            set: { newValue in Task { try? await viewModel.setShowInMenuBar(newValue) } }
+            get: { viewModel.menuBar.isVisible },
+            set: { viewModel.menuBar.isVisible = $0 }
         )
     }
 
