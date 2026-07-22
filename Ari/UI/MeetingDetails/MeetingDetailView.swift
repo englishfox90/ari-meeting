@@ -156,44 +156,33 @@ struct MeetingDetailView: View {
 
     // MARK: - Narrow: single stacked column
 
+    /// Narrow mode uses the STOCK `TabView` — on macOS 26 it renders the system's floating
+    /// Liquid Glass tab bar (the HIG tab-views appearance), which no hand-built switcher
+    /// should imitate (owner direction 2026-07-21; Liquid Glass v2 stock-first rule).
     private func narrowColumn(_ meeting: Meeting) -> some View {
         VStack(spacing: 0) {
             audioSection
-            sectionSwitcher
-            Divider().overlay(Color.marginalia(.hairline, in: scheme))
-            switch narrowSection {
-            case .summary:
-                ScrollView {
-                    // Notes have their own tab in narrow mode, so don't also fold them into Summary.
-                    summaryColumn(meeting, showInlineNotes: false)
-                        .padding(MarginaliaSpacing.md.value)
+            TabView(selection: $narrowSection) {
+                Tab(NarrowSection.summary.title, systemImage: "doc.text", value: .summary) {
+                    ScrollView {
+                        // Notes have their own tab in narrow mode, so don't also fold them
+                        // into Summary.
+                        summaryColumn(meeting, showInlineNotes: false)
+                            .padding(MarginaliaSpacing.md.value)
+                    }
                 }
-            case .transcript:
-                TranscriptListView(
-                    transcript: viewModel.transcript,
-                    displayName: viewModel.displayName(for:),
-                    onSeek: { audioController.seek(toSeconds: $0) }
-                )
-            case .notes:
-                notesBody
+                Tab(NarrowSection.transcript.title, systemImage: "text.quote", value: .transcript) {
+                    TranscriptListView(
+                        transcript: viewModel.transcript,
+                        displayName: viewModel.displayName(for:),
+                        onSeek: { audioController.seek(toSeconds: $0) }
+                    )
+                }
+                Tab(NarrowSection.notes.title, systemImage: "note.text", value: .notes) {
+                    notesBody
+                }
             }
         }
-    }
-
-    /// The capsule glass tab switcher (HIG tab-views appearance): a glass capsule with a
-    /// sliding selection pill — `MarginaliaGlassTabs`, since the stock macOS segmented
-    /// control doesn't render the capsule glass form.
-    private var sectionSwitcher: some View {
-        HStack {
-            MarginaliaGlassTabs(
-                tabs: NarrowSection.allCases.map { ($0, $0.title) },
-                selection: $narrowSection,
-                scheme: scheme
-            )
-            Spacer()
-        }
-        .padding(.horizontal, MarginaliaSpacing.md.value)
-        .padding(.vertical, MarginaliaSpacing.sm.value)
     }
 
     // MARK: - Shared building blocks
