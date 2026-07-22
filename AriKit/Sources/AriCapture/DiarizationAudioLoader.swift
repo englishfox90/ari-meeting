@@ -54,6 +54,12 @@
                 throw DiarizationError
                     .audioUnreadable("could not construct format converter for \(url.lastPathComponent)")
             }
+            // `AVAudioConverter.downmix` defaults to `false`, in which case a channel-count
+            // reduction maps output <- input channel 0 and silently DISCARDS every other
+            // channel, rather than mixing them. Without this, multi-channel input with signal
+            // predominantly (or only) outside channel 0 decodes to near-silence — a real
+            // No-Fake-State risk for imported stereo/dual-mono meeting files.
+            converter.downmix = true
 
             guard let inputBuffer = AVAudioPCMBuffer(
                 pcmFormat: file.processingFormat,
@@ -86,7 +92,11 @@
             nonisolated(unsafe) let pendingInputBuffer = inputBuffer
             let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
                 if inputConsumed {
-                    outStatus.pointee = .noDataNow
+                    // `.endOfStream`, not `.noDataNow`: this is a one-shot whole-file decode
+                    // with no more input ever coming, so the converter must flush its internal
+                    // sample-rate-conversion filter's tail into the output buffer rather than
+                    // stopping early and dropping the last handful of samples.
+                    outStatus.pointee = .endOfStream
                     return nil
                 }
                 inputConsumed = true

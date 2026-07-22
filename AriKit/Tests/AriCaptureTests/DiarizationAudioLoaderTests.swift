@@ -14,7 +14,12 @@
         let loader = DiarizationAudioLoader()
 
         /// 1 second, stereo, 44.1 kHz AAC — exercises both the sample-rate conversion (44.1 kHz
-        /// → 16 kHz) and the channel downmix (stereo → mono) in one fixture.
+        /// → 16 kHz) and the channel downmix (stereo → mono) in one fixture. Deliberately
+        /// asymmetric: the LEFT channel is SILENT and only the RIGHT channel carries a 330 Hz
+        /// tone (see `Fixtures/generate_stereo_fixture.swift`). This makes the fixture a real
+        /// downmix mutation-check: an implementation that discards every channel but the first
+        /// (`AVAudioConverter`'s `downmix = false` default) decodes this fixture to silence,
+        /// which `downmixesMultiChannelInput` below asserts against.
         private var stereoFixtureURL: URL {
             Bundle.module.url(forResource: "diarization-stereo-1s", withExtension: "m4a", subdirectory: "Fixtures")!
         }
@@ -37,9 +42,12 @@
             let samples = try await loader.load16kMono(from: stereoFixtureURL)
 
             #expect(!samples.isEmpty)
-            // The fixture is a real (non-silent) two-tone signal; a broken downmix that
-            // cancelled the channels or returned only one channel's worth of frames would
-            // still be non-empty, so also assert genuine signal energy survived the mix.
+            // The fixture's LEFT channel is silent and ONLY the RIGHT channel carries signal
+            // (see `Fixtures/generate_stereo_fixture.swift`). A downmix implementation that
+            // discards every channel but the first (`AVAudioConverter`'s default
+            // `downmix = false`) maps output <- left channel and decodes to all-zero output —
+            // this assertion fails against that implementation and passes only once the right
+            // channel's energy genuinely survives the mono mix.
             let hasSignal = samples.contains { abs($0) > 0.01 }
             #expect(hasSignal)
             // All samples stay within the canonical float PCM range — never clipped/fabricated
@@ -54,6 +62,22 @@
 
             await #expect(throws: DiarizationError.self) {
                 _ = try await loader.load16kMono(from: missingURL)
+            }
+        }
+
+        @Test("a corrupt/undecodable file throws an honest error, never a fabricated empty buffer")
+        func corruptFileThrowsHonestError() async throws {
+            let garbageURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ari-diarization-loader-test-\(UUID().uuidString).m4a")
+            defer { try? FileManager.default.removeItem(at: garbageURL) }
+
+            // Not a valid audio container at all — exercises the `AVAudioFile(forReading:)`
+            // throw branch (as opposed to the missing-file branch above, which never reaches
+            // `AVAudioFile` construction).
+            try Data("not a real m4a file, just garbage bytes".utf8).write(to: garbageURL)
+
+            await #expect(throws: DiarizationError.self) {
+                _ = try await loader.load16kMono(from: garbageURL)
             }
         }
     }
