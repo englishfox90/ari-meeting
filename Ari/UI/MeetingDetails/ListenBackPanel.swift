@@ -1,8 +1,9 @@
 //
 //  ListenBackPanel.swift — the "Listen Back" transport: play/pause, a draggable Liquid-Glass
-//  scrubber, and a current/duration readout, presented as one floating glass capsule (the
-//  macOS 26 / Apple Music transport idiom; glass is the chrome/action layer per
-//  docs/plans/liquid-glass-adoption.md).
+//  scrubber, and a current/duration readout, presented as one glass capsule (the macOS 26 /
+//  Apple Music transport idiom; glass is the chrome/action layer per
+//  docs/plans/liquid-glass-adoption.md). Pinned above the transcript (see MeetingDetailView's
+//  `listenBackTransport`), not floating — a fixed control bar that never overlaps transcript text.
 //
 //  The scrubber and total-duration readout stay inert until the controller resolves a real
 //  duration (`> 0`) — never a fabricated total or a dead-but-draggable track (No-Fake-State).

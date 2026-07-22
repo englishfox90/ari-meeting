@@ -72,6 +72,7 @@ struct MeetingDetailView: View {
         let viewModel: SpeakerIdentificationViewModel
         let audioURL: URL
     }
+
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
 
@@ -226,18 +227,13 @@ struct MeetingDetailView: View {
             missingAudioNotice
             sourceRecordSection(meeting)
             Divider().overlay(Color.marginalia(.hairline, in: scheme))
+            listenBackTransport
             transcriptHeader
             TranscriptListView(
                 transcript: viewModel.transcript,
                 displayName: viewModel.displayName(for:),
                 onSeek: { audioController.seek(toSeconds: $0) }
             )
-        }
-        // The glass transport floats over the SCROLLING transcript (safeAreaInset) — glass
-        // needs content moving beneath it to read as glass; inline on the flat rail it drew
-        // as opaque pills (the same chrome-layer lesson as the section switcher).
-        .safeAreaInset(edge: .bottom, alignment: .leading) {
-            floatingTransport
         }
     }
 
@@ -248,6 +244,7 @@ struct MeetingDetailView: View {
     private func narrowColumn(_ meeting: Meeting) -> some View {
         VStack(spacing: 0) {
             missingAudioNotice
+            listenBackTransport
             switch narrowSection {
             case .summary:
                 ScrollView {
@@ -268,11 +265,6 @@ struct MeetingDetailView: View {
             case .notes:
                 notesBody
             }
-        }
-        // Same chrome-layer rule as the wide rail: the transport floats over the scrolling
-        // section content, never inline as an opaque band.
-        .safeAreaInset(edge: .bottom, alignment: .leading) {
-            floatingTransport
         }
     }
 
@@ -381,7 +373,9 @@ struct MeetingDetailView: View {
                             Button {
                                 Task {
                                     await seriesViewModel.addToExisting(seriesId: series.id, meetingId: meetingId)
-                                    if seriesViewModel.errorMessage == nil { showingSeriesPicker = false }
+                                    if seriesViewModel.errorMessage == nil {
+                                        showingSeriesPicker = false
+                                    }
                                 }
                             } label: {
                                 HStack {
@@ -408,7 +402,9 @@ struct MeetingDetailView: View {
                 Button("Create") {
                     Task {
                         await seriesViewModel.createAndAdd(title: newSeriesTitle, meetingId: meetingId)
-                        if seriesViewModel.errorMessage == nil { showingSeriesPicker = false }
+                        if seriesViewModel.errorMessage == nil {
+                            showingSeriesPicker = false
+                        }
                     }
                 }
                 .buttonStyle(.marginalia(.primary, .regular, in: scheme))
@@ -434,7 +430,6 @@ struct MeetingDetailView: View {
         count == 1 ? "1 meeting" : "\(count) meetings"
     }
 
-    @ViewBuilder
     private var summaryBody: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             if let summary = viewModel.summary {
@@ -499,7 +494,9 @@ struct MeetingDetailView: View {
     }
 
     private func processingBannerKind(_ phase: MeetingProcessingCoordinator.Phase) -> MarginaliaBannerKind {
-        if case .failed = phase { return .error }
+        if case .failed = phase {
+            return .error
+        }
         return .info
     }
 
@@ -588,7 +585,9 @@ struct MeetingDetailView: View {
     }
 
     private func isSummaryGenerating(_ summaryVM: MeetingSummaryViewModel) -> Bool {
-        if case .generating = summaryVM.state { return true }
+        if case .generating = summaryVM.state {
+            return true
+        }
         return false
     }
 
@@ -660,7 +659,8 @@ struct MeetingDetailView: View {
         let targetMeetingId = meetingId
         let speakerCount = viewModel.speakerNames.isEmpty ? nil : viewModel.speakerNames.count
         Task {
-            guard await summaryVM.generate(meetingId: targetMeetingId, speakerCount: speakerCount) != nil else { return }
+            guard await summaryVM.generate(meetingId: targetMeetingId, speakerCount: speakerCount) != nil
+            else { return }
             // Only fold the result back in if the shared detail view still shows the meeting we
             // generated for. Generation is long-running and the `viewModel`/`summaryVM` are a
             // single `@State` pair reused across the split detail column, so if the user has
@@ -699,12 +699,16 @@ struct MeetingDetailView: View {
         }
     }
 
-    /// The floating glass transport — rendered only when audio genuinely resolved, placed by
-    /// callers in a bottom `safeAreaInset` so content scrolls beneath the glass.
+    /// The Listen Back transport, pinned above the transcript (never floating) so it never
+    /// overlaps transcript text and stays visible while the list scrolls beneath the header.
+    /// A trailing hairline separates it from the following content; rendered only when audio
+    /// genuinely resolved, so no empty band or stray divider shows without a recording
+    /// (No-Fake-State).
     @ViewBuilder
-    private var floatingTransport: some View {
+    private var listenBackTransport: some View {
         if viewModel.meeting.value?.audioReference != nil, case .available = viewModel.audio {
             ListenBackPanel(controller: audioController)
+            Divider().overlay(Color.marginalia(.hairline, in: scheme))
         }
     }
 
@@ -775,7 +779,9 @@ struct MeetingDetailView: View {
     /// Compact inline form of `identifySpeakersDisabledReason` — the full detail (including
     /// the missing path) stays in the tooltip and the audio banner.
     private var identifySpeakersShortReason: String {
-        if case .missing = viewModel.audio { return "Needs an audio file" }
+        if case .missing = viewModel.audio {
+            return "Needs an audio file"
+        }
         return "Needs audio-timed transcript"
     }
 
@@ -785,7 +791,9 @@ struct MeetingDetailView: View {
     }
 
     private var identifySpeakersDisabledReason: String {
-        if case let .missing(reason) = viewModel.audio { return reason }
+        if case let .missing(reason) = viewModel.audio {
+            return reason
+        }
         return "No transcript segments with audio timing are available yet."
     }
 
@@ -821,39 +829,41 @@ struct MeetingDetailView: View {
 
     private func identifySpeakersSheet(_ context: IdentifySpeakersContext) -> some View {
         IdentifySpeakersSheet(
-                viewModel: context.viewModel,
-                meetingId: meetingId,
-                audioURL: context.audioURL,
-                displayName: viewModel.displayName(for:),
-                createPerson: { name in
-                    // D9b review fix: surface the upsert failure instead of swallowing it with
-                    // `try?` and returning a dangling `PersonID` — with FKs ON, a dangling id
-                    // would later throw a raw FK error out of `confirmSpeaker` into
-                    // `runState.failed`, wiping the results list with no honest explanation.
-                    let person = Person(
-                        id: PersonID(UUID().uuidString),
-                        displayName: name,
-                        isOwner: false,
-                        createdAt: Date(),
-                        updatedAt: Date()
-                    )
-                    try await database.persons.upsert(person)
-                    return person.id
-                },
-                onSpeakersChanged: { await viewModel.load(meetingId) },
-                onDismiss: { identifyContext = nil },
-                samplesFor: { speakerId in
-                    SpeakerSamples.select(from: viewModel.transcript, speakerId: speakerId)
-                },
-                audioAvailable: {
-                    if case .available = viewModel.audio { return true }
-                    return false
-                }(),
-                isPlaying: audioController.isPlaying,
-                onPlayClip: { start, end in
-                    audioController.playClip(fromSeconds: start, toSeconds: end)
+            viewModel: context.viewModel,
+            meetingId: meetingId,
+            audioURL: context.audioURL,
+            displayName: viewModel.displayName(for:),
+            createPerson: { name in
+                // D9b review fix: surface the upsert failure instead of swallowing it with
+                // `try?` and returning a dangling `PersonID` — with FKs ON, a dangling id
+                // would later throw a raw FK error out of `confirmSpeaker` into
+                // `runState.failed`, wiping the results list with no honest explanation.
+                let person = Person(
+                    id: PersonID(UUID().uuidString),
+                    displayName: name,
+                    isOwner: false,
+                    createdAt: Date(),
+                    updatedAt: Date()
+                )
+                try await database.persons.upsert(person)
+                return person.id
+            },
+            onSpeakersChanged: { await viewModel.load(meetingId) },
+            onDismiss: { identifyContext = nil },
+            samplesFor: { speakerId in
+                SpeakerSamples.select(from: viewModel.transcript, speakerId: speakerId)
+            },
+            audioAvailable: {
+                if case .available = viewModel.audio {
+                    return true
                 }
-            )
+                return false
+            }(),
+            isPlaying: audioController.isPlaying,
+            onPlayClip: { start, end in
+                audioController.playClip(fromSeconds: start, toSeconds: end)
+            }
+        )
     }
 
     private func emptyState(title: String, message: String) -> some View {
