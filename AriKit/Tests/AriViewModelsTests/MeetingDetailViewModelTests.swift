@@ -131,6 +131,17 @@ struct MeetingDetailViewModelTests {
         try await database.transcripts.upsert(line1)
         try await database.transcripts.upsert(line2)
 
+        try await database.speakerSegments.insert([
+            SpeakerSegment(
+                id: "segment-1", meetingId: meetingId, speakerId: identifiedSpeaker.id,
+                clusterKey: "S1", startTime: 0, endTime: 2, source: .system, createdAt: meeting.createdAt
+            ),
+            SpeakerSegment(
+                id: "segment-2", meetingId: meetingId, speakerId: labelOnlySpeaker.id,
+                clusterKey: "S2", startTime: 3, endTime: 5, source: .system, createdAt: meeting.createdAt
+            ),
+        ])
+
         let viewModel = MeetingDetailViewModel(database: database)
         await viewModel.load(meetingId)
 

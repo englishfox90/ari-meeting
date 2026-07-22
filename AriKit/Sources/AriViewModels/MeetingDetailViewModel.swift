@@ -6,14 +6,13 @@
 //  reads"). A thrown error maps to `.failed(String)`. Missing summary/notes are represented
 //  as honest `nil`, never fabricated content (No-Fake-State).
 //
-//  Speaker-name resolution (`speakerNames`/`displayName(for:)`): there is no
-//  `SpeakerRepository.forMeeting(_:)` today (TODO(S6) below), so this view model reads
-//  `SpeakerRepository.all()` and narrows to the speaker ids actually referenced by this
-//  meeting's transcript segments. A speaker's display name prefers its linked `Person`'s
-//  `displayName` (looked up first among this meeting's participants, then via
-//  `PersonRepository.find(_:)` as a fallback for a speaker whose person isn't a linked
-//  participant), then falls back to the speaker's own `label`, else `nil` (honest — never a
-//  fabricated "Speaker 1"-style placeholder).
+//  Speaker-name resolution (`speakerNames`/`displayName(for:)`): reads
+//  `SpeakerRepository.forMeeting(_:)` (docs/plans/arikit-diarization.md D9a — closes the
+//  TODO(S6) workaround that used to narrow `SpeakerRepository.all()` by hand). A speaker's
+//  display name prefers its linked `Person`'s `displayName` (looked up first among this
+//  meeting's participants, then via `PersonRepository.find(_:)` as a fallback for a speaker
+//  whose person isn't a linked participant), then falls back to the speaker's own `label`, else
+//  `nil` (honest — never a fabricated "Speaker 1"-style placeholder).
 //
 import AriKit
 import Foundation
@@ -53,7 +52,7 @@ public final class MeetingDetailViewModel {
             notes = try await database.meetingNotes.find(id)
             participants = try await database.persons.participants(inMeeting: id)
             speakerNames = try await Self.resolveSpeakerNames(
-                for: transcript,
+                meetingId: id,
                 participants: participants,
                 database: database
             )
@@ -73,21 +72,16 @@ public final class MeetingDetailViewModel {
         return speakerNames[speakerId]
     }
 
-    // TODO(S6): replace with `SpeakerRepository.forMeeting(_:)` if/when it lands — today this
-    // narrows `SpeakerRepository.all()` to the ids referenced by `transcript` instead.
     private static func resolveSpeakerNames(
-        for transcript: [Transcript],
+        meetingId: MeetingID,
         participants: [Person],
         database: AppDatabase
     ) async throws -> [SpeakerID: String] {
-        let referencedIds = Set(transcript.compactMap(\.speakerId))
-        guard !referencedIds.isEmpty else { return [:] }
-
-        let allSpeakers = try await database.speakers.all()
+        let speakers = try await database.speakers.forMeeting(meetingId)
         let participantsById = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
 
         var names: [SpeakerID: String] = [:]
-        for speaker in allSpeakers where referencedIds.contains(speaker.id) {
+        for speaker in speakers {
             if let personId = speaker.personId {
                 if let name = participantsById[personId]?.displayName {
                     names[speaker.id] = name
