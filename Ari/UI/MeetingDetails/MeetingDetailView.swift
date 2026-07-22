@@ -180,18 +180,16 @@ struct MeetingDetailView: View {
         }
     }
 
-    /// Stock segmented control, per the HIG tab-view guidance and the Liquid Glass v2
-    /// "stock first" rule — connected glass tabs from the system, not three loose buttons.
+    /// The capsule glass tab switcher (HIG tab-views appearance): a glass capsule with a
+    /// sliding selection pill — `MarginaliaGlassTabs`, since the stock macOS segmented
+    /// control doesn't render the capsule glass form.
     private var sectionSwitcher: some View {
         HStack {
-            Picker("Section", selection: $narrowSection) {
-                ForEach(NarrowSection.allCases) { section in
-                    Text(section.title).tag(section)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
+            MarginaliaGlassTabs(
+                tabs: NarrowSection.allCases.map { ($0, $0.title) },
+                selection: $narrowSection,
+                scheme: scheme
+            )
             Spacer()
         }
         .padding(.horizontal, MarginaliaSpacing.md.value)
