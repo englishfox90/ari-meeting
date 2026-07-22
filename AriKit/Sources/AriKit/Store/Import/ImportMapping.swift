@@ -116,9 +116,11 @@ enum ImportMapping {
 
     // MARK: - `speaker_segments` → `SpeakerSegment`
 
-    /// Legacy `source` values are `'microphone'`/`'system'` — neither matches `SegmentSource`'s
-    /// only known case (`.import`), so both round-trip losslessly as `.unknown("microphone")` /
-    /// `.unknown("system")` (the forward-tolerant-enum pattern working as designed, not a bug).
+    /// Legacy `source` values are `'microphone'`/`'system'` — both are now known
+    /// `SegmentSource` cases (diarization plan §2.8, swift-L2), so a legacy-imported row upgrades
+    /// from `.unknown("microphone")`/`.unknown("system")` to `.microphone`/`.system` on read: the
+    /// forward-tolerant-enum pattern applying retroactively once this reader learns the raw,
+    /// with no re-import or migration needed.
     static func speakerSegment(from row: Row) throws -> SpeakerSegment {
         let sourceRaw: String = row["source"]
         return try SpeakerSegment(
