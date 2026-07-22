@@ -20,7 +20,7 @@ struct LinkMeetingSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MarginaliaTextField(text: $query, prompt: "Search meetings", scheme: scheme)
+            MarginaliaSearchField(text: $query, prompt: "Search meetings", scheme: scheme, size: .compact)
                 .padding(MarginaliaSpacing.md.value)
             Rectangle()
                 .fill(Color.marginalia(.hairline, in: scheme))
