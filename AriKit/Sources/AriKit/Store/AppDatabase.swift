@@ -96,4 +96,8 @@ public actor AppDatabase {
     public nonisolated var askConversations: AskConversationStore {
         AskConversationStore(dbWriter: dbWriter)
     }
+
+    public nonisolated var settings: SettingsRepository {
+        SettingsRepository(dbWriter: dbWriter)
+    }
 }

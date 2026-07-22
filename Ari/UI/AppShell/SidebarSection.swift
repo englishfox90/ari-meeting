@@ -16,6 +16,9 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
     case ask
     case calendar
     case people
+    /// Full-window native Settings screen (docs/plans/settings-ui.md §1) — a pinned bottom-rail
+    /// destination, NOT part of `workbench` (see `workbench` below).
+    case settings
 
     var id: String {
         rawValue
@@ -30,6 +33,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
         case .ask: "Ask meetings"
         case .calendar: "Calendar"
         case .people: "People"
+        case .settings: "Settings"
         }
     }
 
@@ -42,6 +46,7 @@ enum SidebarSection: String, CaseIterable, Identifiable, Hashable {
         case .ask: "sparkle.magnifyingglass"
         case .calendar: "calendar"
         case .people: "person.2"
+        case .settings: "gearshape"
         }
     }
 

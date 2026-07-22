@@ -6,6 +6,7 @@
 //  signed app launches, opens the Store DB, and shows a window (docs/plans/arikit-native-shell.md
 //  §11 S0). Frameless / unified title bar per the confirmed UI direction (swift-ui-direction).
 //
+import AriViewModels
 import SwiftUI
 
 @main
@@ -13,15 +14,31 @@ struct AriApp: App {
     /// The single root environment for the whole app. `@State` so its lifetime is the app's.
     @State private var environment = AppEnvironment()
 
+    /// The ONE `@AppStorage` exception (docs/plans/settings-ui.md §2.4): theme must apply to the
+    /// very first frame, before the DB even opens, so it is read here directly rather than
+    /// through `AppDatabase.settings`. Shares its key with `AriViewModels.AppearanceStore` — both
+    /// read/write the exact same `UserDefaults` entry, so the Settings screen's control and this
+    /// root read never drift apart.
+    @AppStorage(AppearanceStore.defaultsKey) private var storedAppearance = AppAppearance.system.rawValue
+
     init() {
         // Register bundled brand fonts before any view renders, so Bricolage headings resolve.
         AppFonts.register()
+    }
+
+    private var preferredColorScheme: ColorScheme? {
+        switch AppAppearance(rawValue: storedAppearance) ?? .system {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
     }
 
     var body: some Scene {
         WindowGroup {
             RootSplitView()
                 .environment(environment)
+                .preferredColorScheme(preferredColorScheme)
         }
         // Frameless / unified title bar — no top divider; toolbar + traffic lights float over the
         // panes (confirmed UI direction §10). `.hiddenTitleBar` + a unified toolbar gives the
@@ -33,13 +50,13 @@ struct AriApp: App {
         .defaultSize(width: 1240, height: 760)
 
         #if DEBUG
-        // DEBUG-only Marginalia design-system validator (colors, type, buttons, materials, and
-        // Liquid Glass evaluation). Adds a "Design Gallery" item to the Window menu; never
-        // opens automatically and never ships in release — see `DesignGalleryView.swift`.
-        Window("Design Gallery", id: "design-gallery") {
-            DesignGalleryView()
-        }
-        .defaultSize(width: 980, height: 820)
+            // DEBUG-only Marginalia design-system validator (colors, type, buttons, materials, and
+            // Liquid Glass evaluation). Adds a "Design Gallery" item to the Window menu; never
+            // opens automatically and never ships in release — see `DesignGalleryView.swift`.
+            Window("Design Gallery", id: "design-gallery") {
+                DesignGalleryView()
+            }
+            .defaultSize(width: 980, height: 820)
         #endif
     }
 }

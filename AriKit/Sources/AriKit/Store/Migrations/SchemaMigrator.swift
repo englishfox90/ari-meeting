@@ -412,6 +412,17 @@ enum SchemaMigrator {
                 t.column("sourcesJson", .text)
                 t.column("createdAt", .text).notNull()
             }
+
+            // `setting` (docs/plans/settings-ui.md §2.1) — the native Settings screen's
+            // key-value config table. Appended after `askMessage` (the migration's prior last
+            // table) per that plan's own decision to extend `v1_baseline` in place while it
+            // remains unshipped. No FK, no tombstone columns (config, not synced content —
+            // mirrors `calendarSyncSetting`'s precedent above).
+            try db.create(table: "setting") { t in
+                t.primaryKey("key", .text)
+                t.column("value", .text).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
         }
 
         return migrator

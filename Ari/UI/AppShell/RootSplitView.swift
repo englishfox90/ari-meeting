@@ -108,6 +108,8 @@ struct RootSplitView: View {
             placeholder("Ask meetings isn't ready yet.")
         case .calendar:
             placeholder("Calendar isn't connected yet.")
+        case .settings:
+            SettingsView(database: database)
         }
     }
 

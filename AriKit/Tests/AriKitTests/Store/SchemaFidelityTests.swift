@@ -184,8 +184,27 @@ struct SchemaFidelityTests {
             "series", "seriesLedger", "seriesMember", "calendarEvent", "calendarSyncSetting",
             "recallChunk", "recallIndexState", "askConversation", "askMessage",
             "recallFts", "recallFts_data", "recallFts_content", "recallFts_idx",
-            "recallFts_docsize", "recallFts_config"
+            "recallFts_docsize", "recallFts_config",
+            "setting"
         ])
+    }
+
+    @Test("setting table matches settings-ui.md §2.1 (no tombstone columns, no FK)")
+    func settingSchema() throws {
+        let queue = try migratedQueue()
+        let actual = try columns(of: "setting", in: queue)
+        assertColumns(actual, match: [
+            ExpectedColumn(name: "key", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "value", type: "TEXT", notNull: true),
+            ExpectedColumn(name: "updatedAt", type: "DATETIME", notNull: true)
+        ], table: "setting")
+
+        let names = Set(actual.map(\.name))
+        #expect(!names.contains("isDeleted"))
+        #expect(!names.contains("deletedAt"))
+
+        let primaryKey = try queue.read { db in try db.primaryKey("setting") }
+        #expect(primaryKey.columns == ["key"])
     }
 
     @Test("person table matches §4.5")
