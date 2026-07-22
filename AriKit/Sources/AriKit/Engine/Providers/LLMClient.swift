@@ -101,6 +101,43 @@ public enum ProviderKind: String, Sendable, CaseIterable {
         default: nil
         }
     }
+
+    /// The canonical persisted token — the string that `from(_:)` round-trips and the engine's
+    /// `ProviderConfigResolution` expects. This is deliberately NOT `rawValue`: the raw value is
+    /// camelCase (e.g. `"claudeCLI"`), which `from(_:)` does not recognize, so persisting the raw
+    /// value silently fails to round-trip and the provider resolves back to the default.
+    public var settingID: String {
+        switch self {
+        case .openAI: "openai"
+        case .claude: "claude"
+        case .groq: "groq"
+        case .ollama: "ollama"
+        case .openRouter: "openrouter"
+        case .customOpenAI: "custom-openai"
+        case .claudeCLI: "claude-cli"
+        case .appleFoundation: "apple-foundation"
+        case .mlx: "mlx"
+        }
+    }
+
+    /// Whether this provider needs an API key entered by the user. On-device engines (`.mlx`,
+    /// `.appleFoundation`), a local Ollama server, and the local `claude` CLI need none.
+    public var requiresAPIKey: Bool {
+        switch self {
+        case .openAI, .claude, .groq, .openRouter, .customOpenAI: true
+        case .ollama, .claudeCLI, .appleFoundation, .mlx: false
+        }
+    }
+
+    /// Whether a user-supplied model string is meaningful. On-device engines run a single fixed
+    /// model, so a model override is meaningless for them; every other provider can target a
+    /// specific model name.
+    public var allowsModelOverride: Bool {
+        switch self {
+        case .mlx, .appleFoundation: false
+        default: true
+        }
+    }
 }
 
 /// The error surface for provider construction and generation (← the `String` errors

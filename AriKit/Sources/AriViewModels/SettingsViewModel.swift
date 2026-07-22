@@ -48,8 +48,9 @@ public final class SettingsViewModel {
         public static let summaryProvider = "mlx"
         public static let summaryModel = ""
         public static let summaryOllamaEndpoint = "http://localhost:11434"
-        /// ← the settings-ui.md §10 decided default (Apple excluded from this screen).
-        public static let recallEmbedder = "ollama"
+        /// Apple's on-device NLEmbedding — the zero-download default, and the only embedder now
+        /// offered on this screen (Ollama was removed from the Summary settings entirely).
+        public static let recallEmbedder = "apple"
     }
 
     // MARK: - General

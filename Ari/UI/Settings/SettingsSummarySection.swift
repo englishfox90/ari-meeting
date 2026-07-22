@@ -49,7 +49,9 @@ struct SettingsSummarySection: View {
                 automaticSummaryCard
                 languageCard
                 modelConfigCard
-                apiKeyCard
+                if selectedProvider.requiresAPIKey {
+                    apiKeyCard
+                }
                 modelDownloadsCard
                 embedderCard
                 indexStatsCard
@@ -145,13 +147,18 @@ struct SettingsSummarySection: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
 
-                MarginaliaTextField(
-                    text: $modelText,
-                    prompt: "Model (optional)",
-                    scheme: scheme
-                )
-                .onSubmit {
-                    Task { try? await viewModel.setSummaryModel(modelText) }
+                // On-device Qwen runs a single fixed model, so a model override is meaningless
+                // there; only show the field for providers that can target a named model (Claude
+                // CLI).
+                if selectedProvider.allowsModelOverride {
+                    MarginaliaTextField(
+                        text: $modelText,
+                        prompt: "Model (optional, e.g. claude-sonnet-4-5)",
+                        scheme: scheme
+                    )
+                    .onSubmit {
+                        Task { try? await viewModel.setSummaryModel(modelText) }
+                    }
                 }
 
                 Text(
@@ -162,17 +169,22 @@ struct SettingsSummarySection: View {
         }
     }
 
+    /// The provider currently in effect, coercing any stored value not offered here (e.g. a legacy
+    /// `.ollama` selection) to the on-device default so the UI always reflects a valid choice.
+    private var selectedProvider: ProviderKind {
+        let stored = ProviderKind.from(viewModel.summaryProvider) ?? .mlx
+        return Self.visibleProviders.contains(stored) ? stored : .mlx
+    }
+
     private var providerBinding: Binding<ProviderKind> {
         Binding(
-            get: {
-                // Coerce any stored provider that is no longer offered here (e.g. a legacy
-                // `.ollama` selection) to the on-device default, so the picker always has a
-                // valid, visible selection.
-                let stored = ProviderKind.from(viewModel.summaryProvider) ?? .mlx
-                return Self.visibleProviders.contains(stored) ? stored : .mlx
-            },
+            get: { selectedProvider },
+            // Persist the canonical `settingID` (e.g. "claude-cli"), NOT `rawValue` ("claudeCLI"):
+            // only `settingID` round-trips through `ProviderKind.from(_:)`, which both this picker
+            // and the engine use to resolve the stored value. Persisting rawValue silently reset
+            // the selection back to the default.
             set: { newProvider in
-                Task { try? await viewModel.setSummaryProvider(newProvider.rawValue) }
+                Task { try? await viewModel.setSummaryProvider(newProvider.settingID) }
             }
         )
     }
