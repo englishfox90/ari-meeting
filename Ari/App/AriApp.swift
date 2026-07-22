@@ -45,7 +45,25 @@ struct AriApp: App {
         }
     }
 
+    /// The menu-bar item's SF Symbol — `record.circle` while recording, else `waveform`. A plain
+    /// computed property (kept out of the SceneBuilder for readability).
+    private var menuBarSymbolName: String {
+        environment.recordingSession?.isActive == true ? "record.circle" : "waveform"
+    }
+
+    /// Split into per-scene computed properties: composing `WindowGroup` + a conditional
+    /// `MenuBarExtra` + a `#if DEBUG` `Window` in one `@SceneBuilder` body overwhelmed the
+    /// type-checker ("failed to produce diagnostic for expression" — an expression-too-complex
+    /// choke it hits before it can name). Each scene now type-checks in isolation.
     var body: some Scene {
+        mainWindow
+        menuBarScene
+        #if DEBUG
+            designGalleryWindow
+        #endif
+    }
+
+    private var mainWindow: some Scene {
         WindowGroup(id: Self.mainWindowID) {
             RootSplitView()
                 .environment(environment)
@@ -59,32 +77,39 @@ struct AriApp: App {
         // Slightly wider than the old ~1100 design target so the meeting detail's two-pane
         // layout (threshold 800pt of detail width) clears comfortably beside the sidebar.
         .defaultSize(width: 1240, height: 760)
+    }
 
-        // The opt-in menu-bar item (docs/plans/menu-bar-item.md) — the Swift port of the frozen
-        // Rust tray. Gated on `showInMenuBar` (SceneBuilder `if`), so toggling the Settings control
-        // inserts/removes the status item live. `.window` style hosts the rich Marginalia panel
-        // (recording control + calendar brief) rather than a flat `NSMenu`.
-        if showInMenuBar {
-            MenuBarExtra {
-                MenuBarContentView()
-                    .environment(environment)
-                    .preferredColorScheme(preferredColorScheme)
-            } label: {
-                Image(systemName: environment.recordingSession?.isActive == true
-                    ? "record.circle"
-                    : "waveform")
-            }
-            .menuBarExtraStyle(.window)
+    /// The menu-bar panel's root view (docs/plans/menu-bar-item.md) — the rich Marginalia panel
+    /// (recording control + calendar brief), the Swift port of the frozen Rust tray. Extracted so
+    /// the `MenuBarExtra` content closure is a single reference.
+    private var menuBarContent: some View {
+        MenuBarContentView()
+            .environment(environment)
+            .preferredColorScheme(preferredColorScheme)
+    }
+
+    /// Conditional presence via the `isInserted:` binding rather than a SceneBuilder `if`:
+    /// wrapping a `MenuBarExtra` in `if showInMenuBar { … }` crashes the type-checker on this
+    /// toolchain (Xcode 26.6 / Swift 6.3.3 — "failed to produce diagnostic for expression"); an
+    /// unconditional `MenuBarExtra` compiles fine. `isInserted` is the intended API anyway — it
+    /// inserts/removes the status item live as the Settings toggle flips `showInMenuBar`
+    /// (docs/plans/menu-bar-item.md). `.window` style hosts the rich Marginalia panel.
+    private var menuBarScene: some Scene {
+        MenuBarExtra("Ari", systemImage: menuBarSymbolName, isInserted: $showInMenuBar) {
+            menuBarContent
         }
+        .menuBarExtraStyle(.window)
+    }
 
-        #if DEBUG
-            // DEBUG-only Marginalia design-system validator (colors, type, buttons, materials, and
-            // Liquid Glass evaluation). Adds a "Design Gallery" item to the Window menu; never
-            // opens automatically and never ships in release — see `DesignGalleryView.swift`.
+    #if DEBUG
+        /// DEBUG-only Marginalia design-system validator (colors, type, buttons, materials, and
+        /// Liquid Glass evaluation). Adds a "Design Gallery" item to the Window menu; never
+        /// opens automatically and never ships in release — see `DesignGalleryView.swift`.
+        private var designGalleryWindow: some Scene {
             Window("Design Gallery", id: "design-gallery") {
                 DesignGalleryView()
             }
             .defaultSize(width: 980, height: 820)
-        #endif
-    }
+        }
+    #endif
 }
