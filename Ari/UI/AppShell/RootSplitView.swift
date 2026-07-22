@@ -130,7 +130,12 @@ struct RootSplitView: View {
     private func rootContent(database: AppDatabase) -> some View {
         switch selectedSection {
         case .home:
-            HomeView(database: database, selection: $selectedSection)
+            HomeView(
+                database: database,
+                calendarSource: environment.calendarSource,
+                recordingSession: environment.recordingSession,
+                selection: $selectedSection
+            )
         case .savedMeetings:
             MeetingsListView(database: database)
         case .series:

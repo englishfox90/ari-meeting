@@ -279,6 +279,19 @@ no snapshot harness in v1.
    disable. *Accept:* Start from an event lands on New meeting pre-titled with a visible
    removable "Will link to" chip; after Record→Stop, the event shows the linked meeting.
 
+**Follow-on — Home calendar brief (2026-07-22).** A "From your calendar" brief on the Home
+screen (`Ari/UI/Home/CalendarBriefSection.swift` + `CalendarBriefViewModel` in AriViewModels),
+the Swift port of the frozen Rust `UpcomingMeetingsPanel`. Local-DB-first read of already-synced
+events gated on `.fullAccess` (never a live EventKit call), filtered to the meetings happening now
+or about to start (lookahead 3h / late-join grace 30m; all-day + already-linked excluded; capped
+at 3), each with a one-tap **Record** that reuses this slice's exact start-meeting seam
+(`RecordingSession.reset()` → seed `pendingTitle` when blank → `pendingCalendarLink` →
+`selection = .newMeeting`). Answers "I opened the app mid-meeting and forgot to hit record":
+in-progress meetings carry a live "Now" badge so current meetings read distinctly from future
+ones. Hidden entirely when nothing qualifies (No-Fake-State — Home never nags about calendar
+setup; that stays in Settings). Filter logic is a pure `static` under
+`CalendarBriefViewModelTests`.
+
 **Risks:** (a) SwiftUI grid alignment once a scrollbar appears — mitigated by the Rust
 page's lesson (one shared scroll container, `WeekGrid.tsx:144-148`); keep header + grid
 in one `ScrollView` with a pinned header. (b) Stale pending link — mitigated by the
