@@ -109,7 +109,7 @@ struct RootSplitView: View {
         case .calendar:
             placeholder("Calendar isn't connected yet.")
         case .settings:
-            SettingsView(database: database)
+            SettingsView(database: database, calendarSource: environment.calendarSource)
         }
     }
 

@@ -58,6 +58,14 @@ final class AppEnvironment {
     /// same protocol without touching this wiring.
     private(set) var speakerCountHintProvider: (any SpeakerCountHintProviding)?
 
+    /// The S7 EventKit source (the one EventKit toucher, `Ari/Calendar/EventKitCalendarSource.swift`)
+    /// — injected into `CalendarSettingsViewModel` by the Settings screen. `nil` until `bootstrap()`
+    /// succeeds, exactly like `database`/`recordingSession`.
+    private(set) var calendarSource: EventKitCalendarSource?
+    /// The 15-min background sync loop (docs/plans/arikit-calendar.md §3) — owned here so its
+    /// `Task` lives (and is cancelled) with the app, not with any one view.
+    private var calendarSyncScheduler: CalendarSyncScheduler?
+
     /// Bundle identifier decided 2026-07-20 (arikit-native-shell.md §9): the fresh Swift app.
     static let bundleIdentifier = "com.arivo.ari"
 
@@ -105,6 +113,14 @@ final class AppEnvironment {
                 audioLoader: DiarizationAudioLoader()
             )
             speakerCountHintProvider = StoredCalendarHintProvider(database: db)
+
+            // S7: construct the EventKit source + sync engine now that `db` exists, inject the
+            // source into Settings' calendar VM (via `calendarSource`), and start the background
+            // sync loop (plan §5).
+            let source = EventKitCalendarSource()
+            calendarSource = source
+            let syncEngine = CalendarSyncEngine(source: source, database: db)
+            calendarSyncScheduler = CalendarSyncScheduler(source: source, engine: syncEngine, database: db)
 
             status = .ready
         } catch {

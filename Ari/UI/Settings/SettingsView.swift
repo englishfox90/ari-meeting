@@ -22,7 +22,10 @@ struct SettingsView: View {
 
     @Environment(\.colorScheme) private var scheme
 
-    init(database: AppDatabase) {
+    /// `calendarSource` is `nil` until `AppEnvironment.bootstrap()` constructs the real
+    /// `EventKitCalendarSource` (S7) — `CalendarSettingsViewModel` stays honestly disabled until
+    /// then, never fabricating a live source.
+    init(database: AppDatabase, calendarSource: (any CalendarSourcing)? = nil) {
         self.database = database
         // `KeychainSecretStore`/`AppearanceStore` are both stateless value types (no Keychain
         // session, no stored `UserDefaults` handle) — constructing them directly here is
@@ -33,7 +36,9 @@ struct SettingsView: View {
             secrets: KeychainSecretStore(),
             appearance: AppearanceStore()
         ))
-        _calendarViewModel = State(initialValue: CalendarSettingsViewModel(database: database))
+        _calendarViewModel = State(initialValue: CalendarSettingsViewModel(
+            database: database, source: calendarSource
+        ))
     }
 
     var body: some View {

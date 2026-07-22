@@ -43,6 +43,28 @@ public struct MeetingRepository: Sendable {
         }
     }
 
+    /// The non-tombstoned meeting whose `createdAt` falls in `[start, end]`, closest to `anchor`
+    /// — the calendar auto-match query (parity: `calendar.rs:399-423`). `nil` if none found.
+    public func closestMeetingID(
+        createdBetween start: Date,
+        and end: Date,
+        to anchor: Date
+    ) async throws -> MeetingID? {
+        try await dbWriter.read { db in
+            let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT id FROM meeting
+                WHERE createdAt >= ? AND createdAt <= ? AND isDeleted = 0
+                ORDER BY ABS(julianday(createdAt) - julianday(?)) ASC
+                LIMIT 1
+                """,
+                arguments: [start, end, anchor]
+            )
+            return row.map { MeetingID($0["id"] as String) }
+        }
+    }
+
     /// Live updates for SwiftUI lists, backed by `ValueObservation` (excludes tombstoned rows,
     /// matching `all(includingDeleted: false)`).
     public func observeAll() -> AsyncStream<[Meeting]> {

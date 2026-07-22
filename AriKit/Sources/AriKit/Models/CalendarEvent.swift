@@ -21,15 +21,23 @@ import Foundation
 public typealias CalendarEventID = Identifier<CalendarEvent>
 
 /// Whether an event was linked to a meeting manually or via calendar matching (plan §7.2).
+///
+/// `.auto` (rawValue `"auto"`) was added in the S7 EventKit slice
+/// (`docs/plans/arikit-calendar.md`, resolved decision 1): the Swift `CalendarSyncEngine`'s
+/// auto-match pass writes `"auto"`, uniform with the value legacy-imported rows already carry
+/// (the frozen Rust engine wrote `link_source = 'auto'` too — see `calendar.rs:332`). Before this
+/// slice, an imported `"auto"` row decoded as `.unknown("auto")`; it now decodes as `.auto`.
 public enum CalendarLinkSource: UnknownTolerantEnum {
     case manual
     case calendar
+    case auto
     case unknown(String)
 
     public init?(rawValue: String) {
         switch rawValue {
         case "manual": self = .manual
         case "calendar": self = .calendar
+        case "auto": self = .auto
         default: return nil
         }
     }
@@ -38,6 +46,7 @@ public enum CalendarLinkSource: UnknownTolerantEnum {
         switch self {
         case .manual: "manual"
         case .calendar: "calendar"
+        case .auto: "auto"
         case let .unknown(raw): raw
         }
     }

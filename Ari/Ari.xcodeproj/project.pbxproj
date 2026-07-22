@@ -22,6 +22,7 @@
 		1A0000000000000000000004 /* App */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFolders = (); explicitFileTypes = {}; path = App; sourceTree = "<group>"; };
 		1A0000000000000000000016 /* UI */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFolders = (); explicitFileTypes = {}; path = UI; sourceTree = "<group>"; };
 		1A0000000000000000000017 /* Capture */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFolders = (); explicitFileTypes = {}; path = Capture; sourceTree = "<group>"; };
+		1A000000000000000000001C /* Calendar */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFolders = (); explicitFileTypes = {}; path = Calendar; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -45,6 +46,7 @@
 				1A0000000000000000000004 /* App */,
 				1A0000000000000000000016 /* UI */,
 				1A0000000000000000000017 /* Capture */,
+				1A000000000000000000001C /* Calendar */,
 				1A0000000000000000000006 /* Ari.entitlements */,
 				1A0000000000000000000003 /* Products */,
 			);
@@ -77,6 +79,7 @@
 				1A0000000000000000000004 /* App */,
 				1A0000000000000000000016 /* UI */,
 				1A0000000000000000000017 /* Capture */,
+				1A000000000000000000001C /* Calendar */,
 			);
 			name = Ari;
 			packageProductDependencies = (
@@ -215,6 +218,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ari records only the meetings you explicitly start.";
 				INFOPLIST_KEY_NSAudioCaptureUsageDescription = "Ari captures system audio only during meetings you explicitly record.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Ari reads your calendars to match meetings you record with their events. Nothing is written to your calendar.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -244,6 +248,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ari records only the meetings you explicitly start.";
 				INFOPLIST_KEY_NSAudioCaptureUsageDescription = "Ari captures system audio only during meetings you explicitly record.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Ari reads your calendars to match meetings you record with their events. Nothing is written to your calendar.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

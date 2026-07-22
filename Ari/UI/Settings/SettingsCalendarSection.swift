@@ -1,14 +1,18 @@
 //
-//  SettingsCalendarSection.swift — Calendar settings (docs/plans/settings-ui.md §6).
+//  SettingsCalendarSection.swift — Calendar settings (docs/plans/settings-ui.md §6,
+//  S7 EventKit slice docs/plans/arikit-calendar.md §5).
 //
-//  Two blocks:
-//  - "Grant access" — HONEST-DISABLED: no EventKit source exists in the Swift app yet, so the
-//    primary button is truly `.disabled` behind `SettingsDisabledGroup`'s real
-//    `grantAccessAvailability` reason banner. Never a fake-functional stand-in.
-//  - Per-calendar sync toggles — store round-trip is LIVE (`CalendarSettingsViewModel.setSelected`
-//    persists via `CalendarEventRepository.setSyncSetting`); the list itself stays honestly empty
-//    until a real EventKit sync populates `calendarSyncSetting` (No-Fake-State — no placeholder
-//    rows).
+//  Three blocks, all LIVE once `AppEnvironment` injects a real `EventKitCalendarSource` (C4):
+//  - "Access" — the Grant button is enabled behind `SettingsDisabledGroup`'s real
+//    `grantAccessAvailability` (still honestly `.disabled` for any caller that hasn't injected a
+//    source, e.g. a headless preview); the current permission is shown as real state, never
+//    assumed.
+//  - "Sync" — a Sync Now affordance surfacing the real `CalendarSyncReport` counts or the real
+//    error (No-Fake-State — never a fabricated count).
+//  - Per-calendar sync toggles — store round-trip is LIVE
+//    (`CalendarSettingsViewModel.setSelected` persists via `CalendarEventRepository.setSyncSetting`);
+//    the empty-state copy is permission-appropriate ("No access granted" vs. "No calendars
+//    found"), never a placeholder row list.
 //
 import AriKit
 import AriViewModels
@@ -24,15 +28,46 @@ struct SettingsCalendarSection: View {
             SectionHeader(title: "Calendar")
 
             SettingsCard(title: "Access") {
-                SettingsDisabledGroup(availability: viewModel.grantAccessAvailability) {
-                    Button("Grant Access") {}
-                        .buttonStyle(.marginalia(.primary, .large, in: scheme))
+                VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+                    SettingsDisabledGroup(availability: viewModel.grantAccessAvailability) {
+                        HStack {
+                            Text(permissionStatusText)
+                                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                            Spacer()
+                            // Once access is granted there is nothing left to grant — offering
+                            // the button anyway would be a fake affordance (No-Fake-State).
+                            if viewModel.permission != .granted {
+                                Button("Grant Access") {
+                                    Task { await viewModel.requestAccess() }
+                                }
+                                .buttonStyle(.marginalia(.primary, .large, in: scheme))
+                            }
+                        }
+                    }
+                }
+            }
+
+            SettingsCard(title: "Sync") {
+                VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+                    HStack {
+                        Text(syncStatusText)
+                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                        Spacer()
+                        Button("Sync Now") {
+                            Task { await viewModel.syncNow() }
+                        }
+                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                        .disabled(viewModel.permission != .granted)
+                    }
+                    if let error = viewModel.lastSyncError {
+                        MarginaliaBanner(kind: .error, message: error, scheme: scheme)
+                    }
                 }
             }
 
             SettingsCard(title: "Calendars") {
                 if viewModel.calendars.isEmpty {
-                    Text("No calendars yet — Calendar access hasn't been wired into the Swift app.")
+                    Text(emptyCalendarsText)
                         .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                 } else {
                     VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
@@ -46,6 +81,34 @@ struct SettingsCalendarSection: View {
                 }
             }
         }
+    }
+
+    // MARK: - Honest copy (real VM state, never hardcoded stand-ins)
+
+    private var permissionStatusText: String {
+        switch viewModel.permission {
+        case .notDetermined: "Access not yet requested."
+        case .granted: "Access granted."
+        case .denied: "Access denied. Enable Calendar access for Ari in System Settings ▸ Privacy & Security."
+        }
+    }
+
+    private var syncStatusText: String {
+        if let report = viewModel.lastSyncReport {
+            return "Last sync: \(report.fetched) fetched · \(report.pruned) pruned · \(report.autoLinked) auto-linked."
+        }
+        // No report this session, but the store remembers when a sync last wrote — show that
+        // real timestamp instead of pretending no sync ever ran.
+        if let syncedAt = viewModel.lastSyncedAt {
+            return "Last synced \(syncedAt.formatted(date: .abbreviated, time: .shortened))."
+        }
+        return "No sync has run yet."
+    }
+
+    /// Permission-appropriate empty-state copy (plan §5) — distinguishes "nothing to show
+    /// because access isn't granted" from "access is granted but nothing has synced yet".
+    private var emptyCalendarsText: String {
+        viewModel.permission == .granted ? "No calendars found." : "No access granted."
     }
 
     private func calendarRow(for calendar: CalendarSettingsViewModel.CalendarSyncRow) -> some View {
