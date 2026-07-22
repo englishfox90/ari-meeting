@@ -159,4 +159,72 @@ public struct PersonRepository: Sendable {
             )
         }
     }
+
+    // MARK: - Reverse lookup + calendar-attendee bridge (people-view-parity plan §2.1 Slice 1)
+
+    /// The meetings `id` is linked to as a participant, non-deleted, newest first (← reverse of
+    /// `participants(inMeeting:)`; closes the `PersonDetailViewModel` TODO(S6)).
+    public func meetings(forPerson id: PersonID) async throws -> [Meeting] {
+        try await dbWriter.read { db in
+            let meetingIds = try MeetingParticipantRecord
+                .filter(Column("personId") == id.rawValue)
+                .fetchAll(db)
+                .map(\.meetingId)
+            guard !meetingIds.isEmpty else { return [] }
+            return try MeetingRecord
+                .filter(meetingIds.contains(Column("id")))
+                .filter(Column("isDeleted") == false)
+                .order(Column("createdAt").desc)
+                .fetchAll(db)
+                .map { $0.asModel() }
+        }
+    }
+
+    /// Email-keyed idempotent stub, one write transaction (← Rust `upsert_stub_from_attendee`,
+    /// `person.rs:308-346`): if `email` is non-nil and a non-deleted person with that email
+    /// (case-insensitive) already exists, that person is returned **unchanged** — never clobbers
+    /// authored identity. Otherwise inserts a stub (`isOwner=false`, all optionals nil) with a
+    /// resolved display name: trimmed `displayName` if non-empty, else the email's local-part
+    /// (before `@`), else `"Unknown"`.
+    @discardableResult
+    public func upsertStubFromAttendee(
+        email: String?,
+        displayName: String,
+        at date: Date = Date()
+    ) async throws -> Person {
+        try await dbWriter.write { db in
+            if let email, let existing = try Self.findByEmail(email, db: db) {
+                return existing.asModel()
+            }
+
+            let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedName: String = if !trimmedName.isEmpty {
+                trimmedName
+            } else if let email {
+                email.split(separator: "@").first.map(String.init) ?? email
+            } else {
+                "Unknown"
+            }
+
+            let record = PersonRecord(Person(
+                id: PersonID(UUID().uuidString),
+                email: email,
+                displayName: resolvedName,
+                isOwner: false,
+                createdAt: date,
+                updatedAt: date
+            ))
+            try record.insert(db)
+            return record.asModel()
+        }
+    }
+
+    /// Case-insensitive, non-deleted lookup by email. Store-internal (mirrors Rust's
+    /// `get_by_email`); nested inside a transaction by callers that need read-then-write.
+    private static func findByEmail(_ email: String, db: Database) throws -> PersonRecord? {
+        try PersonRecord
+            .filter(Column("isDeleted") == false)
+            .filter(Column("email").collating(.nocase) == email)
+            .fetchOne(db)
+    }
 }

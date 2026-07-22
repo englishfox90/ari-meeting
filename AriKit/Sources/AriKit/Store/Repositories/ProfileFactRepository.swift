@@ -287,6 +287,122 @@ public struct ProfileFactRepository: Sendable {
         }
     }
 
+    // MARK: - Single-shot convenience over existing primitives (people-view-parity plan §2.1 Slice 1)
+
+    /// Per-person `(pending, active)` fact counts, over non-deleted facts.
+    public struct FactCounts: Hashable, Sendable {
+        public var pending: Int
+        public var active: Int
+
+        public init(pending: Int, active: Int) {
+            self.pending = pending
+            self.active = active
+        }
+    }
+
+    /// Confirms a pending fact (← Rust `profile_fact_confirm_impl`, `commands.rs:239-276`):
+    /// `status = .active`, then resets the staleness clock via `touchConfirmed`. If the fact
+    /// carries a store-internal `supersedesFactId`, the old fact is retired NOW (`.superseded`,
+    /// `supersededBy = id`) — until this moment the old fact stayed active and in use.
+    /// `carrySources`/`raiseConfidence` are deferred (plan §2.1) — not implemented here.
+    public func confirmFact(_ id: ProfileFactID, at date: Date = Date()) async throws {
+        try await dbWriter.write { db in
+            guard var record = try ProfileFactRecord.fetchOne(db, key: id.rawValue) else { return }
+            record.status = FactStatus.active.rawValue
+            record.lastConfirmedAt = date
+            try record.update(db)
+
+            if let oldFactId = record.supersedesFactId,
+               var oldRecord = try ProfileFactRecord.fetchOne(db, key: oldFactId) {
+                oldRecord.status = FactStatus.superseded.rawValue
+                oldRecord.supersededBy = id.rawValue
+                try oldRecord.update(db)
+            }
+        }
+    }
+
+    /// Rejects a fact (← Rust `profile_fact_reject_impl`, `commands.rs:292-298`): `status =
+    /// .rejected` only. Never retires a supersede target — that only happens on confirm.
+    public func rejectFact(_ id: ProfileFactID) async throws {
+        try await dbWriter.write { db in
+            guard var record = try ProfileFactRecord.fetchOne(db, key: id.rawValue) else { return }
+            record.status = FactStatus.rejected.rawValue
+            try record.update(db)
+        }
+    }
+
+    /// Adds a manually-authored fact (← Rust `profile_fact_add_manual_impl`,
+    /// `commands.rs:300-321`): `origin = .attributed`, `confidence = 1.0`, `status = .active`,
+    /// no source (`sourceMeetingId = nil`, `sourceCount = 0`).
+    @discardableResult
+    public func addManualFact(
+        personId: PersonID,
+        factText: String,
+        factKind: FactKind,
+        at date: Date = Date()
+    ) async throws -> ProfileFact {
+        try await dbWriter.write { db in
+            let record = ProfileFactRecord(ProfileFact(
+                id: ProfileFactID(UUID().uuidString),
+                personId: personId,
+                factText: factText,
+                factKind: factKind,
+                origin: .attributed,
+                confidence: 1.0,
+                sourceCount: 0,
+                status: .active,
+                createdAt: date
+            ))
+            try record.insert(db)
+            return record.asModel(sourceMeetingTitle: nil, sourceCount: 0)
+        }
+    }
+
+    /// Every non-deleted `.pending` fact across every person, paired with that person's
+    /// `displayName` (← Rust `profile_facts_pending_impl`, `commands.rs:208-232`) — backs the
+    /// cross-person pending-review list.
+    public func pendingFactsAll() async throws -> [ProfileFactWithPerson] {
+        try await dbWriter.read { db in
+            let records = try ProfileFactRecord
+                .filter(Column("isDeleted") == false)
+                .filter(Column("status") == FactStatus.pending.rawValue)
+                .order(Column("createdAt"))
+                .fetchAll(db)
+            return try records.map { record in
+                let fact = try Self.hydrate(record, db: db)
+                let personId = PersonID(record.personId)
+                let displayName = try PersonRecord.fetchOne(db, key: record.personId)?.displayName
+                    ?? "Unknown"
+                return ProfileFactWithPerson(
+                    fact: fact, personId: personId, personDisplayName: displayName
+                )
+            }
+        }
+    }
+
+    /// Per-person `(pending, active)` counts over non-deleted facts — badge counts for the
+    /// people list.
+    public func factCounts() async throws -> [PersonID: FactCounts] {
+        try await dbWriter.read { db in
+            let records = try ProfileFactRecord
+                .filter(Column("isDeleted") == false)
+                .filter([FactStatus.pending.rawValue, FactStatus.active.rawValue].contains(Column("status")))
+                .fetchAll(db)
+            var counts: [PersonID: FactCounts] = [:]
+            for record in records {
+                let personId = PersonID(record.personId)
+                var current = counts[personId] ?? FactCounts(pending: 0, active: 0)
+                if record.status == FactStatus.pending.rawValue {
+                    current.pending += 1
+                } else if record.status == FactStatus.active.rawValue {
+                    current.active += 1
+                }
+                counts[personId] = current
+            }
+            return counts
+        }
+    }
+
     // MARK: - Read-time computed provenance (No-Fake-State — never stored columns)
 
     private static func hydrate(_ record: ProfileFactRecord, db: Database) throws -> ProfileFact {

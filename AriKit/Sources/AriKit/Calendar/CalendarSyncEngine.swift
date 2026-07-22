@@ -15,11 +15,15 @@ public struct CalendarSyncReport: Sendable, Equatable {
     public var fetched: Int
     public var pruned: Int
     public var autoLinked: Int
+    /// Participant links established this pass by the calendar attendee→person import (plan §2.6,
+    /// `people-view-parity.md`) — honest telemetry, never fabricated (No-Fake-State).
+    public var importedParticipants: Int
 
-    public init(fetched: Int, pruned: Int, autoLinked: Int) {
+    public init(fetched: Int, pruned: Int, autoLinked: Int, importedParticipants: Int = 0) {
         self.fetched = fetched
         self.pruned = pruned
         self.autoLinked = autoLinked
+        self.importedParticipants = importedParticipants
     }
 }
 
@@ -60,8 +64,14 @@ public struct CalendarSyncEngine: Sendable {
         )
 
         let autoLinked = try await runAutoMatch(in: range)
+        let importedParticipants = try await runAttendeeImport(in: range, now: now)
 
-        return CalendarSyncReport(fetched: events.count, pruned: pruned, autoLinked: autoLinked)
+        return CalendarSyncReport(
+            fetched: events.count,
+            pruned: pruned,
+            autoLinked: autoLinked,
+            importedParticipants: importedParticipants
+        )
     }
 
     /// Convenience matching the Rust background window: now-30d … now+90d (`sync.rs:21-22`).
@@ -114,6 +124,62 @@ public struct CalendarSyncEngine: Sendable {
             autoLinkedCount += 1
         }
         return autoLinkedCount
+    }
+
+    // MARK: - Attendee→person import (parity: `persons/import.rs` + `people-view-parity.md` §2.6)
+
+    /// For each non-tombstoned event in `range` that is linked to a meeting (read from the
+    /// persisted row — NOT the in-memory `NativeEvent`, which never carries a link), turn its
+    /// attendee list into `Person` stubs and link them as `meetingParticipant` rows with
+    /// `linkSource = "calendar"`. Runs AFTER `runAutoMatch` so a newly auto-linked event's
+    /// attendees import in the same pass. Fully idempotent (email-keyed dedup in
+    /// `upsertStubFromAttendee`, `INSERT OR IGNORE` in `addParticipant`, and an additional
+    /// within-meeting displayName dedup for email-less attendees) — safe to re-run every sync.
+    /// Returns the number of NEW participant links established this pass (honest telemetry — a
+    /// re-run over already-imported attendees reports 0, not the attempted count).
+    private func runAttendeeImport(in range: ClosedRange<Date>, now: Date) async throws -> Int {
+        let events = try await database.calendarEvents.events(startingIn: range)
+        var importedCount = 0
+        for event in events {
+            guard let meetingId = event.meetingId else { continue }
+
+            let existingParticipants = try await database.persons.participants(inMeeting: meetingId)
+            var linkedPersonIds = Set(existingParticipants.map(\.id))
+            var existingNames = Set(existingParticipants.map(\.displayName))
+
+            for attendee in event.attendees {
+                let email = attendee.email?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let displayName = (attendee.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let hasEmail = !(email?.isEmpty ?? true)
+                guard hasEmail || !displayName.isEmpty else { continue }
+
+                // Email-less dedup: skip attendees whose name already matches an already-linked
+                // participant of this meeting (the plan's tested divergence from `import.rs`,
+                // which has no such guard) — re-runs never create duplicate name-only stubs.
+                if !hasEmail, existingNames.contains(displayName) {
+                    continue
+                }
+
+                let person = try await database.persons.upsertStubFromAttendee(
+                    email: hasEmail ? email : nil,
+                    displayName: displayName,
+                    at: now
+                )
+                let alreadyLinked = linkedPersonIds.contains(person.id)
+                try await database.persons.addParticipant(
+                    meetingId: meetingId,
+                    personId: person.id,
+                    linkSource: "calendar",
+                    at: now
+                )
+                linkedPersonIds.insert(person.id)
+                existingNames.insert(person.displayName)
+                if !alreadyLinked {
+                    importedCount += 1
+                }
+            }
+        }
+        return importedCount
     }
 
     private static func asCalendarEvent(_ native: NativeEvent) -> CalendarEvent {

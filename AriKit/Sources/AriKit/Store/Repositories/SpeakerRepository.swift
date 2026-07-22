@@ -208,6 +208,57 @@ public struct SpeakerRepository: Sendable {
         }
     }
 
+    // MARK: - Canonical enrolled voiceprint (people-view-parity plan §2.1 Slice 1)
+
+    /// The CANONICAL enrolled voiceprint for a person (← Rust `canonical_enrolled_for_person`,
+    /// `speaker.rs:563-576`): `personId == id`, `enrollmentState IN (owner, confirmed)`, non-
+    /// deleted, preferring `owner` over `confirmed`, then the strongest voiceprint (most
+    /// accumulated speech, then most folds). `nil` when the person has no enrolled voiceprint yet
+    /// (No-Fake-State — never a fabricated glyph).
+    public func canonicalEnrolledSpeaker(for personId: PersonID) async throws -> Speaker? {
+        try await dbWriter.read { db in
+            try SpeakerRecord
+                .filter(Column("personId") == personId.rawValue)
+                .filter(Column("isDeleted") == false)
+                .filter(["owner", "confirmed"].contains(Column("enrollmentState")))
+                .order(
+                    (Column("enrollmentState") == EnrollmentState.owner.rawValue).desc,
+                    Column("totalSpeechSecs").desc,
+                    Column("samples").desc
+                )
+                .fetchOne(db)?
+                .asModel()
+        }
+    }
+
+    /// Every person's CANONICAL enrolled voiceprint, one row per person (← Rust
+    /// `list_canonical_enrolled`, `speaker.rs:578-593`): all `owner`/`confirmed` rows ordered so
+    /// the canonical for each person sorts first within its group, then the first-per-person is
+    /// kept in Swift.
+    public func listCanonicalEnrolled() async throws -> [Speaker] {
+        try await dbWriter.read { db in
+            let records = try SpeakerRecord
+                .filter(Column("personId") != nil)
+                .filter(Column("isDeleted") == false)
+                .filter(["owner", "confirmed"].contains(Column("enrollmentState")))
+                .order(
+                    Column("personId"),
+                    (Column("enrollmentState") == EnrollmentState.owner.rawValue).desc,
+                    Column("totalSpeechSecs").desc,
+                    Column("samples").desc
+                )
+                .fetchAll(db)
+            var seenPersonIds: Set<String> = []
+            var result: [Speaker] = []
+            for record in records {
+                guard let personId = record.personId, !seenPersonIds.contains(personId) else { continue }
+                seenPersonIds.insert(personId)
+                result.append(record.asModel())
+            }
+            return result
+        }
+    }
+
     public func observeAll() -> AsyncStream<[Speaker]> {
         let dbWriter = dbWriter
         let observation = ValueObservation.tracking { db in

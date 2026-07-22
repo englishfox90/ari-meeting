@@ -526,4 +526,153 @@ struct CalendarSyncEngineTests {
         #expect(resolved.hint == .upperBound(3))
         #expect(resolved.origin == .calendarAttendees)
     }
+
+    // MARK: - Attendee→person import (people-view-parity plan §2.6, tests 11-13)
+
+    @Test("a synced+auto-linked event's attendees become persons + calendar-sourced participants")
+    func attendeeImportCreatesPersonsAndParticipantLinks() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1", calendarTitle: "Work", color: nil, selected: true
+        )
+        let start = base
+        let end = base.addingTimeInterval(1800)
+        let meetingId: MeetingID = "meeting-1"
+        try await db.meetings.upsert(meeting(id: meetingId, createdAt: start.addingTimeInterval(-30)))
+
+        let attendees = [
+            Attendee(name: "Alice Example", email: "alice@example.com"),
+            Attendee(name: "Bob Example", email: "bob@example.com")
+        ]
+        let source = FakeCalendarSource(events: [
+            nativeEvent(id: "ev-1", start: start, end: end, attendees: attendees)
+        ])
+        let engine = CalendarSyncEngine(source: source, database: db)
+        let report = try await engine.syncRange(
+            from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600), now: base
+        )
+
+        #expect(report.autoLinked == 1)
+        #expect(report.importedParticipants == 2)
+
+        let participants = try await db.persons.participants(inMeeting: meetingId)
+        #expect(participants.map(\.displayName).sorted() == ["Alice Example", "Bob Example"])
+
+        let alice = try #require(participants.first { $0.displayName == "Alice Example" })
+        #expect(alice.email == "alice@example.com")
+    }
+
+    @Test("re-syncing the same linked event is idempotent — no duplicate persons or links")
+    func attendeeImportIsIdempotent() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1", calendarTitle: "Work", color: nil, selected: true
+        )
+        let start = base
+        let end = base.addingTimeInterval(1800)
+        let meetingId: MeetingID = "meeting-1"
+        try await db.meetings.upsert(meeting(id: meetingId, createdAt: start.addingTimeInterval(-30)))
+
+        let attendees = [
+            Attendee(name: "Alice Example", email: "alice@example.com"),
+            Attendee(name: "No Email Guest", email: nil)
+        ]
+        let source = FakeCalendarSource(events: [
+            nativeEvent(id: "ev-1", start: start, end: end, attendees: attendees)
+        ])
+        let engine = CalendarSyncEngine(source: source, database: db)
+
+        let firstReport = try await engine.syncRange(
+            from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600), now: base
+        )
+        #expect(firstReport.importedParticipants == 2)
+
+        let secondReport = try await engine.syncRange(
+            from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600),
+            now: base.addingTimeInterval(60)
+        )
+        #expect(secondReport.importedParticipants == 0)
+
+        let allPersons = try await db.persons.all()
+        #expect(allPersons.count == 2)
+        let participants = try await db.persons.participants(inMeeting: meetingId)
+        #expect(participants.count == 2)
+    }
+
+    @Test("no-meeting events import nothing; empty-attendee entries are skipped; authored identity survives")
+    func attendeeImportGuardsNoMeetingEmptyAttendeeAndAuthoredIdentity() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1", calendarTitle: "Work", color: nil, selected: true
+        )
+        let start = base
+        let end = base.addingTimeInterval(1800)
+
+        // An unlinked event (no candidate meeting in range) imports nothing at all.
+        let source = FakeCalendarSource(events: [
+            nativeEvent(
+                id: "ev-unlinked", start: start, end: end,
+                attendees: [Attendee(name: "Ghost", email: "ghost@example.com")]
+            )
+        ])
+        let engine = CalendarSyncEngine(source: source, database: db)
+        let unlinkedReport = try await engine.syncRange(
+            from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600), now: base
+        )
+        #expect(unlinkedReport.autoLinked == 0)
+        #expect(unlinkedReport.importedParticipants == 0)
+        #expect(try await db.persons.all().isEmpty)
+
+        // A linked event's fully-empty attendee entry (no name AND no email) is skipped — only
+        // the real attendee is imported.
+        let mixedMeeting: MeetingID = "meeting-mixed"
+        try await db.meetings.upsert(meeting(id: mixedMeeting, createdAt: start.addingTimeInterval(-30)))
+        await source.setEvents([
+            nativeEvent(
+                id: "ev-mixed", start: start, end: end,
+                attendees: [Attendee(name: "Dana Example", email: "dana@example.com"), Attendee(name: nil, email: nil)]
+            )
+        ])
+        let mixedReport = try await engine.syncRange(
+            from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600),
+            now: base.addingTimeInterval(30)
+        )
+        #expect(mixedReport.autoLinked == 1)
+        #expect(mixedReport.importedParticipants == 1)
+        let mixedParticipants = try await db.persons.participants(inMeeting: mixedMeeting)
+        #expect(mixedParticipants.map(\.displayName) == ["Dana Example"])
+
+        // A pre-existing person's authored identity is not clobbered by a later attendee sync.
+        let meetingId: MeetingID = "meeting-authored"
+        try await db.meetings.upsert(meeting(id: meetingId, createdAt: start.addingTimeInterval(-10)))
+        let authored = try await db.persons.upsertStubFromAttendee(
+            email: "carol@example.com", displayName: "Carol Placeholder", at: base
+        )
+        try await db.persons.upsert(Person(
+            id: authored.id,
+            email: authored.email,
+            displayName: authored.displayName,
+            role: "VP Engineering",
+            notes: "Authored by owner",
+            isOwner: false,
+            createdAt: authored.createdAt,
+            updatedAt: base
+        ))
+
+        await source.setEvents([
+            nativeEvent(
+                id: "ev-authored", start: start, end: end,
+                attendees: [Attendee(name: "Carol Updated Name", email: "carol@example.com")]
+            )
+        ])
+        _ = try await engine.syncRange(
+            from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600),
+            now: base.addingTimeInterval(60)
+        )
+
+        let carol = try #require(try await db.persons.find(authored.id))
+        #expect(carol.displayName == "Carol Placeholder")
+        #expect(carol.role == "VP Engineering")
+        #expect(carol.notes == "Authored by owner")
+    }
 }
