@@ -103,7 +103,14 @@ final class AppEnvironment {
             recordingSession = try RecordingSession(
                 database: db,
                 recordingsRoot: Self.recordingsRootURL(),
-                makeCaptureService: { folder in LiveCaptureService(meetingFolder: folder) },
+                makeCaptureService: { folder in
+                    LiveCaptureService(
+                        meetingFolder: folder,
+                        preferredMicDeviceUID: {
+                            await (try? db.settings.string(forKey: .recordingsMicDevice)) ?? nil
+                        }
+                    )
+                },
                 transcription: SpeechLiveTranscriptionService()
             )
 
