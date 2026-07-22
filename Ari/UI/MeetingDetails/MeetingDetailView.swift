@@ -452,7 +452,19 @@ struct MeetingDetailView: View {
                     return person.id
                 },
                 onSpeakersChanged: { await viewModel.load(meetingId) },
-                onDismiss: { identifyContext = nil }
+                onDismiss: { identifyContext = nil },
+                samplesFor: { speakerId in
+                    SpeakerSamples.select(from: viewModel.transcript, speakerId: speakerId)
+                },
+                audioAvailable: {
+                    if case .available = viewModel.audio { return true }
+                    return false
+                }(),
+                isPlaying: audioController.isPlaying,
+                onPlayClip: { seconds in
+                    audioController.seek(toSeconds: seconds)
+                    audioController.play()
+                }
             )
     }
 

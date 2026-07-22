@@ -26,6 +26,16 @@ struct IdentifySpeakersSheet: View {
     let createPerson: (String) async throws -> PersonID
     let onSpeakersChanged: () async -> Void
     let onDismiss: () -> Void
+    /// The identification evidence for a speaker — real transcribed lines at real timestamps
+    /// (`SpeakerSamples.select`), read live from `MeetingDetailViewModel.transcript` so a
+    /// completed run's freshly stamped rows show up without re-opening the sheet.
+    let samplesFor: (SpeakerID) -> [SpeakerSamples.SpeakerSample]
+    /// Whether a playable recording exists — mirrors `SpeakerSampleList`'s honest disabled state.
+    let audioAvailable: Bool
+    /// Whether the shared meeting player is currently playing (drives the active-clip highlight).
+    let isPlaying: Bool
+    /// Seek the meeting audio to `seconds` and start playing that moment.
+    let onPlayClip: (Double) -> Void
 
     private enum CountMode: String, CaseIterable, Identifiable, Hashable, Sendable {
         case exact, uncertain
@@ -85,6 +95,10 @@ struct IdentifySpeakersSheet: View {
                 AssignPersonSheet(
                     people: viewModel.assignablePeople,
                     suggestions: namedSuggestions(for: speakerId),
+                    samples: samplesFor(speakerId),
+                    audioAvailable: audioAvailable,
+                    isPlaying: isPlaying,
+                    onPlayClip: onPlayClip,
                     createPerson: createPerson,
                     onSelect: { personId in
                         Task {
@@ -203,15 +217,26 @@ struct IdentifySpeakersSheet: View {
                 SectionHeader(title: "Speakers")
                 VStack(spacing: 0) {
                     ForEach(result.speakers, id: \.speakerId) { resolved in
-                        SpeakerAssignmentRow(
-                            resolved: resolved,
-                            resolvedName: resolved.tier == .autoConfirm ? displayName(resolved.speakerId) : nil,
-                            suggestion: topSuggestion(for: resolved.speakerId),
-                            confirmedOverrideName: confirmedSpeakerNames[resolved.speakerId],
-                            onConfirmSuggestion: { confirmTopSuggestion(for: resolved.speakerId) },
-                            onNotThem: { suggestionsBySpeaker[resolved.speakerId] = [] },
-                            onAssign: { assignSpeakerId = resolved.speakerId }
-                        )
+                        VStack(alignment: .leading, spacing: 0) {
+                            SpeakerAssignmentRow(
+                                resolved: resolved,
+                                resolvedName: resolved.tier == .autoConfirm ? displayName(resolved.speakerId) : nil,
+                                suggestion: topSuggestion(for: resolved.speakerId),
+                                confirmedOverrideName: confirmedSpeakerNames[resolved.speakerId],
+                                onConfirmSuggestion: { confirmTopSuggestion(for: resolved.speakerId) },
+                                onNotThem: { suggestionsBySpeaker[resolved.speakerId] = [] },
+                                onAssign: { assignSpeakerId = resolved.speakerId }
+                            )
+                            SpeakerSampleList(
+                                samples: samplesFor(resolved.speakerId),
+                                audioAvailable: audioAvailable,
+                                isPlaying: isPlaying,
+                                onPlayClip: onPlayClip,
+                                limit: 2
+                            )
+                            .padding(.horizontal, MarginaliaSpacing.md.value)
+                            .padding(.bottom, MarginaliaSpacing.sm.value)
+                        }
                         Divider().overlay(Color.marginalia(.hairline, in: scheme))
                     }
                 }
@@ -282,6 +307,13 @@ struct IdentifySpeakersSheet: View {
 private struct AssignPersonSheet: View {
     let people: [Person]
     let suggestions: [(personId: PersonID, name: String, score: Float)]
+    /// The full (up to 5) identification evidence for the speaker being assigned — no `limit`,
+    /// unlike the compact rows in the results list (mirrors the Rust/React `SpeakerAssignDialog`
+    /// passing no `limit` prop).
+    let samples: [SpeakerSamples.SpeakerSample]
+    let audioAvailable: Bool
+    let isPlaying: Bool
+    let onPlayClip: (Double) -> Void
     let createPerson: (String) async throws -> PersonID
     let onSelect: (PersonID) -> Void
     let onCancel: () -> Void
@@ -295,6 +327,16 @@ private struct AssignPersonSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if !samples.isEmpty {
+                    Section("Evidence") {
+                        SpeakerSampleList(
+                            samples: samples,
+                            audioAvailable: audioAvailable,
+                            isPlaying: isPlaying,
+                            onPlayClip: onPlayClip
+                        )
+                    }
+                }
                 if !suggestions.isEmpty {
                     Section("Suggested") {
                         ForEach(suggestions, id: \.personId) { suggestion in
