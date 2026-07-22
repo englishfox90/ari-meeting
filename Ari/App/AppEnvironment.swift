@@ -58,6 +58,15 @@ final class AppEnvironment {
     /// same protocol without touching this wiring.
     private(set) var speakerCountHintProvider: (any SpeakerCountHintProviding)?
 
+    /// The summary generation service (docs/plans/swift-meeting-generation-flow.md, Track 1 "App
+    /// wiring") — `SummaryRunner`'s persistence delegate. `nil` until `bootstrap()` succeeds,
+    /// exactly like `diarizationService`.
+    private(set) var summaryService: SummaryService?
+    /// The shared "generate a summary" core (same plan) — composes `summaryService` with the
+    /// app's settings/secrets seams. `MeetingSummaryViewModel` (Track 1) and the later
+    /// `MeetingProcessingCoordinator` (Track 2) both build from this ONE instance.
+    private(set) var summaryRunner: SummaryRunner?
+
     /// The S7 EventKit source (the one EventKit toucher, `Ari/Calendar/EventKitCalendarSource.swift`)
     /// — injected into `CalendarSettingsViewModel` by the Settings screen. `nil` until `bootstrap()`
     /// succeeds, exactly like `database`/`recordingSession`.
@@ -120,6 +129,33 @@ final class AppEnvironment {
                 audioLoader: DiarizationAudioLoader()
             )
             speakerCountHintProvider = StoredCalendarHintProvider(database: db)
+
+            // docs/plans/swift-meeting-generation-flow.md, Track 1 "App wiring": the summary
+            // generation core, shared by the saved-meeting manual actions (Track 1) and the later
+            // post-recording pipeline (Track 2). `StoreBackedSettingsReading` reads the
+            // `.summaryProvider`/`.summaryModel`/etc. keys this same `db` owns. `secrets` (above)
+            // is statically typed `SecretsStoring` (the Settings screen's read/write seam) — not
+            // `any SecretsReading` — so a fresh `KeychainSecretStore()` is constructed here
+            // instead, same as `SettingsView.init` does for its own narrower seam: it's a
+            // stateless value type (no Keychain session held), so constructing another instance
+            // is equivalent to reusing the one above, without an unrelated-existential cast.
+            let settingsReader = StoreBackedSettingsReading(database: db)
+            let summarySecrets = KeychainSecretStore()
+            let summaryService = SummaryService(
+                db: db,
+                settings: settingsReader,
+                secrets: summarySecrets,
+                cancellation: TaskCancellationCoordinator()
+            )
+            self.summaryService = summaryService
+            summaryRunner = SummaryRunner(
+                database: db,
+                settings: settingsReader,
+                secrets: summarySecrets,
+                summaryService: summaryService,
+                customTemplateDirectory: nil,
+                clientFactory: { try ProviderFactory.make(config: $0) }
+            )
 
             // S7: construct the EventKit source + sync engine now that `db` exists, inject the
             // source into Settings' calendar VM (via `calendarSource`), and start the background

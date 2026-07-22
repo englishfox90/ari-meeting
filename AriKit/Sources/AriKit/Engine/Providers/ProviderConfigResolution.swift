@@ -8,9 +8,15 @@
 //  `resolveTokenThreshold` (Summary-specific: Persons never chunks by token budget, it bounds by
 //  a flat 48k-char transcript cap instead, `extraction.rs:28`).
 //
+//  `resolve` widened to `public` (docs/plans/swift-meeting-generation-flow.md, Track 1 §0): every
+//  prior caller (`SummaryService`, `PersonExtraction`/`PersonReconciliation`) lived inside this
+//  same `AriKit` module, so `internal` sufficed until now. `SummaryRunner` (the `AriViewModels`
+//  target) needs the identical resolution the plan specifies rather than a second, drifting copy
+//  — a cross-module reuse, not a behavior change.
+//
 import Foundation
 
-enum ProviderConfigResolution {
+public enum ProviderConfigResolution {
     /// ← the keyless-provider set (`service.rs:353`): these providers don't require an API key
     /// from the standard settings column (Ollama/MLX are local; CustomOpenAI has its own key
     /// field; ClaudeCLI/AppleFoundation authenticate outside this layer entirely).
@@ -25,7 +31,7 @@ enum ProviderConfigResolution {
     /// extraction/reconciliation) catch `LLMError` at the call site rather than letting it become
     /// a thrown error for "nothing useful happened" (← `extraction.rs:53-55`); `SummaryService`
     /// (which DOES propagate it as a caller-facing error) is unaffected.
-    static func resolve(
+    public static func resolve(
         providerKey: String,
         modelName: String,
         settings: any SettingsReading,
