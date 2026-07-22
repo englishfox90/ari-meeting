@@ -13,8 +13,6 @@ import Foundation
 public protocol SpeechAssetProviding: Sendable {
     /// Whether the on-device speech engine can run on this machine at all.
     func isEngineAvailable() -> Bool
-    /// Every locale the engine can transcribe (empty when unavailable).
-    func supportedLocales() async -> [Locale]
     /// Whether the model assets for `forLocale` (or the resolved current locale, if `nil`/empty)
     /// are installed.
     func areAssetsInstalled(forLocale: String?) async -> Bool

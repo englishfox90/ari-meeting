@@ -18,19 +18,6 @@ public enum Availability: Sendable, Equatable {
     case disabled(reason: String)
 }
 
-/// One selectable transcription language for the on-device SpeechTranscriber picker.
-public struct TranscriptionLanguageOption: Sendable, Identifiable, Equatable {
-    /// A BCP-47 identifier, or the `"auto"` sentinel (system language).
-    public let id: String
-    /// Localized display name (e.g. "English (United States)").
-    public let name: String
-
-    public init(id: String, name: String) {
-        self.id = id
-        self.name = name
-    }
-}
-
 /// Live state of an on-device speech-model install. Progress is the framework's OWN
 /// `Progress.fractionCompleted` verbatim — never interpolated (No-Fake-State).
 public enum TranscriptionModelInstall: Sendable, Equatable {
@@ -104,12 +91,11 @@ public final class SettingsViewModel {
     /// Whether the on-device SpeechTranscriber engine can run on this Mac at all
     /// (`SpeechAssetManager.isEngineAvailable`). Drives the honest Available/Unavailable state.
     public private(set) var transcriptionEngineAvailable: Bool = false
-    /// The chosen transcription language — a BCP-47 id, or the `"auto"` sentinel.
+    /// The transcription language — the `"auto"` sentinel (system language) today. There is no
+    /// user-facing language picker; the recording path reads this key, so it stays as the seam a
+    /// future language control would write.
     public private(set) var transcriptionLanguage: String = Defaults.transcriptionLanguage
-    /// Languages the engine supports, for the picker. Empty until `load()` (or when unavailable) —
-    /// honestly empty, never fabricated.
-    public private(set) var transcriptionLanguageOptions: [TranscriptionLanguageOption] = []
-    /// Whether the model assets for the chosen language are installed. `nil` while unknown/checking
+    /// Whether the model assets for the current language are installed. `nil` while unknown/checking
     /// — honestly absent, never a fabricated `false`.
     public private(set) var transcriptionModelInstalled: Bool?
     /// Live install progress/failure, driven by real `SpeechAssetManager` progress.
@@ -183,7 +169,6 @@ public final class SettingsViewModel {
         transcriptionEngineAvailable = speechAssets.isEngineAvailable()
         transcriptionLanguage = await (try? settings.string(forKey: .transcriptionLanguage))
             ?? Defaults.transcriptionLanguage
-        transcriptionLanguageOptions = await loadTranscriptionLanguageOptions()
         transcriptionModelInstalled = transcriptionEngineAvailable
             ? await speechAssets.areAssetsInstalled(forLocale: transcriptionLanguage)
             : nil
@@ -257,49 +242,7 @@ public final class SettingsViewModel {
 
     // MARK: - Transcription (on-device Apple SpeechTranscriber)
 
-    /// Localized, alphabetized language options for the picker, prefixed by an "Automatic" entry
-    /// that follows the system language. Empty when the engine is unavailable (No-Fake-State).
-    private func loadTranscriptionLanguageOptions() async -> [TranscriptionLanguageOption] {
-        guard transcriptionEngineAvailable else { return [] }
-
-        let display = Locale.current
-        let mapped = await speechAssets.supportedLocales()
-            .map { locale -> TranscriptionLanguageOption in
-                let id = locale.identifier(.bcp47)
-                let name = display.localizedString(forIdentifier: locale.identifier) ?? id
-                return TranscriptionLanguageOption(id: id, name: name)
-            }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-
-        return [TranscriptionLanguageOption(id: "auto", name: "Automatic (system language)")] + mapped
-    }
-
-    /// Persist the chosen transcription language and re-check whether its model is installed.
-    /// Resets any prior install progress/error — a language change starts a fresh install story.
-    public func setTranscriptionLanguage(_ id: String) async throws {
-        try await database.settings.setString(id, forKey: .transcriptionLanguage)
-        transcriptionLanguage = id
-        transcriptionModelInstall = .idle
-        if transcriptionEngineAvailable {
-            transcriptionModelInstalled = await speechAssets.areAssetsInstalled(forLocale: id)
-        }
-    }
-
-    /// View-facing language change: persists + re-checks like `setTranscriptionLanguage`, but
-    /// surfaces a persistence failure honestly (into the model card's error banner) instead of
-    /// swallowing it silently. On failure the selection reverts (the stored/in-memory value is
-    /// untouched, since the throwing setter persists before updating state).
-    public func selectTranscriptionLanguage(_ id: String) async {
-        do {
-            try await setTranscriptionLanguage(id)
-        } catch {
-            transcriptionModelInstall = .failed(
-                "Couldn't save the transcription language: \(error.localizedDescription)"
-            )
-        }
-    }
-
-    /// Download + install the on-device speech model for the chosen language, surfacing the
+    /// Download + install the on-device speech model for the current language, surfacing the
     /// framework's REAL progress. On failure, reports the honest reason and re-checks the actual
     /// installed state rather than assuming success or failure.
     public func installTranscriptionModel() async {

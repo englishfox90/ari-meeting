@@ -16,7 +16,7 @@ Build the **full native Settings UI shell** for the macOS `Ari` app, reaching fu
 
 **EXCLUDE entirely:** the "Apple Intelligence" summary/embedding panels — `AppleModelStatus`, summary `apple-foundation` branch, apple embedder. Do not port or placeholder them.
 
-> **AMENDED 2026-07-21 — Transcription is now a LIVE Apple panel.** The original plan excluded the transcription `apple` branch and shipped the Transcription tab honest-disabled around a Parakeet/Whisper picker. That was based on the (now stale) premise that Swift transcription still ran in the frozen Rust engine. It does not: the Swift app records and transcribes **on-device with Apple `SpeechTranscriber`** (AriKit `Engine/STT/`, shipped), so the disabled Parakeet/Whisper panel actively misrepresented the app. The Transcription tab is now LIVE over `SpeechAssetManager` (engine availability + language + on-device model download). Apple SpeechTranscriber is the Swift app's **sole** transcription engine — there is no provider/model choice. See §6.
+> **AMENDED 2026-07-21 — Transcription is now a LIVE Apple panel.** The original plan excluded the transcription `apple` branch and shipped the Transcription tab honest-disabled around a Parakeet/Whisper picker. That was based on the (now stale) premise that Swift transcription still ran in the frozen Rust engine. It does not: the Swift app records and transcribes **on-device with Apple `SpeechTranscriber`** (AriKit `Engine/STT/`, shipped), so the disabled Parakeet/Whisper panel actively misrepresented the app. The Transcription tab is now LIVE over `SpeechAssetManager` (engine availability + on-device model download). Apple SpeechTranscriber is the Swift app's **sole** transcription engine — there is no provider/model/language choice (transcription follows the system language). See §6.
 
 ## 2. Persistence design
 
@@ -136,11 +136,10 @@ Each section mirrors `PersonDetailView` (ScrollView → `VStack(alignment:.leadi
 | Audio backend selector | radio rows | **HONEST-DISABLED** |
 
 ### `SettingsTranscriptionSection.swift`
-**LIVE** over `SpeechAssetManager` (AMENDED 2026-07-21 — see §1). The Swift app transcribes on-device with Apple `SpeechTranscriber`; there is no provider/model choice, so the section exposes engine availability + language + the on-device model download for that language.
+**LIVE** over `SpeechAssetManager` (AMENDED 2026-07-21 — see §1). The Swift app transcribes on-device with Apple `SpeechTranscriber`; there is no provider/model/language choice (transcription follows the Mac's system language), so the section exposes engine availability + the on-device model download. The `transcriptionLanguage` key is retained as the seam the recording path reads (defaults to the `"auto"` sentinel = system language); a future language control would write it.
 | Control | Primitive | Classification |
 |---|---|---|
 | Engine status (On-device — Apple Speech) | `SettingsCard` + `MarginaliaBadge` (Available/Unavailable), `MarginaliaBanner(.error)` when unavailable | **LIVE** — `SpeechAssetManager.isEngineAvailable()` |
-| Transcription language | `MarginaliaMenuLabel` in `Picker(.menu)` (Automatic + `supportedLocales`) | **LIVE persist** — writes `transcriptionLanguage` |
 | Language-model download (status + real progress + Download) | `SettingsCard` rows, `ProgressView`, `MarginaliaBanner(.error)` on failure | **LIVE** — `SpeechAssetManager.install(forLocale:onProgress:)` |
 
 ### `SettingsSummarySection.swift` (largest)

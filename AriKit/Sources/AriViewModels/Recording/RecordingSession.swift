@@ -219,7 +219,10 @@ public final class RecordingSession {
         captureService = service
         phase = .recording(startedAt: startedAt)
 
-        beginLiveConsumption(service: service, meetingId: newMeetingId)
+        // The transcription language chosen in Settings (defaults to the `"auto"` sentinel = system
+        // language, which the provider resolves via `STTLocale.resolveRequestedLocale`).
+        let language = await (try? database.settings.string(forKey: .transcriptionLanguage)) ?? nil
+        beginLiveConsumption(service: service, meetingId: newMeetingId, language: language)
     }
 
     /// `recording -> stopping -> saved | failed`. A no-op from any other phase.
@@ -298,18 +301,22 @@ public final class RecordingSession {
 
     // MARK: - Live consumption
 
-    private func beginLiveConsumption(service: any CaptureService, meetingId: MeetingID) {
+    private func beginLiveConsumption(
+        service: any CaptureService,
+        meetingId: MeetingID,
+        language: String?
+    ) {
         let transcription = transcription
         let database = database
         let windows = service.mixedWindows()
-        let segmentsStream = transcription.transcribe(windows: windows, language: nil)
+        let segmentsStream = transcription.transcribe(windows: windows, language: language)
 
         segmentTask = Task { [weak self] in
             do {
                 for try await segment in segmentsStream {
                     guard let self else { return }
                     let transcript = TranscriptMapping.transcript(from: segment, meetingId: meetingId)
-                    self.segments.append(transcript)
+                    segments.append(transcript)
                     // Best-effort live write — a transient failure here must not truncate a live
                     // recording; the batch upsert in `stop()` is the durability safety net.
                     try? await database.transcripts.upsert(transcript)
@@ -324,7 +331,7 @@ public final class RecordingSession {
         levelTask = Task { [weak self] in
             for await level in service.liveLevel() {
                 guard let self else { return }
-                self.liveLevel = level
+                liveLevel = level
             }
         }
     }

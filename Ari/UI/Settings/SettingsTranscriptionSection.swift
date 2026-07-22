@@ -2,11 +2,11 @@
 //  SettingsTranscriptionSection.swift — Transcription settings (docs/plans/settings-ui.md §6).
 //
 //  LIVE, not honest-disabled: the Swift app transcribes entirely on-device with Apple's
-//  `SpeechTranscriber` (AriKit `Engine/STT/`). There is no provider/model choice to make —
-//  SpeechTranscriber is the sole engine — so this screen exposes the only real knobs: the
-//  transcription language and the on-device model download for that language. The Rust-era
-//  Parakeet/Whisper panel it replaced was misleading (the Swift app never runs those). Reversed
-//  the plan-§1 "exclude Apple" decision on 2026-07-21 once the STT port landed and shipped.
+//  `SpeechTranscriber` (AriKit `Engine/STT/`). There is no provider/model/language choice to make —
+//  SpeechTranscriber is the sole engine and transcription follows the Mac's system language — so
+//  this screen exposes the only real knobs: engine availability and the on-device model download.
+//  The Rust-era Parakeet/Whisper panel it replaced was misleading (the Swift app never runs those).
+//  Reversed the plan-§1 "exclude Apple" decision on 2026-07-21 once the STT port landed and shipped.
 //
 import AriKit
 import AriViewModels
@@ -24,7 +24,6 @@ struct SettingsTranscriptionSection: View {
             engineCard
 
             if viewModel.transcriptionEngineAvailable {
-                languageCard
                 modelCard
             }
         }
@@ -58,23 +57,6 @@ struct SettingsTranscriptionSection: View {
                     )
                 }
             }
-        }
-        .padding(.horizontal, MarginaliaSpacing.md.value)
-    }
-
-    // MARK: - Language
-
-    private var languageCard: some View {
-        SettingsCard(title: "Language") {
-            Picker(selection: languageBinding) {
-                ForEach(viewModel.transcriptionLanguageOptions) { option in
-                    Text(option.name).tag(option.id)
-                }
-            } label: {
-                MarginaliaMenuLabel(title: "Transcription language", scheme: scheme)
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
         }
         .padding(.horizontal, MarginaliaSpacing.md.value)
     }
@@ -123,9 +105,9 @@ struct SettingsTranscriptionSection: View {
     private var modelStatusText: String {
         switch viewModel.transcriptionModelInstalled {
         case .some(true):
-            "The speech model for this language is installed."
+            "The on-device speech model for your Mac's language is installed."
         case .some(false):
-            "The speech model for this language isn't downloaded yet."
+            "The on-device speech model for your Mac's language isn't downloaded yet."
         case .none:
             "Checking model availability…"
         }
@@ -136,14 +118,5 @@ struct SettingsTranscriptionSection: View {
             return true
         }
         return false
-    }
-
-    // MARK: - Bindings
-
-    private var languageBinding: Binding<String> {
-        Binding(
-            get: { viewModel.transcriptionLanguage },
-            set: { newValue in Task { await viewModel.selectTranscriptionLanguage(newValue) } }
-        )
     }
 }

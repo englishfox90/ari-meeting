@@ -14,25 +14,18 @@
 
     public actor StubSpeechAssetProviding: SpeechAssetProviding {
         public let engineAvailable: Bool
-        public let locales: [Locale]
         private var installed: Bool
 
         public init(
             engineAvailable: Bool = true,
-            installed: Bool = false,
-            locales: [Locale] = [Locale(identifier: "en-US")]
+            installed: Bool = false
         ) {
             self.engineAvailable = engineAvailable
             self.installed = installed
-            self.locales = locales
         }
 
         public nonisolated func isEngineAvailable() -> Bool {
             engineAvailable
-        }
-
-        public func supportedLocales() async -> [Locale] {
-            engineAvailable ? locales : []
         }
 
         public func areAssetsInstalled(forLocale _: String?) async -> Bool {
