@@ -26,36 +26,46 @@ final class NotificationActionHandler: NSObject, UNUserNotificationCenterDelegat
 
     /// Present reminders/summary alerts even while Ari is foregrounded (a banner + sound), so the
     /// user isn't silently un-notified just because the window is open.
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _: UNUserNotificationCenter,
         willPresent _: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .sound]
     }
 
-    func userNotificationCenter(
+    // The system calls this off the main actor with non-Sendable arguments, so the method is
+    // `nonisolated`: we pull the Sendable fields (plain strings) off `response` on the calling
+    // thread and hand only those to the main-actor `handle(...)` — never crossing `response` itself
+    // over the isolation boundary.
+    nonisolated func userNotificationCenter(
         _: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
         let userInfo = response.notification.request.content.userInfo
         let categoryId = response.notification.request.content.categoryIdentifier
+        let actionId = response.actionIdentifier
+        let eventId = userInfo[NotificationUserInfoKey.eventId] as? String
+        let meetingId = userInfo[NotificationUserInfoKey.meetingId] as? String
 
+        await handle(categoryId: categoryId, actionId: actionId, eventId: eventId, meetingId: meetingId)
+    }
+
+    private func handle(categoryId: String, actionId: String, eventId: String?, meetingId: String?) {
         switch categoryId {
         case NotificationCategory.meetingReminder.rawValue:
-            guard let raw = userInfo[NotificationUserInfoKey.eventId] as? String else { return }
+            guard let eventId else { return }
             // Both the explicit "Start Recording" action AND a plain tap on the reminder start the
             // recording (product decision: the reminder's whole purpose is to capture the meeting).
-            switch response.actionIdentifier {
+            switch actionId {
             case NotificationAction.startRecording, UNNotificationDefaultActionIdentifier:
-                onStartRecording?(CalendarEventID(raw))
+                onStartRecording?(CalendarEventID(eventId))
             default:
                 break
             }
 
         case NotificationCategory.summaryReady.rawValue:
-            guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-                  let raw = userInfo[NotificationUserInfoKey.meetingId] as? String else { return }
-            onOpenMeeting?(MeetingID(raw))
+            guard actionId == UNNotificationDefaultActionIdentifier, let meetingId else { return }
+            onOpenMeeting?(MeetingID(meetingId))
 
         default:
             break
