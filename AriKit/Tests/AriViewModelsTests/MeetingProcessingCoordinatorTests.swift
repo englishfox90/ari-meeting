@@ -215,6 +215,40 @@ struct MeetingProcessingCoordinatorTests {
         #expect(coordinator.phase == .idle)
     }
 
+    @Test("cancel() during diarization aborts the pipeline — no summary, no dishonest note")
+    func cancelDuringDiarizationAborts() async {
+        let summarySpy = CallSpy<Int?>()
+        let coordinator = makeCoordinator(
+            resolveAudioURL: { [audioURL] _ in audioURL },
+            resolveHint: { _ in .exact(2) },
+            runDiarization: { _, _, _, progress in
+                progress(.diarizing, 0.5)
+                // Cancellation-aware wait: `cancel()` cancels the run task, so this throws
+                // `CancellationError` — exactly what the real diarization op does under cancel.
+                try await Task.sleep(for: .seconds(60))
+            },
+            generateSummary: { _, count in await summarySpy.record(count) }
+        )
+
+        let begin = Task { await coordinator.begin(meetingId: meetingId) }
+        while true {
+            if case .identifyingSpeakers(.diarizing, _) = coordinator.phase { break }
+            if case .completed = coordinator.phase { break }
+            if case .failed = coordinator.phase { break }
+            await Task.yield()
+        }
+
+        coordinator.cancel()
+        await begin.value
+
+        #expect(coordinator.phase == .idle)
+        #expect(coordinator.activeMeetingID == nil)
+        // The cancel must NOT be recorded as a diarization "failure", and must NOT proceed to
+        // generate a summary anyway.
+        #expect(coordinator.diarizationNote == nil)
+        #expect(await summarySpy.callCount == 0)
+    }
+
     @Test("begin is a no-op while actively processing, but starts fresh after a terminal phase")
     func reentrancyGuardThenFreshRestartAfterTerminal() async {
         let (gate, gateContinuation) = AsyncStream<Void>.makeStream()

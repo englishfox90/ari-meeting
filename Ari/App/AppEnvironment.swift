@@ -193,7 +193,9 @@ final class AppEnvironment {
                     )
                 },
                 isAutoSummaryEnabled: {
-                    (try? await db.settings.bool(forKey: .summaryAutomatic)) ?? nil ?? true
+                    // `try?` over a `Bool?`-returning call flattens (SE-0230), so this is already
+                    // `Bool?`; default an unset/failed read to ON (the product default).
+                    (try? await db.settings.bool(forKey: .summaryAutomatic)) ?? true
                 },
                 generateSummary: { mid, count in
                     _ = try await runner.generate(meetingId: mid, templateId: nil, speakerCount: count)

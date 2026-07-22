@@ -224,6 +224,9 @@ public final class MeetingProcessingCoordinator {
         let (stream, continuation) = AsyncStream<(DiarizationPhase, Double)>.makeStream()
         let consumer = Task { @MainActor [weak self] in
             for await (diarPhase, fraction) in stream {
+                // A cancel() (which cancels this task and sets phase to .idle) must not be
+                // clobbered by a progress item still draining out of the stream behind it.
+                guard !Task.isCancelled else { continue }
                 self?.phase = .identifyingSpeakers(diarPhase, fraction)
             }
         }
@@ -235,6 +238,14 @@ public final class MeetingProcessingCoordinator {
             }
             continuation.finish()
             await consumer.value
+        } catch is CancellationError {
+            // A user-initiated `cancel()` aborts the WHOLE pipeline — it must never be recorded as
+            // a diarization "failure" note (that would be dishonest — the user cancelled, nothing
+            // failed) nor allowed to continue on to template + summary. `cancel()` already set
+            // `phase = .idle`; just unwind.
+            continuation.finish()
+            await consumer.value
+            return
         } catch {
             continuation.finish()
             await consumer.value
@@ -250,6 +261,9 @@ public final class MeetingProcessingCoordinator {
     /// this step never depends on how (or whether) speaker identification went — the honest
     /// `diarizationNote`, if any, was already recorded by `runSpeakerID` above.
     private func proceedToTemplateAndSummary(meetingId: MeetingID) async {
+        // A `cancel()` that lands after speaker ID but before/at template selection unwinds here
+        // too — `cancel()` already set `phase = .idle`, so never step on it with `.selectingTemplate`.
+        if Task.isCancelled { return }
         phase = .selectingTemplate
         let count = await speakerCountOperation(meetingId)
 

@@ -23,7 +23,6 @@ struct SpeakerCountPromptSheet: View {
     let onSkip: () -> Void
 
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.dismiss) private var dismiss
 
     private enum CountMode: String, CaseIterable, Identifiable, Hashable, Sendable {
         case exact, uncertain
@@ -59,16 +58,19 @@ struct SpeakerCountPromptSheet: View {
             }
 
             HStack(spacing: MarginaliaSpacing.md.value) {
+                // No explicit `dismiss()` on either button: the sheet is presented off the
+                // coordinator's `phase == .needsSpeakerCount`, so `onSkip()`/`onSubmit()` moving
+                // the phase forward dismisses it via the presentation binding. Calling `dismiss()`
+                // here too would additionally fire the binding's dismiss-routes-to-skip path,
+                // dispatching a spurious `skipSpeakerIdentification` that races the real intent.
                 Button("Skip") {
                     onSkip()
-                    dismiss()
                 }
                 .buttonStyle(.marginalia(.quiet, .large, in: scheme))
 
                 Button("Identify") {
                     guard let hint = resolvedHint else { return }
                     onSubmit(hint)
-                    dismiss()
                 }
                 .buttonStyle(.marginalia(.primary, .large, in: scheme))
                 .disabled(resolvedHint == nil)
