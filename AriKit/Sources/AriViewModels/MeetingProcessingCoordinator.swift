@@ -75,21 +75,21 @@ public final class MeetingProcessingCoordinator {
     private let speakerCountOperation: SpeakerCountOperation
     private let cancelSummaryOperation: CancelSummaryOperation
 
-    typealias ResolveAudioURLOperation = @Sendable (_ meetingId: MeetingID) async -> URL?
-    typealias ResolveHintOperation = @Sendable (_ meetingId: MeetingID) async -> SpeakerCountHint?
-    typealias RunDiarizationOperation = @Sendable (
+    public typealias ResolveAudioURLOperation = @Sendable (_ meetingId: MeetingID) async -> URL?
+    public typealias ResolveHintOperation = @Sendable (_ meetingId: MeetingID) async -> SpeakerCountHint?
+    public typealias RunDiarizationOperation = @Sendable (
         _ meetingId: MeetingID,
         _ audioURL: URL,
         _ hint: SpeakerCountHint,
         _ progress: @escaping @Sendable (DiarizationPhase, Double) -> Void
     ) async throws -> Void
-    typealias IsAutoSummaryEnabledOperation = @Sendable () async -> Bool
-    typealias GenerateSummaryOperation = @Sendable (
+    public typealias IsAutoSummaryEnabledOperation = @Sendable () async -> Bool
+    public typealias GenerateSummaryOperation = @Sendable (
         _ meetingId: MeetingID,
         _ speakerCount: Int?
     ) async throws -> Void
-    typealias SpeakerCountOperation = @Sendable (_ meetingId: MeetingID) async -> Int?
-    typealias CancelSummaryOperation = @Sendable (_ meetingId: MeetingID) async -> Void
+    public typealias SpeakerCountOperation = @Sendable (_ meetingId: MeetingID) async -> Int?
+    public typealias CancelSummaryOperation = @Sendable (_ meetingId: MeetingID) async -> Void
 
     /// The only initializer — the app composition root (`AppEnvironment.bootstrap()`) assembles
     /// these closures directly from `diarizationService`/`speakerCountHintProvider`/`summaryRunner`/
@@ -134,7 +134,8 @@ public final class MeetingProcessingCoordinator {
         phase = .idle
 
         let task = Task { [weak self] in
-            await self?.runInitialSteps(meetingId: meetingId)
+            guard let self else { return }
+            await runInitialSteps(meetingId: meetingId)
         }
         runTask = task
         await task.value
@@ -158,7 +159,8 @@ public final class MeetingProcessingCoordinator {
         pendingAudioURL = nil
         phase = .identifyingSpeakers(.preparingModels, 0.0)
         let task = Task { [weak self] in
-            await self?.runSpeakerID(meetingId: meetingId, audioURL: audioURL, hint: hint)
+            guard let self else { return }
+            await runSpeakerID(meetingId: meetingId, audioURL: audioURL, hint: hint)
         }
         runTask = task
         await task.value
@@ -174,7 +176,8 @@ public final class MeetingProcessingCoordinator {
         pendingAudioURL = nil
         phase = .selectingTemplate
         let task = Task { [weak self] in
-            await self?.proceedToTemplateAndSummary(meetingId: meetingId)
+            guard let self else { return }
+            await proceedToTemplateAndSummary(meetingId: meetingId)
         }
         runTask = task
         await task.value
@@ -263,7 +266,9 @@ public final class MeetingProcessingCoordinator {
     private func proceedToTemplateAndSummary(meetingId: MeetingID) async {
         // A `cancel()` that lands after speaker ID but before/at template selection unwinds here
         // too — `cancel()` already set `phase = .idle`, so never step on it with `.selectingTemplate`.
-        if Task.isCancelled { return }
+        if Task.isCancelled {
+            return
+        }
         phase = .selectingTemplate
         let count = await speakerCountOperation(meetingId)
 
