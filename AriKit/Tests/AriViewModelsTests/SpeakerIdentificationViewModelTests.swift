@@ -130,9 +130,44 @@ struct SpeakerIdentificationViewModelTests {
 
         await viewModel.run(meetingId: meetingId, audioURL: audioURL)
 
-        #expect(viewModel.progressHistory.count == 5)
+        // Exact sequence, not just count (D9a review fix): a phase-reordering bug in the
+        // AsyncStream bridge would still pass a bare `.count == 5` assertion.
+        #expect(viewModel.progressHistory == [
+            .preparingModels, .decodingAudio, .diarizing, .matching, .stamping
+        ])
         guard case .succeeded = viewModel.runState else {
             Issue.record("expected .succeeded, got \(viewModel.runState)")
+            return
+        }
+    }
+
+    @Test("a second run() call while already running is refused, not interleaved (D9a review fix)")
+    func reentrantRunIsRefused() async {
+        let spy = CallSpy<Never>()
+        let (gate, gateContinuation) = AsyncStream<Void>.makeStream()
+        let viewModel = makeViewModel(runOperation: { _, _, _, progress in
+            await spy.record()
+            progress(.preparingModels, 0.0)
+            // Block the first run in flight so a concurrent second call observes `.running`.
+            for await _ in gate { break }
+            return DiarizationService.RunResult(stampedRows: 0, unresolvedRows: 0, speakers: [])
+        })
+        viewModel.setExactCount(2)
+
+        let firstRun = Task { await viewModel.run(meetingId: meetingId, audioURL: audioURL) }
+        // Give the first run a chance to reach `.running` before firing the second.
+        while case .idle = viewModel.runState {
+            await Task.yield()
+        }
+
+        await viewModel.run(meetingId: meetingId, audioURL: audioURL)
+        #expect(await spy.callCount == 1, "the reentrant call must not start a second underlying run")
+
+        gateContinuation.finish()
+        await firstRun.value
+
+        guard case .succeeded = viewModel.runState else {
+            Issue.record("expected the first (only) run to succeed, got \(viewModel.runState)")
             return
         }
     }

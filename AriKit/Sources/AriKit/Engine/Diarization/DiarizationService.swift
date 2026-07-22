@@ -25,7 +25,7 @@ import Foundation
 
 /// The phases a `DiarizationService.run` progresses through, for honest UI progress reporting
 /// (plan §6 — never a fake indeterminate bar over invented steps).
-public enum DiarizationPhase: Sendable {
+public enum DiarizationPhase: Sendable, Equatable {
     case preparingModels
     case decodingAudio
     case diarizing
@@ -279,20 +279,28 @@ public actor DiarizationService {
         let canonical = sameSpaceCandidates.first { $0.personId == personId && $0.id != speakerId }
 
         if let canonical {
+            // Fold weight (D8 review fix, ← Rust `merge_speaker_into`, `commands.rs:1188-1194`):
+            // the subject's stored `totalSpeechSecs`, or — for a legacy/imported row that
+            // carries a stored 0 but has real `speakerSegment` rows — the summed segment
+            // durations instead. Never silently skip a fold a real speaker's segments would earn.
+            let subjectSpeechSecs = subject.totalSpeechSecs > 0
+                ? subject.totalSpeechSecs
+                : try await database.speakers.totalSegmentSecs(for: speakerId)
+
             let fromCentroid = CentroidCodec.vector(from: subject.centroid)
             let intoCentroid = CentroidCodec.vector(from: canonical.centroid)
             if SpeakerMatcher.shouldFold(
                 storedDim: intoCentroid.count, new: fromCentroid,
-                clusterSpeechSecs: subject.totalSpeechSecs, matchScore: nil, config: matchConfig
+                clusterSpeechSecs: subjectSpeechSecs, matchScore: nil, config: matchConfig
             ) {
                 let folded = SpeakerMatcher.foldCentroidWeighted(
                     stored: intoCentroid, storedTotalSecs: canonical.totalSpeechSecs,
-                    new: fromCentroid, newSecs: subject.totalSpeechSecs
+                    new: fromCentroid, newSecs: subjectSpeechSecs
                 )
                 try await database.speakers.persistFold(
                     canonical.id, centroid: CentroidCodec.data(from: folded),
                     samples: canonical.samples + 1,
-                    totalSpeechSecs: canonical.totalSpeechSecs + subject.totalSpeechSecs,
+                    totalSpeechSecs: canonical.totalSpeechSecs + subjectSpeechSecs,
                     at: now
                 )
             }
@@ -302,5 +310,28 @@ public actor DiarizationService {
         }
 
         try await database.persons.addParticipant(meetingId: meetingId, personId: personId, linkSource: "speaker", at: now)
+    }
+
+    /// The full assignable-person list for the "Assign person…" picker's fallback list (plan §6
+    /// — shown below the ranked suggestions, plus "New person…" in the UI itself). A read-only
+    /// convenience; writes nothing.
+    public func assignablePeople() async throws -> [Person] {
+        try await database.persons.all()
+    }
+
+    /// Ranked assign-picker suggestions for one (usually provisional) speaker (plan §6 — ←
+    /// `SpeakerMatcher.rankedSuggestions`, parity-M3). Read-only: looks up the speaker's own
+    /// centroid and ranks it against every confirmed/owner voiceprint in the same
+    /// `embeddingModel` space that is linked to a person. Honest empty array when the speaker
+    /// can't be found or has no candidates — never a fabricated suggestion.
+    public func assignmentSuggestions(forSpeaker speakerId: SpeakerID) async throws -> [(personId: PersonID, score: Float)] {
+        guard let speaker = try await database.speakers.find(speakerId) else { return [] }
+        let embedding = CentroidCodec.vector(from: speaker.centroid)
+        let candidateSpeakers = try await database.speakers.matchCandidates(embeddingModel: speaker.embeddingModel)
+        let candidates: [(id: SpeakerID, personId: PersonID, centroid: [Float])] = candidateSpeakers.compactMap { candidate in
+            guard let personId = candidate.personId else { return nil }
+            return (id: candidate.id, personId: personId, centroid: CentroidCodec.vector(from: candidate.centroid))
+        }
+        return SpeakerMatcher.rankedSuggestions(embedding: embedding, candidates: candidates)
     }
 }

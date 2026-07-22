@@ -41,6 +41,12 @@ struct MeetingDetailView: View {
     /// fixed base instead of compounding — the compounding + live relayout is what made the seam
     /// jitter between states.
     @State private var railWidthAtDragStart: CGFloat?
+    /// Constructed lazily the first time "Identify speakers" is opened — the app composition
+    /// root's `diarizationService`/`speakerCountHintProvider` (docs/plans/arikit-diarization.md
+    /// §5 D9b) aren't available until `AppEnvironment.bootstrap()` finishes.
+    @State private var speakerIdentificationViewModel: SpeakerIdentificationViewModel?
+    @State private var showIdentifySpeakers = false
+    @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
 
     init(database: AppDatabase, meetingId: MeetingID, initialSeek: Double? = nil) {
@@ -200,11 +206,14 @@ struct MeetingDetailView: View {
                         .padding(MarginaliaSpacing.md.value)
                 }
             case .transcript:
-                TranscriptListView(
-                    transcript: viewModel.transcript,
-                    displayName: viewModel.displayName(for:),
-                    onSeek: { audioController.seek(toSeconds: $0) }
-                )
+                VStack(spacing: 0) {
+                    transcriptHeader
+                    TranscriptListView(
+                        transcript: viewModel.transcript,
+                        displayName: viewModel.displayName(for:),
+                        onSeek: { audioController.seek(toSeconds: $0) }
+                    )
+                }
             case .notes:
                 notesBody
             }
@@ -328,9 +337,88 @@ struct MeetingDetailView: View {
                     .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
             }
             Spacer()
+            identifySpeakersButton
         }
         .padding(.horizontal, MarginaliaSpacing.md.value)
         .padding(.top, MarginaliaSpacing.md.value)
+    }
+
+    /// "Identify speakers" entry point (plan §6) — visible whenever the meeting has a recording
+    /// at all, disabled with an honest reason (never silently hidden) until real audio and
+    /// audio-timed transcript rows both resolve.
+    @ViewBuilder
+    private var identifySpeakersButton: some View {
+        if viewModel.meeting.value?.audioReference != nil {
+            Button {
+                openIdentifySpeakers()
+            } label: {
+                Label("Identify speakers", systemImage: "person.crop.circle")
+            }
+            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+            .disabled(!canIdentifySpeakers)
+            .help(canIdentifySpeakers ? "Identify speakers in this recording" : identifySpeakersDisabledReason)
+            .sheet(isPresented: $showIdentifySpeakers) {
+                identifySpeakersSheet
+            }
+        }
+    }
+
+    private var canIdentifySpeakers: Bool {
+        guard case .available = viewModel.audio else { return false }
+        return viewModel.transcript.contains { $0.audioStartTime != nil }
+    }
+
+    private var identifySpeakersDisabledReason: String {
+        if case let .missing(reason) = viewModel.audio { return reason }
+        return "No transcript segments with audio timing are available yet."
+    }
+
+    private func openIdentifySpeakers() {
+        if speakerIdentificationViewModel == nil,
+           let service = environment.diarizationService,
+           let hintProvider = environment.speakerCountHintProvider {
+            speakerIdentificationViewModel = SpeakerIdentificationViewModel(
+                service: service,
+                hintProvider: hintProvider,
+                isRecording: { environment.recordingSession?.isActive ?? false }
+            )
+        }
+        showIdentifySpeakers = true
+    }
+
+    @ViewBuilder
+    private var identifySpeakersSheet: some View {
+        if let speakerIdentificationViewModel, case let .available(url) = viewModel.audio {
+            IdentifySpeakersSheet(
+                viewModel: speakerIdentificationViewModel,
+                meetingId: meetingId,
+                audioURL: url,
+                displayName: viewModel.displayName(for:),
+                createPerson: { name in
+                    // D9b review fix: surface the upsert failure instead of swallowing it with
+                    // `try?` and returning a dangling `PersonID` — with FKs ON, a dangling id
+                    // would later throw a raw FK error out of `confirmSpeaker` into
+                    // `runState.failed`, wiping the results list with no honest explanation.
+                    let person = Person(
+                        id: PersonID(UUID().uuidString),
+                        displayName: name,
+                        isOwner: false,
+                        createdAt: Date(),
+                        updatedAt: Date()
+                    )
+                    try await database.persons.upsert(person)
+                    return person.id
+                },
+                onSpeakersChanged: { await viewModel.load(meetingId) },
+                onDismiss: { showIdentifySpeakers = false }
+            )
+        } else {
+            // Honest fallback (No-Fake-State): the composition root hasn't finished bootstrapping
+            // the diarization service, or audio no longer resolves — never a dead/fake sheet.
+            Text("Speaker identification isn't available for this meeting right now.")
+                .marginaliaTextStyle(.body, in: scheme)
+                .padding(MarginaliaSpacing.lg.value)
+        }
     }
 
     private func emptyState(title: String, message: String) -> some View {

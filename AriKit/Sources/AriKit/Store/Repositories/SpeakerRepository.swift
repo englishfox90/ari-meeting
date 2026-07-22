@@ -1,5 +1,10 @@
 //
 //  SpeakerRepository.swift — the ONLY way feature code touches the `speaker` table (plan §2.2).
+//  Sanctioned exception (plan §3/swift-L3): `clearMeetingDiarization` and
+//  `repointSpeakerReferences` legitimately cross into the `transcript` table too, writing both
+//  in the same transaction as their `speaker`/`speakerSegment` work — precedented by the Rust
+//  incumbent doing the same across tables in one transaction (`speaker.rs:290`). This is a
+//  deliberate, documented exception to "one table per repository", not a drift to work around.
 //
 import Foundation
 import GRDB
@@ -108,6 +113,21 @@ public struct SpeakerRepository: Sendable {
             record.enrollmentState = EnrollmentState.confirmed.rawValue
             record.updatedAt = date
             try record.update(db)
+        }
+    }
+
+    /// Sum of a speaker's segment durations across ALL meetings (← Rust
+    /// `SpeakerRepository::total_segment_secs`, `speaker.rs:604-615`). Used as the D8-review-
+    /// fixed fold-weight fallback (← `merge_speaker_into`, `commands.rs:1188-1194`): a legacy or
+    /// imported row can carry a stored `totalSpeechSecs` of `0` while still having real
+    /// `speakerSegment` rows, in which case the summed segment durations are the honest weight.
+    public func totalSegmentSecs(for id: SpeakerID) async throws -> Double {
+        try await dbWriter.read { db in
+            try Double.fetchOne(
+                db,
+                sql: "SELECT COALESCE(SUM(endTime - startTime), 0.0) FROM speakerSegment WHERE speakerId = ?",
+                arguments: [id.rawValue]
+            ) ?? 0.0
         }
     }
 

@@ -378,6 +378,45 @@ struct DiarizationServiceTests {
         #expect(try await db.speakers.find(provisionalId) != nil)
     }
 
+    @Test("confirmSpeaker folds using summed segment durations when the legacy row's stored totalSpeechSecs is 0 (D8 review fix, ← commands.rs:1188-1194)")
+    func confirmSpeakerFallsBackToSummedSegmentSecsWhenStoredIsZero() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meetingId: MeetingID = "meeting-1"
+        try await db.meetings.upsert(makeMeeting(meetingId))
+        let personId: PersonID = "person-1"
+        try await db.persons.upsert(makePerson(personId))
+
+        let canonicalId: SpeakerID = "speaker-canonical"
+        try await db.speakers.upsert(
+            makeConfirmedSpeaker(canonicalId, personId: personId, centroid: vector(cosine: 1.0), totalSpeechSecs: 100.0)
+        )
+
+        // Legacy/imported row: stored totalSpeechSecs is 0, but it has a real 30s speakerSegment
+        // row — the fold must use the summed segment duration as its weight, not skip the fold.
+        let provisionalId: SpeakerID = "speaker-provisional"
+        try await db.speakers.upsert(
+            Speaker(
+                id: provisionalId, personId: nil, centroid: CentroidCodec.data(from: vector(cosine: 0.9)),
+                embeddingModel: embeddingModel, dim: 2, samples: 1, enrollmentState: .provisional,
+                totalSpeechSecs: 0.0, createdAt: instant, updatedAt: instant
+            )
+        )
+        try await db.speakerSegments.upsert(
+            SpeakerSegment(
+                id: "seg-1", meetingId: meetingId, speakerId: provisionalId, clusterKey: "S1",
+                startTime: 0, endTime: 30, source: .system, createdAt: instant
+            )
+        )
+
+        let service = makeService(db: db, output: makeOutput(clusters: [("S1", vector(cosine: 1.0))]))
+        try await service.confirmSpeaker(provisionalId, as: personId, inMeeting: meetingId)
+
+        let canonicalAfter = try #require(await db.speakers.find(canonicalId))
+        // Fold happened using the summed segment secs (30s) fallback, not the stored 0.
+        #expect(canonicalAfter.totalSpeechSecs == 130.0)
+        #expect(canonicalAfter.samples == 4)
+    }
+
     @Test("confirming the same person from two different meetings never creates a second match-pool candidate (B1, I10)")
     func secondConfirmOfSamePersonDoesNotCreateSecondCandidate() async throws {
         let db = try AppDatabase.makeInMemory()
@@ -495,5 +534,48 @@ struct DiarizationServiceTests {
 
         let participants = try await db.persons.participants(inMeeting: meetingId)
         #expect(participants.map(\.id) == [personId])
+    }
+
+    // MARK: - assignmentSuggestions composition (D9b review fix)
+
+    @Test("assignmentSuggestions suggests the same-space confirmed candidate, excludes a wrong-space one")
+    func assignmentSuggestionsSuggestsSameSpaceExcludesWrongSpace() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let personA: PersonID = "person-a"
+        let personB: PersonID = "person-b"
+        try await db.persons.upsert(makePerson(personA, name: "Nia"))
+        try await db.persons.upsert(makePerson(personB, name: "Wrong Space"))
+
+        // The provisional speaker to rank suggestions for.
+        let provisionalId: SpeakerID = "speaker-provisional"
+        try await db.speakers.upsert(
+            Speaker(
+                id: provisionalId, personId: nil, centroid: CentroidCodec.data(from: vector(cosine: 1.0)),
+                embeddingModel: embeddingModel, dim: 2, samples: 1, enrollmentState: .provisional,
+                totalSpeechSecs: 30.0, createdAt: instant, updatedAt: instant
+            )
+        )
+
+        // A same-space confirmed candidate, close to the provisional's embedding.
+        let sameSpaceId: SpeakerID = "speaker-same-space"
+        try await db.speakers.upsert(
+            makeConfirmedSpeaker(sameSpaceId, personId: personA, centroid: vector(cosine: 0.95))
+        )
+
+        // A wrong-space confirmed candidate — different embeddingModel, must never be suggested
+        // even though it's otherwise confirmed and linked to a person.
+        let wrongSpaceId: SpeakerID = "speaker-wrong-space"
+        try await db.speakers.upsert(
+            Speaker(
+                id: wrongSpaceId, personId: personB, centroid: CentroidCodec.data(from: vector(cosine: 1.0)),
+                embeddingModel: "some-other-embedding-space", dim: 2, samples: 3,
+                enrollmentState: .confirmed, totalSpeechSecs: 120.0, createdAt: instant, updatedAt: instant
+            )
+        )
+
+        let service = makeService(db: db, output: makeOutput(clusters: [("S1", vector(cosine: 1.0))]))
+        let suggestions = try await service.assignmentSuggestions(forSpeaker: provisionalId)
+
+        #expect(suggestions.map(\.personId) == [personA])
     }
 }

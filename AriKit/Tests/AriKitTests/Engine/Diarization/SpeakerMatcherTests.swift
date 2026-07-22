@@ -139,6 +139,21 @@ struct SpeakerMatcherTests {
         #expect(SpeakerMatcher.shouldFold(storedDim: 2, new: [1.0, 0.0], clusterSpeechSecs: 30.0, matchScore: nil, config: cfg))
     }
 
+    // ---- config defaults (invariant I9, ports tuning test 56) --------------
+
+    @Test
+    func matchConfigDefaultsAreTheParityValues() {
+        let cfg = MatchConfig()
+        #expect(cfg.autoThreshold == 0.70)
+        #expect(cfg.suggestThreshold == 0.55)
+        #expect(cfg.margin == 0.08)
+        #expect(cfg.minEnrollDurationSecs == 3.0)
+        #expect(cfg.minEnrollSelfSimilarity == 0.60)
+        #expect(MatchConfig.minFoldSpeechSecs == 5.0)
+        #expect(MatchConfig.foldWeightCapSecs == 600.0)
+        #expect(MatchConfig.minAutoConfirmSpeechSecs == 5.0)
+    }
+
     // ---- match tiers --------------------------------------------------------
 
     @Test
