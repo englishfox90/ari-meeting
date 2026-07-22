@@ -45,6 +45,11 @@ final class AppEnvironment {
     /// page only ever renders it, never owns capture state itself.
     private(set) var recordingSession: RecordingSession?
 
+    /// The single app-wide audio-import session (docs/plans/audio-import.md) — import an existing
+    /// recording as a meeting, with a user-chosen meeting date/time. Mount-independent like
+    /// `recordingSession` so it survives the import sheet being dismissed. `nil` until `bootstrap()`.
+    private(set) var importSession: MeetingImportSession?
+
     /// The one Keychain-backed secrets store (docs/plans/settings-ui.md §2.3) — backs
     /// `SecretsReading`/`RecallSecretsReading`/`SecretsStoring` all at once. Stateless, so it
     /// needs no `bootstrap()` gating; available from construction.
@@ -144,9 +149,10 @@ final class AppEnvironment {
             _ = try? await db.persons.ensureOwner(defaultDisplayName: NSFullUserName())
 
             // The real recording vertical (R5 capture + R6 live SpeechTranscriber).
-            recordingSession = try RecordingSession(
+            let recordingsRoot = try Self.recordingsRootURL()
+            recordingSession = RecordingSession(
                 database: db,
-                recordingsRoot: Self.recordingsRootURL(),
+                recordingsRoot: recordingsRoot,
                 makeCaptureService: { folder in
                     LiveCaptureService(
                         meetingFolder: folder,
@@ -156,6 +162,17 @@ final class AppEnvironment {
                     )
                 },
                 transcription: SpeechLiveTranscriptionService()
+            )
+
+            // Import an existing audio file as a meeting (docs/plans/audio-import.md). Shares the
+            // recordings root with live capture, but uses the file-transcription provider directly
+            // (`SpeechTranscriberProvider`'s whole-file `transcribe(fileURL:)`), not the live
+            // windows-stream service. The post-import pipeline kickoff is wired in `RootSplitView`,
+            // exactly like the recording `.saved` handler.
+            importSession = MeetingImportSession(
+                database: db,
+                recordingsRoot: recordingsRoot,
+                transcription: SpeechTranscriberProvider()
             )
 
             // Local `let`s (not just the stored properties below) so the Track 2 coordinator

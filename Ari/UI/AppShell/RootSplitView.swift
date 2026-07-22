@@ -22,6 +22,8 @@ struct RootSplitView: View {
 
     @State private var selectedSection: SidebarSection = .home
     @State private var path = NavigationPath()
+    /// Drives the "import a recording" sheet (docs/plans/audio-import.md).
+    @State private var showImportSheet = false
 
     var body: some View {
         Group {
@@ -42,7 +44,8 @@ struct RootSplitView: View {
                 database: database,
                 onSelectMeeting: { path.append($0) },
                 onSelectPerson: { path.append($0) },
-                onSelectSeries: { path.append($0) }
+                onSelectSeries: { path.append($0) },
+                onImportAudio: { showImportSheet = true }
             )
             .navigationSplitViewColumnWidth(min: 236, ideal: 252, max: 300)
         } detail: {
@@ -94,6 +97,16 @@ struct RootSplitView: View {
             guard case let .saved(meetingId) = newPhase else { return }
             Task { await environment.processingCoordinator?.begin(meetingId: meetingId) }
         }
+        // The import equivalent (docs/plans/audio-import.md): when an import saves, dismiss the
+        // sheet, kick the SAME post-recording pipeline, open the new meeting, and reset the session
+        // so the sheet reopens clean. Mirrors the recording `.saved` handler above.
+        .onChange(of: environment.importSession?.phase) { _, newPhase in
+            guard case let .saved(meetingId) = newPhase else { return }
+            showImportSheet = false
+            Task { await environment.processingCoordinator?.begin(meetingId: meetingId) }
+            path.append(meetingId)
+            environment.importSession?.reset()
+        }
         // Navigation raised from outside the view tree (a tapped notification): a meeting-reminder
         // start routes to the recording section (the session is already primed + capturing); a
         // summary-ready tap pushes that meeting's detail. Cleared immediately so it fires once.
@@ -121,6 +134,17 @@ struct RootSplitView: View {
                     Task { await environment.processingCoordinator?.skipSpeakerIdentification() }
                 }
             )
+        }
+        // The import sheet (docs/plans/audio-import.md), raised from the sidebar's "Import audio"
+        // action. The session is always present once the shell is `.ready`; the `.saved` handler
+        // above owns dismissal + navigation.
+        .sheet(isPresented: $showImportSheet) {
+            if let importSession = environment.importSession {
+                ImportMeetingSheet(
+                    session: importSession,
+                    onCancel: { showImportSheet = false }
+                )
+            }
         }
     }
 

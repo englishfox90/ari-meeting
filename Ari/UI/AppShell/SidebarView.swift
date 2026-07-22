@@ -29,6 +29,8 @@ struct SidebarView: View {
     let onSelectMeeting: (MeetingID) -> Void
     let onSelectPerson: (PersonID) -> Void
     let onSelectSeries: (SeriesID) -> Void
+    /// Present the "import a recording" sheet (docs/plans/audio-import.md).
+    let onImportAudio: () -> Void
 
     @State private var viewModel: HomeViewModel
     @State private var searchViewModel: SidebarSearchViewModel
@@ -42,13 +44,15 @@ struct SidebarView: View {
         database: AppDatabase,
         onSelectMeeting: @escaping (MeetingID) -> Void,
         onSelectPerson: @escaping (PersonID) -> Void,
-        onSelectSeries: @escaping (SeriesID) -> Void
+        onSelectSeries: @escaping (SeriesID) -> Void,
+        onImportAudio: @escaping () -> Void
     ) {
         _selection = selection
         self.database = database
         self.onSelectMeeting = onSelectMeeting
         self.onSelectPerson = onSelectPerson
         self.onSelectSeries = onSelectSeries
+        self.onImportAudio = onImportAudio
         _viewModel = State(initialValue: HomeViewModel(database: database))
         _searchViewModel = State(initialValue: SidebarSearchViewModel(database: database))
     }
@@ -266,7 +270,7 @@ struct SidebarView: View {
             .padding(.top, MarginaliaSpacing.sm.value)
 
             Button {
-                selection = .newMeeting
+                onImportAudio()
             } label: {
                 Label("Import audio", systemImage: "square.and.arrow.down")
                     .marginaliaTextStyle(.callout, in: scheme, ink: .accent)
