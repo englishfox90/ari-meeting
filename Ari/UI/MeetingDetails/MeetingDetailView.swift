@@ -12,9 +12,11 @@
 //
 import AriKit
 import AriViewModels
+import OSLog
 import SwiftUI
 
 struct MeetingDetailView: View {
+    private static let uiLog = Logger(subsystem: "com.arivo.ari", category: "diarization-ui")
     let database: AppDatabase
     let meetingId: MeetingID
     /// When opened from a cross-meeting citation, the scrubber positions here once audio loads.
@@ -349,18 +351,33 @@ struct MeetingDetailView: View {
     @ViewBuilder
     private var identifySpeakersButton: some View {
         if viewModel.meeting.value?.audioReference != nil {
-            Button {
-                openIdentifySpeakers()
-            } label: {
-                Label("Identify speakers", systemImage: "person.crop.circle")
+            HStack(spacing: MarginaliaSpacing.sm.value) {
+                if !canIdentifySpeakers {
+                    // Honest disabled state (plan §6): the reason must be visible, not
+                    // hover-only — a silently inert button reads as broken.
+                    Text(identifySpeakersShortReason)
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                }
+                Button {
+                    openIdentifySpeakers()
+                } label: {
+                    Label("Identify speakers", systemImage: "person.crop.circle")
+                }
+                .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                .disabled(!canIdentifySpeakers)
+                .help(canIdentifySpeakers ? "Identify speakers in this recording" : identifySpeakersDisabledReason)
             }
-            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-            .disabled(!canIdentifySpeakers)
-            .help(canIdentifySpeakers ? "Identify speakers in this recording" : identifySpeakersDisabledReason)
             .sheet(isPresented: $showIdentifySpeakers) {
                 identifySpeakersSheet
             }
         }
+    }
+
+    /// Compact inline form of `identifySpeakersDisabledReason` — the full detail (including
+    /// the missing path) stays in the tooltip and the audio banner.
+    private var identifySpeakersShortReason: String {
+        if case .missing = viewModel.audio { return "Needs an audio file" }
+        return "Needs audio-timed transcript"
     }
 
     private var canIdentifySpeakers: Bool {
@@ -374,6 +391,13 @@ struct MeetingDetailView: View {
     }
 
     private func openIdentifySpeakers() {
+        Self.uiLog.info("""
+        identify-speakers click: audio=\(String(describing: viewModel.audio), privacy: .public), \
+        timedSegments=\(viewModel.transcript.filter { $0.audioStartTime != nil }.count), \
+        service=\(environment.diarizationService == nil ? "nil" : "ok", privacy: .public), \
+        hintProvider=\(environment.speakerCountHintProvider == nil ? "nil" : "ok", privacy: .public), \
+        vmCached=\(speakerIdentificationViewModel != nil)
+        """)
         if speakerIdentificationViewModel == nil,
            let service = environment.diarizationService,
            let hintProvider = environment.speakerCountHintProvider {
@@ -382,6 +406,12 @@ struct MeetingDetailView: View {
                 hintProvider: hintProvider,
                 isRecording: { environment.recordingSession?.isActive ?? false }
             )
+        }
+        if speakerIdentificationViewModel == nil {
+            // No service/hint provider (bootstrap incomplete or failed): an if-let sheet body
+            // would present an EMPTY sheet — indistinguishable from "nothing happened".
+            Self.uiLog.error("identify-speakers: view model unavailable; not presenting sheet")
+            return
         }
         showIdentifySpeakers = true
     }
