@@ -75,10 +75,8 @@ struct SettingsView: View {
             SettingsGeneralSection(viewModel: viewModel)
         case .recordings:
             SettingsRecordingsSection(viewModel: viewModel)
-        case .transcription:
-            SettingsTranscriptionSection(viewModel: viewModel)
-        case .summary:
-            SettingsSummarySection(viewModel: viewModel)
+        case .intelligence:
+            SettingsIntelligenceSection(viewModel: viewModel)
         case .calendar:
             SettingsCalendarSection(viewModel: calendarViewModel)
         }

@@ -21,58 +21,57 @@ struct SettingsGeneralSection: View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
             SectionHeader(title: "General")
 
-            SettingsCard(title: "Appearance") {
-                Picker("Appearance", selection: appearanceBinding) {
-                    ForEach(AppAppearance.allCases, id: \.self) { appearance in
-                        Text(appearance.rawValue.capitalized).tag(appearance)
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+                SettingsGroup(header: "Appearance") {
+                    SettingsRow("Theme") {
+                        Picker("Appearance", selection: appearanceBinding) {
+                            ForEach(AppAppearance.allCases, id: \.self) { appearance in
+                                Text(appearance.rawValue.capitalized).tag(appearance)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
                     }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-            .padding(.horizontal, MarginaliaSpacing.md.value)
 
-            SettingsCard(title: "Notch & Menu Bar") {
-                VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
-                    SettingsDisabledGroup(availability: viewModel.notchAvailability) {
-                        MarginaliaToggleRow(
-                            "Show meeting notch",
-                            description: "A live HUD near the notch during recording.",
-                            isOn: showNotchBinding,
-                            scheme: scheme
-                        )
-                    }
-                    SettingsDisabledGroup(availability: viewModel.menuBarAvailability) {
-                        MarginaliaToggleRow(
-                            "Show in menu bar",
-                            description: "A quick-access menu-bar item.",
-                            isOn: showInMenuBarBinding,
-                            scheme: scheme
-                        )
-                    }
-                }
-            }
-            .padding(.horizontal, MarginaliaSpacing.md.value)
-
-            SettingsCard(title: "Notifications") {
-                SettingsDisabledGroup(availability: viewModel.recordingAlertsAvailability) {
-                    MarginaliaToggleRow(
-                        "Recording alerts",
-                        description: "Notify when a recording starts or stops.",
-                        isOn: recordingAlertsBinding,
-                        scheme: scheme
+                SettingsGroup(header: "Notch & Menu Bar") {
+                    SettingsToggleRow(
+                        "Show meeting notch",
+                        description: viewModel.notchAvailability.disabledReason
+                            ?? "A live HUD near the notch during recording.",
+                        isOn: showNotchBinding
                     )
-                }
-            }
-            .padding(.horizontal, MarginaliaSpacing.md.value)
+                    .disabled(viewModel.notchAvailability.isDisabled)
 
-            SettingsCard(title: "Recordings") {
-                VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-                    Text(recordingsFolderDisplayPath)
-                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                    Button("Open Folder", action: openRecordingsFolder)
-                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                        .disabled(recordingsFolderURL == nil)
+                    SettingsToggleRow(
+                        "Show in menu bar",
+                        description: viewModel.menuBarAvailability.disabledReason
+                            ?? "A quick-access menu-bar item.",
+                        isOn: showInMenuBarBinding
+                    )
+                    .disabled(viewModel.menuBarAvailability.isDisabled)
+                }
+
+                SettingsGroup(header: "Notifications") {
+                    SettingsToggleRow(
+                        "Recording alerts",
+                        description: viewModel.recordingAlertsAvailability.disabledReason
+                            ?? "Notify when a recording starts or stops.",
+                        isOn: recordingAlertsBinding
+                    )
+                    .disabled(viewModel.recordingAlertsAvailability.isDisabled)
+                }
+
+                SettingsGroup(header: "Recordings folder") {
+                    VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+                        Text(recordingsFolderDisplayPath)
+                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                        Button("Open Folder", action: openRecordingsFolder)
+                            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                            .disabled(recordingsFolderURL == nil)
+                    }
+                    .settingsRowInsets()
                 }
             }
             .padding(.horizontal, MarginaliaSpacing.md.value)

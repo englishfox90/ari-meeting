@@ -8,8 +8,7 @@ import SwiftUI
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case recordings
-    case transcription
-    case summary
+    case intelligence
     case calendar
 
     var id: String {
@@ -20,8 +19,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .recordings: "Recordings"
-        case .transcription: "Transcription"
-        case .summary: "Summary"
+        case .intelligence: "Intelligence"
         case .calendar: "Calendar"
         }
     }

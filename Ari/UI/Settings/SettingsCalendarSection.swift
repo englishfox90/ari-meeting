@@ -27,8 +27,8 @@ struct SettingsCalendarSection: View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
             SectionHeader(title: "Calendar")
 
-            SettingsCard(title: "Access") {
-                VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+                SettingsGroup(header: "Access") {
                     SettingsDisabledGroup(availability: viewModel.grantAccessAvailability) {
                         HStack {
                             Text(permissionStatusText)
@@ -44,38 +44,36 @@ struct SettingsCalendarSection: View {
                             }
                         }
                     }
+                    .settingsRowInsets()
                 }
-            }
 
-            SettingsCard(title: "Sync") {
-                VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-                    HStack {
-                        Text(syncStatusText)
-                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                        Spacer()
-                        Button("Sync Now") {
-                            Task { await viewModel.syncNow() }
-                        }
-                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                        .disabled(viewModel.permission != .granted)
-                    }
-                    if let error = viewModel.lastSyncError {
-                        MarginaliaBanner(kind: .error, message: error, scheme: scheme)
-                    }
-                }
-            }
-
-            SettingsCard(title: "Calendars") {
-                if viewModel.calendars.isEmpty {
-                    Text(emptyCalendarsText)
-                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                } else {
+                SettingsGroup(header: "Sync") {
                     VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+                        HStack {
+                            Text(syncStatusText)
+                                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                            Spacer()
+                            Button("Sync Now") {
+                                Task { await viewModel.syncNow() }
+                            }
+                            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                            .disabled(viewModel.permission != .granted)
+                        }
+                        if let error = viewModel.lastSyncError {
+                            MarginaliaBanner(kind: .error, message: error, scheme: scheme)
+                        }
+                    }
+                    .settingsRowInsets()
+                }
+
+                SettingsGroup(header: "Calendars") {
+                    if viewModel.calendars.isEmpty {
+                        Text(emptyCalendarsText)
+                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                            .settingsRowInsets()
+                    } else {
                         ForEach(viewModel.calendars) { calendar in
                             calendarRow(for: calendar)
-                            if calendar.id != viewModel.calendars.last?.id {
-                                Divider()
-                            }
                         }
                     }
                 }
@@ -114,19 +112,19 @@ struct SettingsCalendarSection: View {
     private func calendarRow(for calendar: CalendarSettingsViewModel.CalendarSyncRow) -> some View {
         HStack(alignment: .center, spacing: MarginaliaSpacing.sm.value) {
             colorDot(for: calendar.color)
-            MarginaliaToggleRow(
-                calendar.calendarTitle ?? calendar.calendarId,
-                isOn: Binding(
-                    get: { calendar.selected },
-                    set: { newValue in
-                        Task {
-                            try? await viewModel.setSelected(newValue, for: calendar.calendarId)
-                        }
-                    }
-                ),
-                scheme: scheme
-            )
+            Text(calendar.calendarTitle ?? calendar.calendarId)
+                .marginaliaTextStyle(.body, in: scheme)
+            Spacer(minLength: MarginaliaSpacing.sm.value)
+            Toggle("", isOn: Binding(
+                get: { calendar.selected },
+                set: { newValue in
+                    Task { try? await viewModel.setSelected(newValue, for: calendar.calendarId) }
+                }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
         }
+        .settingsRowInsets()
     }
 
     private func colorDot(for hex: String?) -> some View {

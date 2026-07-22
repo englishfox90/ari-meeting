@@ -110,52 +110,55 @@ Shell `Ari/UI/Settings/SettingsView.swift`: `MarginaliaCanvasWash(scheme:)` grou
 No in-content segmented control. `switch tab { … }` renders one section. Owns `SettingsViewModel` + `CalendarSettingsViewModel` (constructed in `init`, `.task { await vm.load() }`).
 
 Foundation support files:
-- `Ari/UI/Settings/SettingsTab.swift` — `enum SettingsTab: CaseIterable { case general, recordings, transcription, summary, calendar }` (+ sentence-case titles; stock Picker labels, not uppercased).
-- `Ari/UI/Settings/SettingsCard.swift` — opaque canonical card recipe (`RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style:.continuous).fill(.elevated).overlay(strokeBorder(.hairline,1))`). Content layer stays paper, never glass.
-- `Ari/UI/Settings/SettingsDisabledGroup.swift` — wraps a group in `.disabled(true)` + `MarginaliaBanner(kind: .info, message:, scheme:)` rendering the VM's `reason`. The honest-disabled treatment used by all sections.
+- `Ari/UI/Settings/SettingsTab.swift` — `enum SettingsTab: CaseIterable { case general, recordings, intelligence, calendar }` (+ sentence-case titles; stock Picker labels, not uppercased). **AMENDED 2026-07-22** — the former `transcription` + `summary` tabs are merged into one `intelligence` tab (see below).
+- `Ari/UI/Settings/SettingsGroup.swift` — **the Apple-System-Settings grouped-list idiom, Marginalia-skinned (ADDED 2026-07-22).** `SettingsGroup { … }` = optional caption header + a paper card (`.elevated` fill + `.hairline` stroke, `MarginaliaRadius.card`) whose direct child views are treated as rows and joined by inset hairline dividers + optional caption footnote (dividers via `Group(subviews:)`, macOS 26). `SettingsRow(_:description:) { trailing }` = one row, label-left / control-right. `.settingsRowInsets()` = the row insets for a free-form block. `SettingsToggleRow` = label + bare `Toggle(.switch)`. This **replaced** the earlier one-card-per-setting stack (`SettingsCard`, now **removed**) so Settings reads like the macOS System Settings the user already knows (Jakob's-law), still Marginalia paper (never glass). Applied to **all** sections.
+- `Ari/UI/Settings/SettingsDisabledGroup.swift` — wraps a group in `.disabled(true)` + `MarginaliaBanner(kind: .info, message:, scheme:)` rendering the VM's `reason`. Retained for **button/block** honest-disabled groups (calendar Access, meeting-search Rebuild). **AMENDED 2026-07-22** — honest-disabled **toggle rows** no longer use it: instead the row's switch is `.disabled(availability.isDisabled)` and the real `availability.disabledReason` is surfaced as the row **subtitle** (the Apple-idiomatic honest-disabled look; still No-Fake-State — same real reason string, rendered as row copy not a banner). `Availability.disabledReason`/`.isDisabled` helpers live in `SettingsGroup.swift`.
 
-Each section mirrors `PersonDetailView` (ScrollView → `VStack(alignment:.leading, spacing:.md)` → `SectionHeader` + rows). Apple panels excluded entirely.
+Each section is `SectionHeader` + a `VStack(spacing:.md)` of `SettingsGroup`s. Apple panels excluded entirely.
 
-### `SettingsGeneralSection.swift`
+### `SettingsGeneralSection.swift` (grouped rows)
 | Control | Primitive | Classification |
 |---|---|---|
-| Appearance (System/Light/Dark) | stock `Picker(.segmented)` bound to `@AppStorage`/`AppearanceStore` | **LIVE** (native theme) |
-| Show meeting notch | `MarginaliaToggleRow` | **HONEST-DISABLED** — notch is a Rust sidecar |
-| Show in menu bar | `MarginaliaToggleRow` | **HONEST-DISABLED** — no menu-bar item yet |
-| Recording alerts / notifications | `MarginaliaToggleRow` | **HONEST-DISABLED** — notifications not built Swift-side |
-| Recordings path (read-only) + Open Folder | `Text` + `.marginalia(.secondary)` button → `NSWorkspace.open` | **LIVE** — real path from `AppEnvironment` |
+| Appearance (System/Light/Dark) | stock `Picker(.segmented)` trailing a `SettingsRow`, bound to `@AppStorage`/`AppearanceStore` | **LIVE** (native theme) |
+| Show meeting notch | `SettingsToggleRow` + `.disabled(availability.isDisabled)`, reason as subtitle | **HONEST-DISABLED** — notch is a Rust sidecar |
+| Show in menu bar | `SettingsToggleRow` (honest-disabled) | **HONEST-DISABLED** — no menu-bar item yet |
+| Recording alerts / notifications | `SettingsToggleRow` (honest-disabled) | **HONEST-DISABLED** — notifications not built Swift-side |
+| Recordings path (read-only) + Open Folder | `Text` + `.marginalia(.secondary)` button → `NSWorkspace.open`, block row | **LIVE** — real path from `AppEnvironment` |
 
-### `SettingsRecordingsSection.swift`
+### `SettingsRecordingsSection.swift` (grouped rows)
 | Control | Primitive | Classification |
 |---|---|---|
-| Save audio recordings | `MarginaliaToggleRow` | **LIVE** persist |
-| Save location (read-only) + Open Folder | text + secondary button | **LIVE** |
-| File format (informational) | `Text` caption | **LIVE** (informational) |
-| Recording start notification | `MarginaliaToggleRow` | **HONEST-DISABLED** |
-| Default mic / system device dropdowns + Refresh | `MarginaliaMenuLabel` in stock `Picker(.menu)` | **HONEST-DISABLED** — device enumeration is capture S2–S5, not built |
-| Audio backend selector | radio rows | **HONEST-DISABLED** |
+| Save audio recordings | `SettingsToggleRow` | **LIVE** persist |
+| Save location (read-only) + Open Folder | text + secondary button, block row (file-format caption = group footnote) | **LIVE** |
+| Recording start notification | `SettingsToggleRow` (honest-disabled) | **HONEST-DISABLED** |
+| Default microphone | stock `Picker(.menu)` trailing a `SettingsRow` (+ honest "(not connected)" row for a stored-but-absent device) | **LIVE** — real CoreAudio HAL enumeration, persists device UID (`docs/plans/settings-audio-devices.md`) |
+| System audio (read-only) | `SettingsRow` value = default output device name | **LIVE** informational — single global process tap follows default output |
+| Refresh Devices | quiet button, block row | **LIVE** |
 
-### `SettingsTranscriptionSection.swift`
-**LIVE** over `SpeechAssetManager` (AMENDED 2026-07-21 — see §1). The Swift app transcribes on-device with **Apple Speech**; there is no provider/model/language choice (transcription follows the Mac's system language). Rendered as **ONE card** with a single collapsed readiness state (the earlier two-badge "Available" + "Installed" pairing read as redundant on the happy path). The `transcriptionLanguage` key is retained as the seam the recording path reads (defaults to the `"auto"` sentinel = system language); a future language control would write it. User-facing name is "Apple Speech" everywhere (incl. the meeting provenance line, mapped from the stored `speech-transcriber`/`speechanalyzer` ids in `SourceRecordPanel`).
+### `SettingsIntelligenceSection.swift` (MERGED 2026-07-22 — was `SettingsTranscriptionSection` + `SettingsSummarySection`)
+The former Transcription and Summary tabs are one **Intelligence** tab, mirroring macOS's own "Apple Intelligence & Siri" pane — all "which on-device model does what" in one place. Three `SettingsGroup`s: **Transcription**, **Summary**, **Meeting search** (+ a dormant **API key** group, shown only if a visible provider ever `requiresAPIKey` — neither of the two does today). The summary LLM is deliberately narrowed to the two evaluated options (on-device Qwen 4B `.mlx` + Claude CLI) — no Ollama (not a provider, endpoint, or embedder), no cloud. The search embedder is the single non-configurable on-device `AppleContextualEmbedder`.
+
+**Transcription group** — LIVE over `SpeechAssetManager`. Apple Speech is the sole engine; no provider/model/language choice (follows the Mac's system language). One `SettingsRow` ("On-device — Apple Speech") + a collapsed readiness badge; the model-missing/checking/installing states add a second detail row. User-facing name is "Apple Speech" everywhere (incl. the meeting provenance line in `SourceRecordPanel`).
 | State | Rendering | Classification |
 |---|---|---|
-| Engine available + model installed | one card + **"Ready"** badge | **LIVE** — `isEngineAvailable()` && `areAssetsInstalled()` |
-| Engine available + model missing | Download button + real progress / `MarginaliaBanner(.error)` on failure | **LIVE** — `install(forLocale:onProgress:)` |
-| Engine unavailable | "Unavailable" badge + `MarginaliaBanner(.error)` | **LIVE** — `isEngineAvailable()` |
+| Engine available + model installed | row + **"Ready"** badge, no detail row | **LIVE** — `isEngineAvailable()` && `areAssetsInstalled()` |
+| Engine available + model missing | detail row: Download button + real progress / `MarginaliaBanner(.error)` | **LIVE** — `install(forLocale:onProgress:)` |
+| Engine unavailable | "Unavailable" badge + `MarginaliaBanner(.error)` detail row | **LIVE** — `isEngineAvailable()` |
 
-### `SettingsSummarySection.swift` (largest)
+**Summary group**
 | Control | Primitive | Classification |
 |---|---|---|
-| Automatic summary | `MarginaliaToggleRow` | **LIVE** persist |
-| Summary language (MRU chips + default pin) | `MarginaliaBadge`/chips + flow layout | **LIVE** persist |
-| Summary model config — provider picker (builtin-ai / ollama / claude-cli visible; cloud hidden; apple-foundation excluded) | `MarginaliaMenuLabel` in `Picker(.menu)` | **LIVE persist** — writes `summaryProvider`/`summaryModel` |
-| Ollama endpoint field | `MarginaliaTextField` | **LIVE persist** (`summaryOllamaEndpoint`) — recall loopback policy still enforced in engine |
-| API key entry (lock/show-hide) | secure `MarginaliaTextField` + button | **LIVE** via Keychain — presence only, never the stored key |
-| Endpoint validation | inline `MarginaliaBanner` on validate | **LIVE** (client-side format check) |
-| Per-provider model download managers | `SettingsCard`, disabled | **HONEST-DISABLED** |
-| Meeting search index — Rebuild button | button, disabled | **HONEST-DISABLED** |
-| Embedder cards (apple excluded → nomic-gguf / ollama; **default = ollama**) | radio rows | selection persists (`recallEmbedder`) **LIVE**; Nomic download **HONEST-DISABLED** |
-| Index stats (read-only) | `Text` from `RecallIndexSummary` | **LIVE** (real counts) or honest empty |
+| Automatic summary | `SettingsToggleRow` | **LIVE** persist |
+| Summary language | `Picker(.menu)` of 6 presets + "Custom…" sentinel → reveals a `MarginaliaTextField` code row | **LIVE** persist (`summaryLanguage`) |
+| Summary model — provider picker (`.mlx` + `.claudeCLI` only) | `Picker(.menu)` trailing a `SettingsRow` | **LIVE persist** — writes `summaryProvider` (canonical `settingID`) |
+| Model override field (Claude CLI only, `allowsModelOverride`) | `MarginaliaTextField` block row | **LIVE persist** (`summaryModel`) |
+| API key entry (dormant group) | secure field + Save/Remove buttons | **LIVE** via Keychain — presence only, never the stored key |
+
+**Meeting search group**
+| Control | Primitive | Classification |
+|---|---|---|
+| Embedder | `SettingsRow` value "Apple (on-device)" + checkmark | **LIVE** informational (single fixed backend) |
+| Index stats + Rebuild | stats `Text` from `RecallIndexSummary` + Rebuild button in `SettingsDisabledGroup` | **LIVE** — real counts / honest empty; rebuild wired to `Indexer.reindexAll(force:)` |
 
 ### `SettingsCalendarSection.swift`
 | Control | Primitive | Classification |
