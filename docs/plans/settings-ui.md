@@ -136,11 +136,12 @@ Each section mirrors `PersonDetailView` (ScrollView → `VStack(alignment:.leadi
 | Audio backend selector | radio rows | **HONEST-DISABLED** |
 
 ### `SettingsTranscriptionSection.swift`
-**LIVE** over `SpeechAssetManager` (AMENDED 2026-07-21 — see §1). The Swift app transcribes on-device with Apple `SpeechTranscriber`; there is no provider/model/language choice (transcription follows the Mac's system language), so the section exposes engine availability + the on-device model download. The `transcriptionLanguage` key is retained as the seam the recording path reads (defaults to the `"auto"` sentinel = system language); a future language control would write it.
-| Control | Primitive | Classification |
+**LIVE** over `SpeechAssetManager` (AMENDED 2026-07-21 — see §1). The Swift app transcribes on-device with **Apple Speech**; there is no provider/model/language choice (transcription follows the Mac's system language). Rendered as **ONE card** with a single collapsed readiness state (the earlier two-badge "Available" + "Installed" pairing read as redundant on the happy path). The `transcriptionLanguage` key is retained as the seam the recording path reads (defaults to the `"auto"` sentinel = system language); a future language control would write it. User-facing name is "Apple Speech" everywhere (incl. the meeting provenance line, mapped from the stored `speech-transcriber`/`speechanalyzer` ids in `SourceRecordPanel`).
+| State | Rendering | Classification |
 |---|---|---|
-| Engine status (On-device — Apple Speech) | `SettingsCard` + `MarginaliaBadge` (Available/Unavailable), `MarginaliaBanner(.error)` when unavailable | **LIVE** — `SpeechAssetManager.isEngineAvailable()` |
-| Language-model download (status + real progress + Download) | `SettingsCard` rows, `ProgressView`, `MarginaliaBanner(.error)` on failure | **LIVE** — `SpeechAssetManager.install(forLocale:onProgress:)` |
+| Engine available + model installed | one card + **"Ready"** badge | **LIVE** — `isEngineAvailable()` && `areAssetsInstalled()` |
+| Engine available + model missing | Download button + real progress / `MarginaliaBanner(.error)` on failure | **LIVE** — `install(forLocale:onProgress:)` |
+| Engine unavailable | "Unavailable" badge + `MarginaliaBanner(.error)` | **LIVE** — `isEngineAvailable()` |
 
 ### `SettingsSummarySection.swift` (largest)
 | Control | Primitive | Classification |

@@ -1,11 +1,13 @@
 //
 //  SettingsTranscriptionSection.swift — Transcription settings (docs/plans/settings-ui.md §6).
 //
-//  LIVE, not honest-disabled: the Swift app transcribes entirely on-device with Apple's
-//  `SpeechTranscriber` (AriKit `Engine/STT/`). There is no provider/model/language choice to make —
-//  SpeechTranscriber is the sole engine and transcription follows the Mac's system language — so
-//  this screen exposes the only real knobs: engine availability and the on-device model download.
-//  The Rust-era Parakeet/Whisper panel it replaced was misleading (the Swift app never runs those).
+//  LIVE, not honest-disabled: the Swift app transcribes entirely on-device with Apple Speech
+//  (AriKit `Engine/STT/`). There is no provider/model/language choice to make — it is the sole
+//  engine and follows the Mac's system language — so this is ONE card with a single honest
+//  readiness state: "Ready" when the engine can run and its language model is installed; otherwise
+//  it surfaces exactly the blocker (engine unavailable, or a Download for the missing model). The
+//  two-badge "Available" + "Installed" pairing it replaced read as redundant on the happy path.
+//  The Rust-era Parakeet/Whisper panel before that was misleading (the Swift app never runs those).
 //  Reversed the plan-§1 "exclude Apple" decision on 2026-07-21 once the STT port landed and shipped.
 //
 import AriKit
@@ -20,16 +22,9 @@ struct SettingsTranscriptionSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
             SectionHeader(title: "Transcription")
-
             engineCard
-
-            if viewModel.transcriptionEngineAvailable {
-                modelCard
-            }
         }
     }
-
-    // MARK: - Engine
 
     private var engineCard: some View {
         SettingsCard(title: "Engine") {
@@ -42,74 +37,75 @@ struct SettingsTranscriptionSection: View {
                             .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                     }
                     Spacer(minLength: MarginaliaSpacing.sm.value)
-                    if viewModel.transcriptionEngineAvailable {
-                        MarginaliaBadge("Available", style: .success, scheme: scheme)
-                    } else {
-                        MarginaliaBadge("Unavailable", style: .neutral, scheme: scheme)
-                    }
+                    statusBadge
                 }
 
-                if !viewModel.transcriptionEngineAvailable {
-                    MarginaliaBanner(
-                        kind: .error,
-                        message: "On-device speech transcription isn't available on this Mac.",
-                        scheme: scheme
-                    )
-                }
+                detail
             }
         }
         .padding(.horizontal, MarginaliaSpacing.md.value)
     }
 
-    // MARK: - Language model
+    // MARK: - Readiness
 
-    private var modelCard: some View {
-        SettingsCard(title: "Language model") {
-            VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-                HStack {
-                    Text(modelStatusText)
-                        .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
-                    Spacer(minLength: 0)
-                    if viewModel.transcriptionModelInstalled == true {
-                        MarginaliaBadge("Installed", style: .success, scheme: scheme)
-                    }
-                }
-
-                switch viewModel.transcriptionModelInstall {
-                case let .installing(fraction):
-                    VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-                        ProgressView(value: fraction)
-                            .tint(Color.marginalia(.accent, in: scheme))
-                        Text("Downloading… \(Int((fraction * 100).rounded()))%")
-                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                    }
-                case let .failed(message):
-                    MarginaliaBanner(kind: .error, message: message, scheme: scheme)
-                case .idle:
-                    EmptyView()
-                }
-
-                if viewModel.transcriptionModelInstalled != true, !isInstalling {
-                    Button("Download language model") {
-                        Task { await viewModel.installTranscriptionModel() }
-                    }
-                    .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                }
-            }
+    /// One collapsed badge: "Ready" only when the engine runs AND its model is installed;
+    /// "Unavailable" when the engine can't run here. The model-missing / checking / installing
+    /// states carry their own affordance in `detail`, so they get no top badge.
+    @ViewBuilder private var statusBadge: some View {
+        if !viewModel.transcriptionEngineAvailable {
+            MarginaliaBadge("Unavailable", style: .neutral, scheme: scheme)
+        } else if viewModel.transcriptionModelInstalled == true {
+            MarginaliaBadge("Ready", style: .success, scheme: scheme)
         }
-        .padding(.horizontal, MarginaliaSpacing.md.value)
     }
 
-    // MARK: - Derived state
+    @ViewBuilder private var detail: some View {
+        if !viewModel.transcriptionEngineAvailable {
+            MarginaliaBanner(
+                kind: .error,
+                message: "On-device speech transcription isn't available on this Mac.",
+                scheme: scheme
+            )
+        } else {
+            switch viewModel.transcriptionModelInstalled {
+            case .some(true):
+                // "Ready" badge already says it — nothing more to show.
+                EmptyView()
+            case .some(false):
+                modelDownload
+            case .none:
+                Text("Checking the on-device speech model…")
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+            }
+        }
+    }
 
-    private var modelStatusText: String {
-        switch viewModel.transcriptionModelInstalled {
-        case .some(true):
-            "The on-device speech model for your Mac's language is installed."
-        case .some(false):
-            "The on-device speech model for your Mac's language isn't downloaded yet."
-        case .none:
-            "Checking model availability…"
+    /// Shown only when the engine is available but its language model isn't installed yet.
+    private var modelDownload: some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+            Text("The on-device speech model for your Mac's language needs to be downloaded before recording.")
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+
+            switch viewModel.transcriptionModelInstall {
+            case let .installing(fraction):
+                VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                    ProgressView(value: fraction)
+                        .tint(Color.marginalia(.accent, in: scheme))
+                    Text("Downloading… \(Int((fraction * 100).rounded()))%")
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                }
+            case let .failed(message):
+                MarginaliaBanner(kind: .error, message: message, scheme: scheme)
+            case .idle:
+                EmptyView()
+            }
+
+            if !isInstalling {
+                Button("Download model") {
+                    Task { await viewModel.installTranscriptionModel() }
+                }
+                .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+            }
         }
     }
 

@@ -62,10 +62,22 @@ struct SourceRecordPanel: View {
 
     /// "Provider · model", "provider", or "model" — whichever parts exist; `nil` when neither.
     private func provenance(_ provider: String?, _ model: String?) -> String? {
-        let parts = [provider, model]
+        let parts = [provider.map(Self.displayProviderName), model]
             .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         guard !parts.isEmpty else { return nil }
         return parts.joined(separator: " · ")
+    }
+
+    /// Map internal provider ids to the user-facing name. The Apple on-device transcriber is stored
+    /// as `speech-transcriber` (live path) / `speechanalyzer` (AriKit provider) but shown as
+    /// "Apple Speech" — the same label the Settings engine card uses. Unknown ids pass through.
+    private static func displayProviderName(_ raw: String) -> String {
+        switch raw {
+        case "speech-transcriber", "speechanalyzer":
+            "Apple Speech"
+        default:
+            raw
+        }
     }
 }
