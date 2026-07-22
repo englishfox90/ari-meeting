@@ -82,6 +82,27 @@ final class AppEnvironment {
     /// `Task` lives (and is cancelled) with the app, not with any one view.
     private var calendarSyncScheduler: CalendarSyncScheduler?
 
+    /// The local-notification coordinator (calendar reminders + summary-ready) — the Swift port of
+    /// the frozen Rust notification subsystem. Injected into the Settings screen for the
+    /// authorization surface + reconcile-on-change. `nil` until `bootstrap()` succeeds.
+    private(set) var meetingNotifications: MeetingNotifications?
+    /// The `UNUserNotificationCenterDelegate` routing tapped notifications back into the app. Held
+    /// strongly (the notification center references its delegate weakly).
+    private let notificationActionHandler = NotificationActionHandler()
+    /// The 15-min reconcile loop keeping scheduled reminders in sync with the calendar — owned here
+    /// like `calendarSyncScheduler` so its `Task` lives with the app.
+    private var reminderScheduler: ReminderRefreshScheduler?
+
+    /// A one-shot navigation intent raised from OUTSIDE the view tree (a tapped notification), which
+    /// `RootSplitView` observes and applies to its `selectedSection`/`path`, then clears via
+    /// `consumePendingNavigation()`. `nil` when there's nothing pending.
+    private(set) var pendingNavigation: PendingNavigation?
+
+    enum PendingNavigation: Equatable {
+        case section(SidebarSection)
+        case meeting(MeetingID)
+    }
+
     /// Bundle identifier decided 2026-07-20 (arikit-native-shell.md §9): the fresh Swift app.
     static let bundleIdentifier = "com.arivo.ari"
 
@@ -187,11 +208,21 @@ final class AppEnvironment {
             )
             summaryRunner = runner
 
+            // Local notifications (calendar reminders + summary-ready) — the Swift port of the
+            // frozen Rust notification subsystem. Constructed BEFORE the coordinator so its
+            // summary-ready hook captures `notifications` (a Sendable @MainActor value), never
+            // `self`/`AppEnvironment`.
+            let notifications = MeetingNotifications(
+                scheduler: SystemNotificationScheduler(),
+                database: db
+            )
+            meetingNotifications = notifications
+
             // docs/plans/swift-meeting-generation-flow.md, Track 2 "App wiring": the
             // post-recording pipeline. Every closure below captures only Sendable values (`db`,
-            // `hintProvider`, `diarizationService`, `runner`) — never `self`/`AppEnvironment` —
-            // so the coordinator's `@Sendable` operation closures type-check under Swift 6
-            // strict concurrency.
+            // `hintProvider`, `diarizationService`, `runner`, `notifications`) — never
+            // `self`/`AppEnvironment` — so the coordinator's `@Sendable` operation closures
+            // type-check under Swift 6 strict concurrency.
             let coordinator = MeetingProcessingCoordinator(
                 resolveAudioURL: { mid in
                     guard let meeting = try? await db.meetings.find(mid) else { return nil }
@@ -222,6 +253,9 @@ final class AppEnvironment {
                 },
                 cancelSummary: { mid in
                     _ = await runner.cancel(mid)
+                },
+                notifySummaryGenerated: { mid, elapsed in
+                    await notifications.summaryGenerated(meetingId: mid, elapsed: elapsed)
                 }
             )
             processingCoordinator = coordinator
@@ -234,10 +268,59 @@ final class AppEnvironment {
             let syncEngine = CalendarSyncEngine(source: source, database: db)
             calendarSyncScheduler = CalendarSyncScheduler(source: source, engine: syncEngine, database: db)
 
+            // Route tapped notifications back into the app, install the delegate, and start the
+            // reminder reconcile loop. The `onOpenMeeting` closure runs on the @MainActor handler,
+            // so it sets `pendingNavigation` directly; `onStartRecording` hops through a `Task`
+            // because `startRecordingFromReminder` is async.
+            notificationActionHandler.onStartRecording = { [weak self] eventId in
+                Task { await self?.startRecordingFromReminder(eventId: eventId) }
+            }
+            notificationActionHandler.onOpenMeeting = { [weak self] meetingId in
+                self?.pendingNavigation = .meeting(meetingId)
+            }
+            notificationActionHandler.install()
+            reminderScheduler = ReminderRefreshScheduler(notifications: notifications)
+
             status = .ready
         } catch {
             status = .failed(String(describing: error))
         }
+    }
+
+    // MARK: - Notification-driven intents
+
+    /// The meeting-reminder action's handler: prime a recording for `eventId` and — per the
+    /// 2026-07-22 product decision — start capturing immediately, navigating the shell to the
+    /// recording page. If the session/event can't be resolved or a recording is already active, it
+    /// still surfaces the recording page (a safe no-op start) rather than doing nothing.
+    ///
+    /// Mirrors `CalendarPageView.startMeeting(from:)`: reset first (so a terminal `.saved`/`.failed`
+    /// session lands on the idle recording screen), set the title only when blank, attach the
+    /// calendar link, THEN drive the consent edges. `requestStart()` + `confirmConsentRequested()`
+    /// is the "start immediately" path — the synchronous consent edge flips to `.starting` before
+    /// returning, so capture begins without a manual consent tap.
+    func startRecordingFromReminder(eventId: CalendarEventID) async {
+        pendingNavigation = .section(.newMeeting)
+        guard let database, let session = recordingSession, !session.isActive else { return }
+
+        let event = try? await database.calendarEvents.find(eventId)
+        session.reset()
+        if session.pendingTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            session.pendingTitle = event?.title ?? ""
+        }
+        if let event {
+            session.pendingCalendarLink = RecordingSession.PendingCalendarLink(
+                eventId: event.id, eventTitle: event.title
+            )
+        }
+        session.requestStart()
+        session.confirmConsentRequested()
+    }
+
+    /// Clear a consumed navigation intent so it fires exactly once (`RootSplitView` calls this after
+    /// applying it).
+    func consumePendingNavigation() {
+        pendingNavigation = nil
     }
 
     /// `~/Library/Application Support/com.arivo.ari/ari.sqlite`, creating the directory if needed.

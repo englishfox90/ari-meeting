@@ -40,7 +40,8 @@ struct MeetingProcessingCoordinatorTests {
         isAutoSummaryEnabled: @escaping MeetingProcessingCoordinator.IsAutoSummaryEnabledOperation = { true },
         generateSummary: @escaping MeetingProcessingCoordinator.GenerateSummaryOperation = { _, _ in },
         speakerCount: @escaping MeetingProcessingCoordinator.SpeakerCountOperation = { _ in nil },
-        cancelSummary: @escaping MeetingProcessingCoordinator.CancelSummaryOperation = { _ in }
+        cancelSummary: @escaping MeetingProcessingCoordinator.CancelSummaryOperation = { _ in },
+        notifySummaryGenerated: MeetingProcessingCoordinator.NotifySummaryGeneratedOperation? = nil
     ) -> MeetingProcessingCoordinator {
         MeetingProcessingCoordinator(
             resolveAudioURL: resolveAudioURL,
@@ -49,7 +50,8 @@ struct MeetingProcessingCoordinatorTests {
             isAutoSummaryEnabled: isAutoSummaryEnabled,
             generateSummary: generateSummary,
             speakerCount: speakerCount,
-            cancelSummary: cancelSummary
+            cancelSummary: cancelSummary,
+            notifySummaryGenerated: notifySummaryGenerated
         )
     }
 
@@ -282,5 +284,52 @@ struct MeetingProcessingCoordinatorTests {
         #expect(await diarizeSpy.callCount == 2)
         #expect(coordinator.activeMeetingID == meetingId2)
         #expect(coordinator.phase == .completed)
+    }
+
+    // MARK: - Summary-generated notification hook
+
+    @Test("notify hook fires with the meeting id after a summary generates")
+    func notifyFiresAfterSummary() async {
+        let notifySpy = CallSpy<MeetingID>()
+        let coordinator = makeCoordinator(
+            generateSummary: { _, _ in },
+            notifySummaryGenerated: { mid, _ in await notifySpy.record(mid) }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        #expect(coordinator.phase == .completed)
+        #expect(await notifySpy.callCount == 1)
+        #expect(await notifySpy.lastValue == meetingId)
+    }
+
+    @Test("notify hook does NOT fire when auto-summary is disabled (nothing generated)")
+    func notifySilentWhenAutoSummaryDisabled() async {
+        let notifySpy = CallSpy<MeetingID>()
+        let coordinator = makeCoordinator(
+            isAutoSummaryEnabled: { false },
+            notifySummaryGenerated: { mid, _ in await notifySpy.record(mid) }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        #expect(coordinator.phase == .completed)
+        #expect(await notifySpy.callCount == 0)
+    }
+
+    @Test("notify hook does NOT fire when summary generation fails")
+    func notifySilentWhenSummaryFails() async {
+        let notifySpy = CallSpy<MeetingID>()
+        let coordinator = makeCoordinator(
+            generateSummary: { _, _ in throw StubError() },
+            notifySummaryGenerated: { mid, _ in await notifySpy.record(mid) }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        if case .failed = coordinator.phase {} else {
+            Issue.record("expected a .failed phase")
+        }
+        #expect(await notifySpy.callCount == 0)
     }
 }

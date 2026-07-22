@@ -25,16 +25,32 @@ struct SettingsView: View {
     /// `calendarSource` is `nil` until `AppEnvironment.bootstrap()` constructs the real
     /// `EventKitCalendarSource` (S7) — `CalendarSettingsViewModel` stays honestly disabled until
     /// then, never fabricating a live source.
-    init(database: AppDatabase, calendarSource: (any CalendarSourcing)? = nil) {
+    init(
+        database: AppDatabase,
+        calendarSource: (any CalendarSourcing)? = nil,
+        notifications: MeetingNotifications? = nil
+    ) {
         self.database = database
         // `KeychainSecretStore`/`AppearanceStore` are both stateless value types (no Keychain
         // session, no stored `UserDefaults` handle) — constructing them directly here is
         // equivalent to reading `AppEnvironment.secrets`, without needing environment values
         // (unavailable in `init`).
+        //
+        // `notifications` (the app's `MeetingNotifications`, or `nil` in previews/tests) is the
+        // authorization surface AND the reconcile trigger: toggling a notification pref reconciles
+        // the OS's scheduled reminders immediately rather than waiting for the periodic loop.
+        let onNotificationSettingsChanged: (@Sendable () async -> Void)?
+        if let notifications {
+            onNotificationSettingsChanged = { await notifications.reconcileReminders() }
+        } else {
+            onNotificationSettingsChanged = nil
+        }
         _viewModel = State(initialValue: SettingsViewModel(
             database: database,
             secrets: KeychainSecretStore(),
-            appearance: AppearanceStore()
+            appearance: AppearanceStore(),
+            notifications: notifications,
+            onNotificationSettingsChanged: onNotificationSettingsChanged
         ))
         _calendarViewModel = State(initialValue: CalendarSettingsViewModel(
             database: database, source: calendarSource
