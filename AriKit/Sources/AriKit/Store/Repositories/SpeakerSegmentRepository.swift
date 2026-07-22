@@ -54,6 +54,18 @@ public struct SpeakerSegmentRepository: Sendable {
         }
     }
 
+    /// Insert-or-update a batch of segments in ONE write transaction (plan §3/D5). `dbWriter.write`
+    /// runs its whole closure inside a single GRDB transaction, rolling back entirely on any
+    /// thrown error — a mid-batch failure leaves NONE of the batch persisted (mirrors
+    /// `TranscriptRepository.upsert(_ transcripts:)`).
+    public func insert(_ segments: [SpeakerSegment]) async throws {
+        try await dbWriter.write { db in
+            for segment in segments {
+                try SpeakerSegmentRecord(segment).save(db)
+            }
+        }
+    }
+
     public func observeAll() -> AsyncStream<[SpeakerSegment]> {
         let dbWriter = dbWriter
         let observation = ValueObservation.tracking { db in

@@ -208,6 +208,29 @@ public struct TranscriptRepository: Sendable {
         return nil
     }
 
+    /// Batch stamp / reassign / clear `speakerId` on transcript rows (← Rust
+    /// `set_transcript_speaker` + `reassign_transcript_speaker`, `speaker.rs:242-277`), ONE
+    /// write transaction. `speakerId: nil` clears a row back to unattributed (a manual "no clear
+    /// speaker" correction); scoped by `meetingId` so a stale/wrong `transcriptId` can never
+    /// touch another meeting's row (mirrors Rust's `meeting_id` guard). Returns the number of
+    /// rows actually updated.
+    @discardableResult
+    public func setSpeakers(
+        _ stamps: [(transcriptId: TranscriptID, speakerId: SpeakerID?)],
+        inMeeting meetingId: MeetingID
+    ) async throws -> Int {
+        try await dbWriter.write { db in
+            var updated = 0
+            for stamp in stamps {
+                updated += try TranscriptRecord
+                    .filter(Column("id") == stamp.transcriptId.rawValue)
+                    .filter(Column("meetingId") == meetingId.rawValue)
+                    .updateAll(db, Column("speakerId").set(to: stamp.speakerId?.rawValue))
+            }
+            return updated
+        }
+    }
+
     public func observeAll() -> AsyncStream<[Transcript]> {
         let dbWriter = dbWriter
         let observation = ValueObservation.tracking { db in
