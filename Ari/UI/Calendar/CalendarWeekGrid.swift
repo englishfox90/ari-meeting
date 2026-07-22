@@ -22,6 +22,7 @@ struct CalendarWeekGrid: View {
     let linkedMeetingTitles: [MeetingID: String]
     let now: Date
     let calendar: Calendar
+    let onSelectEvent: (CalendarEvent) -> Void
 
     @Environment(\.colorScheme) private var scheme
 
@@ -117,12 +118,17 @@ struct CalendarWeekGrid: View {
             ForEach(Array(weekDays.enumerated()), id: \.offset) { index, _ in
                 VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
                     ForEach(allDayByDay[index]) { event in
-                        CalendarEventBlock(
-                            event: event,
-                            showsTimeRange: false,
-                            tintHex: calendarColors[event.calendarId],
-                            isLinked: event.meetingId != nil
-                        )
+                        Button {
+                            onSelectEvent(event)
+                        } label: {
+                            CalendarEventBlock(
+                                event: event,
+                                showsTimeRange: false,
+                                tintHex: calendarColors[event.calendarId],
+                                isLinked: event.meetingId != nil
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -180,12 +186,17 @@ struct CalendarWeekGrid: View {
                 hourSeparators
                 ForEach(timedByDay[index], id: \.event.id) { positioned in
                     let columnWidth = proxy.size.width / CGFloat(positioned.columnCount)
-                    CalendarEventBlock(
-                        event: positioned.event,
-                        showsTimeRange: true,
-                        tintHex: calendarColors[positioned.event.calendarId],
-                        isLinked: positioned.event.meetingId != nil
-                    )
+                    Button {
+                        onSelectEvent(positioned.event)
+                    } label: {
+                        CalendarEventBlock(
+                            event: positioned.event,
+                            showsTimeRange: true,
+                            tintHex: calendarColors[positioned.event.calendarId],
+                            isLinked: positioned.event.meetingId != nil
+                        )
+                    }
+                    .buttonStyle(.plain)
                     .frame(width: max(columnWidth - 3, 8), height: blockHeight(positioned))
                     .position(
                         x: columnWidth * CGFloat(positioned.column) + columnWidth / 2,

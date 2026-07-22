@@ -47,6 +47,26 @@ public final class RecordingSession {
     /// fabricated name. The view binds directly to this; it is not itself a `Phase`.
     public var pendingTitle: String = ""
 
+    /// Set by the Calendar page's "Start meeting" action before handoff (S7 Slice 3,
+    /// `docs/plans/arikit-calendar-ui.md` §5), mirroring `pendingTitle`: consumed at meeting
+    /// creation in `performStart()`, cleared there and by `reset()`. Visible to the idle screen
+    /// as a removable "Will link to: <title>" chip (No-Fake-State — a stale intent must never
+    /// silently link the wrong event); `eventTitle` exists ONLY for that chip's copy, never as a
+    /// substitute for a real persisted link.
+    public struct PendingCalendarLink: Equatable, Sendable {
+        public var eventId: CalendarEventID
+        public var eventTitle: String
+
+        public init(eventId: CalendarEventID, eventTitle: String) {
+            self.eventId = eventId
+            self.eventTitle = eventTitle
+        }
+    }
+
+    /// The Calendar page's pending link intent, if any. `nil` once consumed (a link written at
+    /// meeting creation) or explicitly cleared by the user via the chip's ✕.
+    public var pendingCalendarLink: PendingCalendarLink?
+
     public var isActive: Bool {
         switch phase {
         case .starting, .recording, .stopping:
@@ -215,6 +235,14 @@ public final class RecordingSession {
             return
         }
 
+        // Consume the pending calendar link intent, if any (plan §5) — best-effort: a failed
+        // link write must never fail the recording. Cleared either way, so a stale intent can
+        // never silently re-attach to a later, unrelated meeting.
+        if let pending = pendingCalendarLink {
+            try? await database.calendarEvents.setManualLink(eventId: pending.eventId, meetingId: newMeetingId)
+            pendingCalendarLink = nil
+        }
+
         meetingId = newMeetingId
         captureService = service
         phase = .recording(startedAt: startedAt)
@@ -294,6 +322,7 @@ public final class RecordingSession {
             systemStatus = .notDetermined
             meetingId = nil
             pendingTitle = ""
+            pendingCalendarLink = nil
         case .idle, .consentPrompt, .starting, .recording, .stopping:
             break
         }

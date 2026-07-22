@@ -1,6 +1,6 @@
 //
 //  CalendarPageView.swift — the native Calendar page (docs/plans/arikit-calendar-ui.md §2/§3),
-//  Slice 1 (read-only week grid).
+//  Slices 1-3 (read-only week grid; event detail + linking; start meeting from event).
 //
 //  Local-DB-first: `load()` renders real synced rows immediately; `syncOnAppear()` refreshes in
 //  the background at most once per appearance. Every state is honest (plan §2/§7, No-Fake-State):
@@ -14,14 +14,27 @@ import SwiftUI
 
 struct CalendarPageView: View {
     let database: AppDatabase
+    /// `nil` until `AppEnvironment.bootstrap()` constructs the real session — Start stays
+    /// honestly disabled until then (`EventDetailSheet`'s own posture).
+    let recordingSession: RecordingSession?
     @Binding var selection: SidebarSection
+    let onOpenMeeting: (MeetingID) -> Void
 
     @State private var viewModel: CalendarPageViewModel
+    @State private var selectedEvent: CalendarEvent?
     @Environment(\.colorScheme) private var scheme
 
-    init(database: AppDatabase, calendarSource: (any CalendarSourcing)?, selection: Binding<SidebarSection>) {
+    init(
+        database: AppDatabase,
+        calendarSource: (any CalendarSourcing)?,
+        recordingSession: RecordingSession?,
+        selection: Binding<SidebarSection>,
+        onOpenMeeting: @escaping (MeetingID) -> Void
+    ) {
         self.database = database
+        self.recordingSession = recordingSession
         _selection = selection
+        self.onOpenMeeting = onOpenMeeting
         _viewModel = State(initialValue: CalendarPageViewModel(database: database, source: calendarSource))
     }
 
@@ -40,6 +53,52 @@ struct CalendarPageView: View {
             await viewModel.load()
             await viewModel.syncOnAppear()
         }
+        .sheet(item: $selectedEvent) { event in
+            EventDetailSheet(
+                event: event,
+                linkedMeetingTitle: event.meetingId.flatMap { viewModel.linkedMeetingTitles[$0] },
+                recordingSession: recordingSession,
+                onLink: { meetingId in
+                    await viewModel.link(eventId: event.id, to: meetingId)
+                    refreshSelectedEvent()
+                },
+                onUnlink: {
+                    await viewModel.unlink(eventId: event.id)
+                    refreshSelectedEvent()
+                },
+                onOpenMeeting: { meetingId in
+                    selectedEvent = nil
+                    onOpenMeeting(meetingId)
+                },
+                onStartMeeting: { startMeeting(from: event) },
+                meetingsForPicker: { await viewModel.meetingsForPicker() },
+                onDismiss: { selectedEvent = nil }
+            )
+        }
+    }
+
+    /// Re-reads the just-linked/unlinked event from the VM's freshly-refetched list so the open
+    /// detail sheet reflects the real persisted state — never the stale snapshot it was
+    /// presented with (No-Fake-State: "Linked" renders only from a real `event.meetingId` read
+    /// back from the store, plan §5).
+    private func refreshSelectedEvent() {
+        guard let current = selectedEvent else { return }
+        selectedEvent = viewModel.events.first { $0.id == current.id } ?? current
+    }
+
+    /// The Calendar page's "Start meeting" handoff (plan §5): only if a session exists and isn't
+    /// already active (defense-in-depth alongside `EventDetailSheet`'s own disabled state).
+    /// `pendingTitle` is set only when blank — never clobbers user input already in the field.
+    private func startMeeting(from event: CalendarEvent) {
+        guard let recordingSession, !recordingSession.isActive else { return }
+        if recordingSession.pendingTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            recordingSession.pendingTitle = event.title
+        }
+        recordingSession.pendingCalendarLink = RecordingSession.PendingCalendarLink(
+            eventId: event.id, eventTitle: event.title
+        )
+        selectedEvent = nil
+        selection = .newMeeting
     }
 
     // MARK: - Header: `‹ Today ›` pager + week-range label
@@ -117,7 +176,8 @@ struct CalendarPageView: View {
                 calendarColors: viewModel.calendarColors,
                 linkedMeetingTitles: viewModel.linkedMeetingTitles,
                 now: Date(),
-                calendar: .current
+                calendar: .current,
+                onSelectEvent: { selectedEvent = $0 }
             )
         }
     }

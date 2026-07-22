@@ -389,4 +389,120 @@ struct RecordingSessionTests {
         #expect(session.systemStatus == .unavailable(reason: "no tap"))
         #expect(await capture.startCallCount == 0)
     }
+
+    // MARK: S7 Slice 3 additions — pending calendar link (docs/plans/arikit-calendar-ui.md §5/§6)
+
+    private func makeCalendarEvent(id: CalendarEventID, title: String = "Weekly Sync") -> CalendarEvent {
+        CalendarEvent(
+            id: id, calendarId: "cal-1", title: title,
+            startTime: Date(timeIntervalSince1970: 1_700_000_000),
+            endTime: Date(timeIntervalSince1970: 1_700_001_800), isAllDay: false, attendees: []
+        )
+    }
+
+    // MARK: 9. Pending-link consumption
+
+    @Test("a pending calendar link is consumed at meeting creation, then cleared")
+    func pendingCalendarLinkIsConsumedAtMeetingCreation() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let capture = SpyCaptureService()
+        let transcription = StubLiveTranscriptionService(cannedSegments: [])
+        let session = try makeSession(database: database, capture: capture, transcription: transcription)
+        await session.readinessProbeTask?.value
+
+        try await database.calendarEvents.syncUpsert([makeCalendarEvent(id: "event-1")], at: Date())
+        session.pendingCalendarLink = RecordingSession.PendingCalendarLink(eventId: "event-1", eventTitle: "Weekly Sync")
+
+        session.requestStart()
+        await session.confirmConsent()
+
+        let meetingId = try #require(session.meetingId)
+        #expect(session.pendingCalendarLink == nil)
+
+        let linkedEvent = try #require(await database.calendarEvents.find("event-1"))
+        #expect(linkedEvent.meetingId == meetingId)
+        #expect(linkedEvent.linkSource == .manual)
+    }
+
+    // MARK: 10. Pending-link never blocks
+
+    @Test("a pending link write failure never blocks the recording from starting")
+    func pendingCalendarLinkFailureNeverBlocksRecording() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let capture = SpyCaptureService()
+        let transcription = StubLiveTranscriptionService(cannedSegments: [])
+        let session = try makeSession(database: database, capture: capture, transcription: transcription)
+        await session.readinessProbeTask?.value
+
+        // The pending event doesn't exist in the store (e.g. deleted before Record was
+        // confirmed) — `setManualLink` fetches, finds nothing, and silently no-ops.
+        session.pendingCalendarLink = RecordingSession.PendingCalendarLink(
+            eventId: "missing-event", eventTitle: "Ghost"
+        )
+
+        session.requestStart()
+        await session.confirmConsent()
+
+        guard case .recording = session.phase else {
+            Issue.record(
+                "expected .recording even though the pending link target doesn't exist, got \(session.phase)"
+            )
+            return
+        }
+        #expect(session.pendingCalendarLink == nil)
+    }
+
+    @Test("cancelling consent writes no link and leaves the pending intent in place for the next attempt")
+    func consentCancelWritesNoLink() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let capture = SpyCaptureService()
+        let transcription = StubLiveTranscriptionService(cannedSegments: [])
+        let session = try makeSession(database: database, capture: capture, transcription: transcription)
+        await session.readinessProbeTask?.value
+
+        try await database.calendarEvents.syncUpsert([makeCalendarEvent(id: "event-2")], at: Date())
+        let pending = RecordingSession.PendingCalendarLink(eventId: "event-2", eventTitle: "Weekly Sync")
+        session.pendingCalendarLink = pending
+
+        session.requestStart()
+        session.cancelConsent()
+
+        #expect(session.phase == .idle)
+        // The chip survives, removable, for the next attempt (plan §5) — never silently dropped.
+        #expect(session.pendingCalendarLink == pending)
+
+        let event = try #require(await database.calendarEvents.find("event-2"))
+        #expect(event.meetingId == nil)
+        #expect(await capture.startCallCount == 0)
+    }
+
+    // MARK: 11. Reset clears the pending link
+
+    @Test("reset() clears the pending calendar link alongside pendingTitle")
+    func resetClearsPendingCalendarLink() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let capture = SpyCaptureService()
+        let transcription = StubLiveTranscriptionService(cannedSegments: [])
+        let session = try makeSession(database: database, capture: capture, transcription: transcription)
+        await session.readinessProbeTask?.value
+
+        session.requestStart()
+        await session.confirmConsent()
+        // Simulate a leftover pending intent still set at stop()/reset() time (never consumed by
+        // this recording, since it was set after the meeting already existed) — reset() must
+        // scrub it regardless of how it got there.
+        session.pendingCalendarLink = RecordingSession.PendingCalendarLink(eventId: "event-3", eventTitle: "Next one")
+        await session.stop()
+
+        guard case .saved = session.phase else {
+            Issue.record("expected .saved, got \(session.phase)")
+            return
+        }
+
+        session.reset()
+
+        #expect(session.phase == .idle)
+        #expect(session.pendingTitle == "")
+        #expect(session.pendingCalendarLink == nil)
+    }
 }

@@ -87,6 +87,37 @@ struct RecordingView: View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             SectionHeader(title: "TITLE")
             MarginaliaTextField(text: $session.pendingTitle, prompt: "Untitled meeting", scheme: scheme)
+            pendingCalendarLinkChip
+        }
+    }
+
+    /// The Calendar page's "Start meeting" handoff intent, visible and removable (plan §5,
+    /// No-Fake-State): a stale intent must never silently link the wrong event. Renders only the
+    /// event title carried on the intent — the linked-meeting fact itself only ever shows up in
+    /// the calendar event's own detail sheet, read back from the real persisted `meetingId`.
+    @ViewBuilder
+    private var pendingCalendarLinkChip: some View {
+        if let pending = session.pendingCalendarLink {
+            HStack(spacing: MarginaliaSpacing.xs.value) {
+                Image(systemName: "link")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Will link to: \(pending.eventTitle)")
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .accent)
+                    .lineLimit(1)
+                Button {
+                    session.pendingCalendarLink = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.plain)
+            }
+            .foregroundStyle(Color.marginalia(.accent, in: scheme))
+            .padding(.horizontal, MarginaliaSpacing.sm.value)
+            .padding(.vertical, MarginaliaSpacing.xs.value)
+            .background {
+                Capsule().fill(Color.marginalia(.selectionWash, in: scheme))
+            }
         }
     }
 

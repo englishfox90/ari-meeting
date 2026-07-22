@@ -110,7 +110,9 @@ struct RootSplitView: View {
             CalendarPageView(
                 database: database,
                 calendarSource: environment.calendarSource,
-                selection: $selectedSection
+                recordingSession: environment.recordingSession,
+                selection: $selectedSection,
+                onOpenMeeting: { path.append($0) }
             )
         case .settings:
             SettingsView(database: database, calendarSource: environment.calendarSource)

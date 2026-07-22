@@ -1,7 +1,6 @@
 //
-//  CalendarPageViewModelTests.swift — docs/plans/arikit-calendar-ui.md §6, tests 1-4, 6
-//  (sibling of `CalendarSettingsViewModelTests.swift`; test 5, link/unlink, lands in Slice 2
-//  per the plan's own test numbering).
+//  CalendarPageViewModelTests.swift — docs/plans/arikit-calendar-ui.md §6, tests 1-6
+//  (sibling of `CalendarSettingsViewModelTests.swift`).
 //
 import Foundation
 import Testing
@@ -196,5 +195,49 @@ struct CalendarPageViewModelTests {
 
         #expect(viewModel.events == eventsBeforeSync)
         #expect(viewModel.refreshError == "network unreachable")
+    }
+
+    // MARK: - 5. Link/unlink round-trip
+
+    @Test("link()/unlink() round-trip through the repository; a manual link survives a re-sync")
+    func linkUnlinkRoundTrip() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1", calendarTitle: "Work", color: nil, selected: true
+        )
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        try await db.calendarEvents.syncUpsert(
+            [Self.makeEvent(id: "ev-1", start: now, end: now.addingTimeInterval(1800))],
+            at: now
+        )
+        let meetingId: MeetingID = "meeting-1"
+        try await db.meetings.upsert(Meeting(id: meetingId, title: "Weekly Sync", createdAt: now, updatedAt: now))
+
+        let source = FakeCalendarSource(permission: .fullAccess)
+        let viewModel = CalendarPageViewModel(database: db, source: source, now: { now })
+        await viewModel.load()
+
+        await viewModel.link(eventId: "ev-1", to: meetingId)
+
+        var linked = try #require(try await db.calendarEvents.find("ev-1"))
+        #expect(linked.meetingId == meetingId)
+        #expect(linked.linkSource == .manual)
+        #expect(viewModel.linkedMeetingTitles[meetingId] == "Weekly Sync")
+
+        // Regression on the S7 invariant: a re-sync (`syncUpsert`) must never clobber the manual
+        // link, even when the event's descriptive fields change.
+        try await db.calendarEvents.syncUpsert(
+            [Self.makeEvent(id: "ev-1", start: now, end: now.addingTimeInterval(1800))],
+            at: now.addingTimeInterval(60)
+        )
+        linked = try #require(try await db.calendarEvents.find("ev-1"))
+        #expect(linked.meetingId == meetingId)
+        #expect(linked.linkSource == .manual)
+
+        await viewModel.unlink(eventId: "ev-1")
+        let unlinked = try #require(try await db.calendarEvents.find("ev-1"))
+        #expect(unlinked.meetingId == nil)
+        #expect(unlinked.linkSource == nil)
+        #expect(viewModel.linkedMeetingTitles[meetingId] == nil)
     }
 }
