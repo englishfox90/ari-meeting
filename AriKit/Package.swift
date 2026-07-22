@@ -117,6 +117,11 @@ let package = Package(
         .testTarget(
             name: "AriCaptureTests",
             dependencies: ["AriCapture", "AriKit"],
+            // D6 (docs/plans/arikit-diarization.md §5, swift-M2): the bundled fixture m4a for
+            // `DiarizationAudioLoaderTests` resolves via `Bundle.module`.
+            resources: [
+                .copy("Fixtures")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
