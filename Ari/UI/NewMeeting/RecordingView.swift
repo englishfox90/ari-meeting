@@ -20,6 +20,10 @@ struct RecordingView: View {
     @Bindable var session: RecordingSession
     let onOpenMeeting: (MeetingID) -> Void
 
+    /// Read only for the saved-screen's live pipeline status line (docs/plans/
+    /// swift-meeting-generation-flow.md, Track 2) — this view never triggers the coordinator
+    /// itself (`RootSplitView`'s mount-independent `.onChange` does that), it only reflects it.
+    @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -372,6 +376,7 @@ struct RecordingView: View {
                 .marginaliaTextStyle(.title2, in: scheme)
             Text(segmentCountLine)
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+            processingStatusSection(meetingId: meetingId)
             HStack(spacing: MarginaliaSpacing.md.value) {
                 Button("New recording") { session.reset() }
                     .buttonStyle(.marginalia(.secondary, .large, in: scheme))
@@ -386,6 +391,68 @@ struct RecordingView: View {
     private var segmentCountLine: String {
         let count = session.segments.count
         return "\(count) transcript \(count == 1 ? "segment" : "segments") saved."
+    }
+
+    /// The post-recording pipeline's live status (docs/plans/swift-meeting-generation-flow.md,
+    /// Track 2 "UI integration" #2) — rendered only while `processingCoordinator` is actively
+    /// tracking THIS meeting. Every label reflects a real `MeetingProcessingCoordinator.Phase`;
+    /// never a fabricated percentage or step (No-Fake-State). The coordinator itself was already
+    /// kicked off by `RootSplitView`'s mount-independent `.onChange` the moment this phase became
+    /// `.saved` — this section only observes it.
+    @ViewBuilder
+    private func processingStatusSection(meetingId: MeetingID) -> some View {
+        if let coordinator = environment.processingCoordinator, coordinator.activeMeetingID == meetingId {
+            VStack(spacing: MarginaliaSpacing.xs.value) {
+                HStack(spacing: MarginaliaSpacing.sm.value) {
+                    if isPipelineActive(coordinator.phase) {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(processingStatusLabel(coordinator.phase))
+                        .marginaliaTextStyle(.callout, in: scheme, ink: processingStatusInk(coordinator.phase))
+                }
+                // Honest, non-fatal note (decision 3): diarization hiccuped but the pipeline
+                // continued to summary regardless — never a blocking error, just a soft banner.
+                if let note = coordinator.diarizationNote {
+                    Text(note)
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                        .multilineTextAlignment(.center)
+                }
+            }
+        }
+    }
+
+    private func isPipelineActive(_ phase: MeetingProcessingCoordinator.Phase) -> Bool {
+        switch phase {
+        case .identifyingSpeakers, .selectingTemplate, .summarizing:
+            true
+        case .idle, .needsSpeakerCount, .completed, .failed:
+            false
+        }
+    }
+
+    private func processingStatusLabel(_ phase: MeetingProcessingCoordinator.Phase) -> String {
+        switch phase {
+        case .idle:
+            "" // unreachable here — this section only renders while a run is tracked/finished.
+        case .identifyingSpeakers:
+            "Identifying speakers…"
+        case .needsSpeakerCount:
+            "Waiting for a speaker count — see the prompt to continue."
+        case .selectingTemplate:
+            "Choosing a template…"
+        case .summarizing:
+            "Generating summary…"
+        case .completed:
+            "Processing complete."
+        case let .failed(message):
+            message
+        }
+    }
+
+    private func processingStatusInk(_ phase: MeetingProcessingCoordinator.Phase) -> MarginaliaColorRole {
+        if case .failed = phase { return .error }
+        return .inkSecondary
     }
 
     private func failedContent(message: String) -> some View {

@@ -152,6 +152,17 @@ struct MeetingDetailView: View {
             }
         }
         .onDisappear { audioController.reset() }
+        // docs/plans/swift-meeting-generation-flow.md, Track 2: when the post-recording pipeline
+        // finishes THIS meeting, pull in whatever it produced (speaker labels, summary) — the
+        // pipeline itself already persisted via the same repositories this view reads through.
+        .onChange(of: environment.processingCoordinator?.phase) { _, newPhase in
+            guard case .completed = newPhase,
+                  environment.processingCoordinator?.activeMeetingID == meetingId else { return }
+            Task {
+                await viewModel.load(meetingId)
+                summaryViewModelIfAvailable()?.restoreSelection(from: viewModel.summary)
+            }
+        }
     }
 
     // MARK: - Wide: two-pane
@@ -258,6 +269,7 @@ struct MeetingDetailView: View {
     private func summaryColumn(_ meeting: Meeting, showInlineNotes: Bool) -> some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.xl.value) {
             header(meeting)
+            processingBanner
             // The moment chips are a "play" affordance — only offer them when there's actually
             // resolvable audio to seek. The inline `[MM:SS]` markers still read as text otherwise.
             if let seek = seekHandler, !viewModel.referencedMoments.isEmpty {
@@ -304,6 +316,63 @@ struct MeetingDetailView: View {
         }
     }
 
+    // MARK: - Processing banner (docs/plans/swift-meeting-generation-flow.md, Track 2)
+
+    /// The post-recording pipeline's live status for THIS meeting — rendered only while
+    /// `processingCoordinator` is actively tracking it. Every message reflects a real
+    /// `MeetingProcessingCoordinator.Phase`/`diarizationNote` (No-Fake-State): once the pipeline
+    /// reaches `.completed` with no note, the banner disappears entirely — the freshly reloaded
+    /// summary above already speaks for itself, so there is nothing honest left to say.
+    @ViewBuilder
+    private var processingBanner: some View {
+        if let coordinator = environment.processingCoordinator, coordinator.activeMeetingID == meetingId,
+           let message = processingBannerMessage(coordinator) {
+            MarginaliaBanner(kind: processingBannerKind(coordinator.phase), message: message, scheme: scheme)
+        }
+    }
+
+    private func processingBannerMessage(_ coordinator: MeetingProcessingCoordinator) -> String? {
+        switch coordinator.phase {
+        case .identifyingSpeakers:
+            "Identifying speakers…"
+        case .needsSpeakerCount:
+            "Waiting for a speaker count to continue — see the prompt."
+        case .selectingTemplate:
+            "Choosing a template…"
+        case .summarizing:
+            "Generating summary…"
+        case .completed:
+            // The only honest thing left to say once complete: a non-fatal diarization note, if
+            // one was recorded (decision 3) — otherwise nothing (the reloaded summary above is
+            // the real signal that processing finished).
+            coordinator.diarizationNote
+        case let .failed(message):
+            message
+        case .idle:
+            nil
+        }
+    }
+
+    private func processingBannerKind(_ phase: MeetingProcessingCoordinator.Phase) -> MarginaliaBannerKind {
+        if case .failed = phase { return .error }
+        return .info
+    }
+
+    /// Whether the pipeline is actively working on THIS meeting (mirrors Rust's
+    /// `isBackgroundProcessing` gate) — used to disable the Track-1 manual summary actions below
+    /// so a manual generate never races the pipeline's own auto-generate for the same meeting.
+    private var isCoordinatorProcessingThisMeeting: Bool {
+        guard let coordinator = environment.processingCoordinator, coordinator.activeMeetingID == meetingId else {
+            return false
+        }
+        switch coordinator.phase {
+        case .identifyingSpeakers, .selectingTemplate, .summarizing:
+            return true
+        case .idle, .needsSpeakerCount, .completed, .failed:
+            return false
+        }
+    }
+
     // MARK: - Summary actions (docs/plans/swift-meeting-generation-flow.md, Track 1)
 
     /// Generate / Regenerate / change-template / Cancel — rendered only once `summaryViewModel`
@@ -328,20 +397,20 @@ struct MeetingDetailView: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .frame(minWidth: 160)
-                    .disabled(isSummaryGenerating(summaryVM))
+                    .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
 
                     if viewModel.summary != nil {
                         Button("Regenerate") {
                             generateSummary()
                         }
                         .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                        .disabled(isSummaryGenerating(summaryVM))
+                        .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
                     } else {
                         Button("Generate summary") {
                             generateSummary()
                         }
                         .buttonStyle(.marginalia(.primary, .regular, in: scheme))
-                        .disabled(isSummaryGenerating(summaryVM))
+                        .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
                     }
 
                     if isSummaryGenerating(summaryVM) {
