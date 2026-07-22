@@ -35,6 +35,7 @@ struct MeetingDetailView: View {
     @State private var viewModel: MeetingDetailViewModel
     @State private var audioController = AudioPlayerController()
     @State private var narrowSection: NarrowSection = .summary
+    @State private var isNarrowLayout = false
     @State private var railWidth: CGFloat = MeetingDetailView.defaultRailWidth
     /// The rail width captured at the start of a divider drag, so each `onChanged` computes from a
     /// fixed base instead of compounding — the compounding + live relayout is what made the seam
@@ -73,8 +74,31 @@ struct MeetingDetailView: View {
                     narrowColumn(meeting)
                 }
             }
+            .onGeometryChange(for: Bool.self) { proxy in
+                proxy.size.width < Self.twoPaneMinWidth
+            } action: { narrow in
+                isNarrowLayout = narrow
+            }
         }
         .background(MarginaliaCanvasWash(scheme: scheme))
+        // The section switcher lives in the TOOLBAR in narrow mode — the toolbar is the
+        // system's Liquid Glass layer on macOS 26, so the segmented switcher renders in the
+        // floating glass grouping there (the Finder/Notes/Music view-switcher idiom). An
+        // embedded, mid-content tab bar draws the compact flat control instead — that's why
+        // the in-content attempts never looked like glass.
+        .toolbar {
+            if isNarrowLayout {
+                ToolbarItem(placement: .principal) {
+                    Picker("Section", selection: $narrowSection) {
+                        ForEach(NarrowSection.allCases) { section in
+                            Text(section.title).tag(section)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+            }
+        }
         .navigationTitle(viewModel.meeting.value?.title ?? "Meeting")
         .task(id: meetingId) {
             // Reset first: the detail view is REUSED across meetings in the split detail column
@@ -156,31 +180,27 @@ struct MeetingDetailView: View {
 
     // MARK: - Narrow: single stacked column
 
-    /// Narrow mode uses the STOCK `TabView` — on macOS 26 it renders the system's floating
-    /// Liquid Glass tab bar (the HIG tab-views appearance), which no hand-built switcher
-    /// should imitate (owner direction 2026-07-21; Liquid Glass v2 stock-first rule).
+    /// Narrow mode: content switched by the TOOLBAR section picker (see `body`'s `.toolbar`)
+    /// — the switcher itself lives in the window's glass layer, not in the content column.
     private func narrowColumn(_ meeting: Meeting) -> some View {
         VStack(spacing: 0) {
             audioSection
-            TabView(selection: $narrowSection) {
-                Tab(NarrowSection.summary.title, systemImage: "doc.text", value: .summary) {
-                    ScrollView {
-                        // Notes have their own tab in narrow mode, so don't also fold them
-                        // into Summary.
-                        summaryColumn(meeting, showInlineNotes: false)
-                            .padding(MarginaliaSpacing.md.value)
-                    }
+            switch narrowSection {
+            case .summary:
+                ScrollView {
+                    // Notes have their own tab in narrow mode, so don't also fold them into
+                    // Summary.
+                    summaryColumn(meeting, showInlineNotes: false)
+                        .padding(MarginaliaSpacing.md.value)
                 }
-                Tab(NarrowSection.transcript.title, systemImage: "text.quote", value: .transcript) {
-                    TranscriptListView(
-                        transcript: viewModel.transcript,
-                        displayName: viewModel.displayName(for:),
-                        onSeek: { audioController.seek(toSeconds: $0) }
-                    )
-                }
-                Tab(NarrowSection.notes.title, systemImage: "note.text", value: .notes) {
-                    notesBody
-                }
+            case .transcript:
+                TranscriptListView(
+                    transcript: viewModel.transcript,
+                    displayName: viewModel.displayName(for:),
+                    onSeek: { audioController.seek(toSeconds: $0) }
+                )
+            case .notes:
+                notesBody
             }
         }
     }
