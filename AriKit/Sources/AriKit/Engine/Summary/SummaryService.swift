@@ -182,7 +182,14 @@ public struct SummaryService: Sendable {
             if let contextSize = await settings.mlxContextSize(forModel: modelName) {
                 return max(contextSize - 300, 0)
             }
-            return 1748
+            // Single-pass ceiling for on-device MLX models. The old fallback (1748) was a fossil
+            // of the Rust `llama-helper`'s 2048-token llama.cpp context (2048 − 300) — catastrophic
+            // for MLX models like Qwen3.5-4B whose real context is 262k tokens: a normal ~7.5k-token
+            // meeting was force-chunked into ~5 passes, each re-paying prompt prefill, turning a
+            // ~30s single-pass summary into minutes. 24k keeps a 2–3h meeting single-pass (better
+            // quality: no lossy chunk→combine) while still chunking genuinely enormous transcripts,
+            // and bounds single-prompt prefill cost. Prefer configuring `mlxContextSize` per model.
+            return 24000
         case .appleFoundation:
             // FoundationModels has a ~4k-token context window; reserve overhead so long
             // transcripts chunk (paired with `SummaryGenerator`'s map-reduce gate).

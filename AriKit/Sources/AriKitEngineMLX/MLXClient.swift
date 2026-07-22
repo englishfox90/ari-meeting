@@ -34,9 +34,10 @@ public final class MLXClient: LLMClient {
     public let kind: ProviderKind = .mlx
 
     /// Fallback generation budget when neither the request nor the resolved config supplies one.
-    /// Chosen to match the S1 spike's own default (`Entry.swift:64`, `maxTokens = 1200`) — bounded,
-    /// not unbounded generation, when a caller supplies no explicit budget.
-    static let defaultMaxTokens = 1200
+    /// Bounded (not unbounded) generation when a caller supplies no explicit budget. Trimmed from
+    /// the S1 spike's 1200 (`Entry.swift:64`) to 800: observed final reports land ~500–600 tokens,
+    /// so 800 leaves headroom without paying decode time for tokens the model won't use.
+    static let defaultMaxTokens = 800
 
     /// ← the S1 spike's fixed sampling parameters (`Entry.swift:125-126`) — used only when neither
     /// the request nor the resolved `ProviderConfig` supplies a value.

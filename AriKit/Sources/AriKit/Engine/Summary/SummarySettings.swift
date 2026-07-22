@@ -12,7 +12,8 @@
 //  per-model context-size probes (Ollama's `ModelMetadataCache`, the MLX/BuiltInAI model registry).
 //  Those last two are genuine HTTP/registry lookups out of scope for this port (§8 notes MLX itself
 //  is a separate slice/target) — the protocol exposes them as an injection seam returning `nil` on
-//  "unknown", so `SummaryService` can apply the exact same Rust fallback defaults (4000 / 1748).
+//  "unknown", so `SummaryService` applies its own fallback thresholds (Ollama 4000; MLX 24k —
+//  raised from the Rust 1748, see `resolveTokenThreshold`).
 //
 import Foundation
 
@@ -36,7 +37,10 @@ public protocol SettingsReading: Sendable {
     func ollamaContextSize(forModel model: String) async -> Int?
 
     /// ← the MLX/BuiltInAI model-registry context-size lookup (`service.rs:443-463`). `nil` falls
-    /// back to the Rust "unknown model" default of 1748 (`2048 - 300` overhead reserve).
+    /// back to `SummaryService`'s single-pass MLX ceiling (24k) — deliberately NOT the Rust
+    /// "unknown model" 1748 (`2048 - 300`), which was tied to llama.cpp's tiny context and
+    /// force-chunked normal meetings on MLX models whose real context is 262k. See
+    /// `resolveTokenThreshold(.mlx)`.
     func mlxContextSize(forModel model: String) async -> Int?
 
     /// ← `SettingsRepository::get_model_config(pool)` (`persons/extraction.rs:86`,
