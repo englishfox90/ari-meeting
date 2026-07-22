@@ -91,7 +91,6 @@ struct SettingsViewModelTests {
             viewModel.recordingStartNotificationAvailability,
             viewModel.deviceSelectionAvailability,
             viewModel.audioBackendAvailability,
-            viewModel.modelDownloadsAvailability,
             viewModel.rebuildIndexAvailability,
             viewModel.nomicDownloadAvailability
         ]

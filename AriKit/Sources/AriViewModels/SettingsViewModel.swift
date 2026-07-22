@@ -114,9 +114,6 @@ public final class SettingsViewModel {
     /// honestly absent, never a fabricated zero-state (No-Fake-State).
     public private(set) var indexSummary: RecallIndexSummary?
 
-    public let modelDownloadsAvailability: Availability = .disabled(
-        reason: "Per-provider model downloads still run in the frozen Rust engine; not ported yet."
-    )
     public let rebuildIndexAvailability: Availability = .disabled(
         reason: "There is no Swift reindex command yet."
     )

@@ -52,7 +52,6 @@ struct SettingsSummarySection: View {
                 if selectedProvider.requiresAPIKey {
                     apiKeyCard
                 }
-                modelDownloadsCard
                 embedderCard
                 indexStatsCard
             }
@@ -254,23 +253,6 @@ struct SettingsSummarySection: View {
 
                 Text("Never displayed once saved — only presence is shown.")
                     .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
-            }
-        }
-    }
-
-    // MARK: - Model downloads (honest-disabled)
-
-    private var modelDownloadsCard: some View {
-        SettingsDisabledGroup(availability: viewModel.modelDownloadsAvailability) {
-            SettingsCard(title: "Model downloads") {
-                HStack(spacing: MarginaliaSpacing.sm.value) {
-                    Button("Download") {}
-                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                    Button("Select") {}
-                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                    Button("Delete") {}
-                        .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
-                }
             }
         }
     }
