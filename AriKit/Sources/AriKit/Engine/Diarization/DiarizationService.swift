@@ -25,7 +25,7 @@ import Foundation
 
 /// The phases a `DiarizationService.run` progresses through, for honest UI progress reporting
 /// (plan §6 — never a fake indeterminate bar over invented steps).
-public enum DiarizationPhase: Sendable {
+public enum DiarizationPhase: Sendable, Equatable {
     case preparingModels
     case decodingAudio
     case diarizing
@@ -279,20 +279,28 @@ public actor DiarizationService {
         let canonical = sameSpaceCandidates.first { $0.personId == personId && $0.id != speakerId }
 
         if let canonical {
+            // Fold weight (D8 review fix, ← Rust `merge_speaker_into`, `commands.rs:1188-1194`):
+            // the subject's stored `totalSpeechSecs`, or — for a legacy/imported row that
+            // carries a stored 0 but has real `speakerSegment` rows — the summed segment
+            // durations instead. Never silently skip a fold a real speaker's segments would earn.
+            let subjectSpeechSecs = subject.totalSpeechSecs > 0
+                ? subject.totalSpeechSecs
+                : try await database.speakers.totalSegmentSecs(for: speakerId)
+
             let fromCentroid = CentroidCodec.vector(from: subject.centroid)
             let intoCentroid = CentroidCodec.vector(from: canonical.centroid)
             if SpeakerMatcher.shouldFold(
                 storedDim: intoCentroid.count, new: fromCentroid,
-                clusterSpeechSecs: subject.totalSpeechSecs, matchScore: nil, config: matchConfig
+                clusterSpeechSecs: subjectSpeechSecs, matchScore: nil, config: matchConfig
             ) {
                 let folded = SpeakerMatcher.foldCentroidWeighted(
                     stored: intoCentroid, storedTotalSecs: canonical.totalSpeechSecs,
-                    new: fromCentroid, newSecs: subject.totalSpeechSecs
+                    new: fromCentroid, newSecs: subjectSpeechSecs
                 )
                 try await database.speakers.persistFold(
                     canonical.id, centroid: CentroidCodec.data(from: folded),
                     samples: canonical.samples + 1,
-                    totalSpeechSecs: canonical.totalSpeechSecs + subject.totalSpeechSecs,
+                    totalSpeechSecs: canonical.totalSpeechSecs + subjectSpeechSecs,
                     at: now
                 )
             }

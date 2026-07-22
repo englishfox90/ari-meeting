@@ -164,7 +164,14 @@ public final class SpeakerIdentificationViewModel {
     /// Runs the full offline diarization pipeline for `meetingId`'s `audioURL`. Requires
     /// `canRun`; otherwise reports the honest reason in `runState` and never starts the
     /// underlying operation (invariants I4/I6).
+    ///
+    /// Reentrancy guard (D9a review fix): a second call while already `.running` is refused
+    /// rather than starting a second consumer task that would interleave writes to
+    /// `runState`/`progressHistory` with the first run's.
     public func run(meetingId: MeetingID, audioURL: URL) async {
+        if case .running = runState {
+            return
+        }
         guard !isRecording() else {
             runState = .failed("Cannot identify speakers while recording is in progress.")
             return

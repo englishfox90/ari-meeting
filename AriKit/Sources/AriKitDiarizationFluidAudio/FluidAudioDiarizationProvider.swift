@@ -11,6 +11,7 @@
 #if os(macOS)
     import AriKit
     import FluidAudio
+    import Foundation
 
     public actor FluidAudioDiarizationProvider: DiarizationProvider {
         public let providerName = "fluidaudio-offline"
@@ -83,8 +84,33 @@
                 loadedModels = models
                 return models
             } catch {
-                throw DiarizationError.modelsUnavailable(String(describing: error))
+                // Purge-and-retry-once fallback (D7 review fix), mirroring
+                // `OfflineDiarizerManager.prepareModels`'s corrupt-cache self-heal (FluidAudio
+                // `OfflineDiarizerManager.swift:60-78`): a corrupted cached CoreML repo would
+                // otherwise become a persistent (honest, but permanent) `.modelsUnavailable`
+                // where the spike/manager path self-heals via one purge + re-download. Stays
+                // inside the actor, no shared/global state.
+                purgeDiarizerModelsCache()
+                do {
+                    let models = try await OfflineDiarizerModels.load()
+                    loadedModels = models
+                    return models
+                } catch {
+                    throw DiarizationError.modelsUnavailable(String(describing: error))
+                }
             }
+        }
+
+        /// Removes the on-disk cached diarizer model repo so the next `OfflineDiarizerModels
+        /// .load()` re-downloads and recompiles from scratch. Same cache-path semantics as
+        /// `OfflineDiarizerManager.purgeDiarizerRepo(at:)` (private to that type, so mirrored
+        /// here rather than reused): `OfflineDiarizerModels.defaultModelsDirectory()` +
+        /// `Repo.diarizer.folderName`. Best-effort — a failed purge still falls through to the
+        /// retry, which then fails honestly if the corruption persists.
+        private func purgeDiarizerModelsCache() {
+            let repoDirectory = OfflineDiarizerModels.defaultModelsDirectory()
+                .appendingPathComponent(Repo.diarizer.folderName, isDirectory: true)
+            try? FileManager.default.removeItem(at: repoDirectory)
         }
     }
 

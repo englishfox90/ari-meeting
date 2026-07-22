@@ -20,7 +20,10 @@ struct IdentifySpeakersSheet: View {
     /// Resolved display name for a stamped speaker (from `MeetingDetailViewModel.speakerNames`,
     /// reloaded by `onSpeakersChanged` after a run/confirm) — `nil` when not yet known.
     let displayName: (SpeakerID) -> String?
-    let createPerson: (String) async -> PersonID
+    /// Throwing (D9b review fix): a failed `PersonRepository.upsert` must surface to the user,
+    /// not silently hand back a dangling `PersonID` that later fails an FK constraint deep in
+    /// `confirmSpeaker`.
+    let createPerson: (String) async throws -> PersonID
     let onSpeakersChanged: () async -> Void
     let onDismiss: () -> Void
 
@@ -40,6 +43,10 @@ struct IdentifySpeakersSheet: View {
     @State private var countText: String = ""
     @State private var suggestionsBySpeaker: [SpeakerID: [(personId: PersonID, score: Float)]] = [:]
     @State private var assignSpeakerId: SpeakerID?
+    /// D9b review fix: `result.speakers` is a static snapshot from the run — without this, a
+    /// just-confirmed speaker keeps rendering as Unidentified/suggest and can be re-confirmed.
+    /// Set on a successful confirm; the row overrides its tier-derived label/actions when present.
+    @State private var confirmedSpeakerNames: [SpeakerID: String] = [:]
 
     var body: some View {
         NavigationStack {
@@ -82,7 +89,9 @@ struct IdentifySpeakersSheet: View {
                     onSelect: { personId in
                         Task {
                             await viewModel.confirm(speakerId, as: personId, inMeeting: meetingId)
+                            await viewModel.loadAssignablePeople()
                             await onSpeakersChanged()
+                            markConfirmed(speakerId, personId: personId)
                             assignSpeakerId = nil
                         }
                     },
@@ -136,8 +145,15 @@ struct IdentifySpeakersSheet: View {
         return "From calendar/participants: \(n)"
     }
 
+    /// D9b review fix (H2 stale-hint failure mode): an empty or unparseable field must clear
+    /// `userHint` rather than no-op — otherwise a previously typed "3" (Exactly) survives after
+    /// the field is cleared or the mode is switched to "Not sure", and `run` silently uses the
+    /// stale `.exact(3)` while the UI shows an empty/uncertain field.
     private func applyCount(_ text: String) {
-        guard let n = Int(text) else { return }
+        guard let n = Int(text) else {
+            viewModel.clearUserHint()
+            return
+        }
         switch countMode {
         case .exact: viewModel.setExactCount(n)
         case .uncertain: viewModel.setUncertainCount(n)
@@ -191,6 +207,7 @@ struct IdentifySpeakersSheet: View {
                             resolved: resolved,
                             resolvedName: resolved.tier == .autoConfirm ? displayName(resolved.speakerId) : nil,
                             suggestion: topSuggestion(for: resolved.speakerId),
+                            confirmedOverrideName: confirmedSpeakerNames[resolved.speakerId],
                             onConfirmSuggestion: { confirmTopSuggestion(for: resolved.speakerId) },
                             onNotThem: { suggestionsBySpeaker[resolved.speakerId] = [] },
                             onAssign: { assignSpeakerId = resolved.speakerId }
@@ -224,7 +241,23 @@ struct IdentifySpeakersSheet: View {
         Task {
             await viewModel.confirm(speakerId, as: top.personId, inMeeting: meetingId)
             await onSpeakersChanged()
+            // D9b review fix: reflect the confirm in the results row immediately — the top
+            // suggestion's name is already in hand, no extra lookup needed.
+            confirmedSpeakerNames[speakerId] = top.name
+            suggestionsBySpeaker[speakerId] = []
         }
+    }
+
+    /// D9b review fix: mark a speaker row confirmed after the `AssignPersonSheet` flow, so it
+    /// stops rendering as Unidentified/re-confirmable. Best-effort name resolution: the freshly
+    /// (re)loaded assignable-people list, falling back to the resolved display name once the
+    /// caller's `onSpeakersChanged` reload catches up.
+    private func markConfirmed(_ speakerId: SpeakerID, personId: PersonID) {
+        let name = viewModel.assignablePeople.first(where: { $0.id == personId })?.displayName
+            ?? displayName(speakerId)
+            ?? "Confirmed"
+        confirmedSpeakerNames[speakerId] = name
+        suggestionsBySpeaker[speakerId] = []
     }
 
     private func runTapped() {
@@ -249,12 +282,15 @@ struct IdentifySpeakersSheet: View {
 private struct AssignPersonSheet: View {
     let people: [Person]
     let suggestions: [(personId: PersonID, name: String, score: Float)]
-    let createPerson: (String) async -> PersonID
+    let createPerson: (String) async throws -> PersonID
     let onSelect: (PersonID) -> Void
     let onCancel: () -> Void
 
     @Environment(\.colorScheme) private var scheme
     @State private var newPersonName: String = ""
+    /// Honest failure surface (D9b review fix) — a failed `createPerson` shows here instead of
+    /// silently dropping the user's typed name with no explanation.
+    @State private var createPersonError: String?
 
     var body: some View {
         NavigationStack {
@@ -285,18 +321,29 @@ private struct AssignPersonSheet: View {
                     }
                 }
                 Section("New person") {
-                    HStack(spacing: MarginaliaSpacing.sm.value) {
-                        MarginaliaTextField(text: $newPersonName, prompt: "Name", scheme: scheme)
-                        Button("Add") {
-                            let name = newPersonName.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !name.isEmpty else { return }
-                            Task {
-                                let personId = await createPerson(name)
-                                onSelect(personId)
+                    VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                        HStack(spacing: MarginaliaSpacing.sm.value) {
+                            MarginaliaTextField(text: $newPersonName, prompt: "Name", scheme: scheme)
+                            Button("Add") {
+                                let name = newPersonName.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !name.isEmpty else { return }
+                                createPersonError = nil
+                                Task {
+                                    do {
+                                        let personId = try await createPerson(name)
+                                        onSelect(personId)
+                                    } catch {
+                                        createPersonError = "Couldn't create \(name): \(error.localizedDescription)"
+                                    }
+                                }
                             }
+                            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                            .disabled(newPersonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                        .disabled(newPersonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if let createPersonError {
+                            Text(createPersonError)
+                                .marginaliaTextStyle(.callout, in: scheme, ink: .error)
+                        }
                     }
                 }
             }

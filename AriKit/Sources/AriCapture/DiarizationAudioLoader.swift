@@ -24,6 +24,14 @@
         /// FluidAudio's required input rate (← `DiarizationProvider.diarize` contract, plan §2.2).
         public static let targetSampleRate: Double = 16000
 
+        /// Chunk size (in source-format seconds) read per pull-loop iteration (D6 review fix).
+        /// A whole-file `AVAudioPCMBuffer(frameCapacity: file.length)` at the SOURCE format is a
+        /// multi-GB transient for a long meeting (e.g. ~2.7 GB for a 2-hour 48 kHz stereo f32
+        /// import) — far beyond the ~150 MB the plan (§4) budgets for the 16k-mono OUTPUT that
+        /// crosses the actor boundary. Streaming the decode in fixed-size chunks keeps only the
+        /// growing mono 16k output resident, not the full source-format recording.
+        private static let chunkSeconds: Double = 3.0
+
         public init() {}
 
         /// Honest errors only — never a fabricated/empty PCM buffer for an unreadable file
@@ -61,58 +69,96 @@
             // No-Fake-State risk for imported stereo/dual-mono meeting files.
             converter.downmix = true
 
+            // Streaming decode (D6 review fix): read the source file in fixed-size chunks inside
+            // the converter's pull callback rather than buffering the whole recording at the
+            // source format up front. Only the growing 16k-mono OUTPUT accumulates in memory.
+            let chunkFrameCapacity = AVAudioFrameCount(
+                (Self.chunkSeconds * file.processingFormat.sampleRate).rounded(.up)
+            )
             guard let inputBuffer = AVAudioPCMBuffer(
                 pcmFormat: file.processingFormat,
-                frameCapacity: AVAudioFrameCount(file.length)
+                frameCapacity: max(chunkFrameCapacity, 1)
             ) else {
                 throw DiarizationError.audioUnreadable("could not allocate input buffer for \(url.lastPathComponent)")
-            }
-
-            do {
-                try file.read(into: inputBuffer)
-            } catch {
-                throw DiarizationError.audioUnreadable(error.localizedDescription)
             }
 
             let ratio = Self.targetSampleRate / file.processingFormat.sampleRate
             // Small safety margin, same rationale as `Resampler`: the converter may need a
             // couple of extra output frames for its internal filter state.
-            let outputCapacity = AVAudioFrameCount(Double(inputBuffer.frameLength) * ratio) + 16
+            let outputCapacity = AVAudioFrameCount(Double(inputBuffer.frameCapacity) * ratio) + 16
             guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else {
                 throw DiarizationError
                     .audioUnreadable("could not allocate output buffer for \(url.lastPathComponent)")
             }
 
-            var conversionError: NSError?
             // `nonisolated(unsafe)`, justified as in `Resampler.swift`: `AVAudioConverter`
             // invokes this block synchronously on the calling thread, possibly more than once,
             // never concurrently and never after `convert` returns — a documented, single-
             // threaded pull contract, not a real data race.
-            nonisolated(unsafe) var inputConsumed = false
+            nonisolated(unsafe) var reachedEndOfFile = false
+            nonisolated(unsafe) var readError: Error?
             nonisolated(unsafe) let pendingInputBuffer = inputBuffer
-            let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
-                if inputConsumed {
-                    // `.endOfStream`, not `.noDataNow`: this is a one-shot whole-file decode
-                    // with no more input ever coming, so the converter must flush its internal
-                    // sample-rate-conversion filter's tail into the output buffer rather than
-                    // stopping early and dropping the last handful of samples.
-                    outStatus.pointee = .endOfStream
-                    return nil
+            let pendingFile = file
+
+            var samples: [Float] = []
+            samples.reserveCapacity(Int(Self.targetSampleRate * 60)) // rough starting capacity
+
+            while true {
+                var conversionError: NSError?
+                let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+                    // The converter's pull loop calls this block again even after a prior call
+                    // already drained the file — so guard on `framePosition >= length` BEFORE
+                    // reading. `AVAudioFile.read(into:frameCount:)` at true EOF throws a generic
+                    // `nilError` rather than returning a 0-frame success, unlike the mid-file
+                    // case (which returns fewer frames than requested, no throw).
+                    if reachedEndOfFile || pendingFile.framePosition >= pendingFile.length {
+                        // `.endOfStream`, not `.noDataNow`: no more input is ever coming for
+                        // this chunk-read loop's tail, so the converter must flush its internal
+                        // sample-rate-conversion filter rather than stopping early.
+                        reachedEndOfFile = true
+                        outStatus.pointee = .endOfStream
+                        return nil
+                    }
+                    pendingInputBuffer.frameLength = 0
+                    do {
+                        try pendingFile.read(into: pendingInputBuffer, frameCount: chunkFrameCapacity)
+                    } catch {
+                        readError = error
+                        reachedEndOfFile = true
+                        outStatus.pointee = .endOfStream
+                        return nil
+                    }
+                    if pendingInputBuffer.frameLength == 0 {
+                        reachedEndOfFile = true
+                        outStatus.pointee = .endOfStream
+                        return nil
+                    }
+                    outStatus.pointee = .haveData
+                    return pendingInputBuffer
                 }
-                inputConsumed = true
-                outStatus.pointee = .haveData
-                return pendingInputBuffer
+
+                if let readError {
+                    throw DiarizationError.audioUnreadable(readError.localizedDescription)
+                }
+                if status == .error {
+                    throw DiarizationError.audioUnreadable(
+                        conversionError?.localizedDescription ?? "unknown AVAudioConverter error decoding \(url.lastPathComponent)"
+                    )
+                }
+
+                if let outputChannelData = outputBuffer.floatChannelData {
+                    let frameLength = Int(outputBuffer.frameLength)
+                    if frameLength > 0 {
+                        samples.append(contentsOf: UnsafeBufferPointer(start: outputChannelData[0], count: frameLength))
+                    }
+                }
+
+                if status == .endOfStream {
+                    break
+                }
             }
 
-            if status == .error {
-                throw DiarizationError.audioUnreadable(
-                    conversionError?.localizedDescription ?? "unknown AVAudioConverter error decoding \(url.lastPathComponent)"
-                )
-            }
-
-            guard let outputChannelData = outputBuffer.floatChannelData else { return [] }
-            let frameLength = Int(outputBuffer.frameLength)
-            return Array(UnsafeBufferPointer(start: outputChannelData[0], count: frameLength))
+            return samples
         }
     }
 #endif

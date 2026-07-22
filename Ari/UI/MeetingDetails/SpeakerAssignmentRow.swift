@@ -18,6 +18,12 @@ struct SpeakerAssignmentRow: View {
     let resolvedName: String?
     /// The top-ranked assign-picker suggestion for `.suggest`/`.anonymous` rows, if any.
     let suggestion: (personId: PersonID, name: String, score: Float)?
+    /// D9b review fix: `resolved.tier` is a static snapshot from the run and never updates after
+    /// a confirm. When the sheet has confirmed this row in the current session, it passes the
+    /// confirmed name here, which overrides the tier-derived label/actions with the same
+    /// success-badge + Reassign presentation `.autoConfirm` uses — never re-rendering a
+    /// just-confirmed speaker as Unidentified/re-confirmable.
+    let confirmedOverrideName: String?
     let onConfirmSuggestion: () -> Void
     let onNotThem: () -> Void
     let onAssign: () -> Void
@@ -40,6 +46,15 @@ struct SpeakerAssignmentRow: View {
 
     @ViewBuilder
     private var tierLabel: some View {
+        if let confirmedOverrideName {
+            MarginaliaBadge(confirmedOverrideName, style: .success, symbol: "checkmark.seal", scheme: scheme)
+        } else {
+            tierDerivedLabel
+        }
+    }
+
+    @ViewBuilder
+    private var tierDerivedLabel: some View {
         switch resolved.tier {
         case .autoConfirm:
             if let resolvedName {
@@ -66,6 +81,16 @@ struct SpeakerAssignmentRow: View {
 
     @ViewBuilder
     private var actions: some View {
+        if confirmedOverrideName != nil {
+            Button("Reassign", action: onAssign)
+                .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+        } else {
+            tierDerivedActions
+        }
+    }
+
+    @ViewBuilder
+    private var tierDerivedActions: some View {
         switch resolved.tier {
         case .autoConfirm:
             Button("Reassign", action: onAssign)

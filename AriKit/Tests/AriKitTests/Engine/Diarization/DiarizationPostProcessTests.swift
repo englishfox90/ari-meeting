@@ -128,6 +128,18 @@ struct DiarizationPostProcessTests {
         #expect(out.segments[0].clusterKey == "spk_0")
     }
 
+    // ---- config defaults (invariant I9, ports tuning test 56) --------------
+
+    @Test
+    func postProcessConfigDefaultsMatchRustRecipe() {
+        let cfg = PostProcessConfig()
+        #expect(cfg.mergeThreshold == 0.7)
+        #expect(cfg.floorAbsSecs == 10.0)
+        #expect(cfg.floorFrac == 0.02)
+        #expect(cfg.reassignMinCosine == 0.5)
+        #expect(cfg.maxClusters == nil)
+    }
+
     // ---- degenerate / edge inputs -------------------------------------------
 
     @Test

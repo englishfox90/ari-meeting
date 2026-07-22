@@ -395,6 +395,10 @@ struct MeetingDetailView: View {
                 audioURL: url,
                 displayName: viewModel.displayName(for:),
                 createPerson: { name in
+                    // D9b review fix: surface the upsert failure instead of swallowing it with
+                    // `try?` and returning a dangling `PersonID` — with FKs ON, a dangling id
+                    // would later throw a raw FK error out of `confirmSpeaker` into
+                    // `runState.failed`, wiping the results list with no honest explanation.
                     let person = Person(
                         id: PersonID(UUID().uuidString),
                         displayName: name,
@@ -402,7 +406,7 @@ struct MeetingDetailView: View {
                         createdAt: Date(),
                         updatedAt: Date()
                     )
-                    try? await database.persons.upsert(person)
+                    try await database.persons.upsert(person)
                     return person.id
                 },
                 onSpeakersChanged: { await viewModel.load(meetingId) },
