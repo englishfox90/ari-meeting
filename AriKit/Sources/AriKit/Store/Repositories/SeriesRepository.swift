@@ -199,6 +199,20 @@ public struct SeriesRepository: Sendable {
         }
     }
 
+    /// The series a meeting belongs to, oldest membership first. The reverse of
+    /// `meetingIds(inSeries:)` — the "which series is this meeting in?" read the meeting-detail
+    /// "Add to series" control needs. The schema permits multiple memberships (composite-PK link
+    /// table), so this honestly returns all of them rather than assuming one.
+    public func seriesIds(forMeeting meetingId: MeetingID) async throws -> [SeriesID] {
+        try await dbWriter.read { db in
+            try SeriesMemberRecord
+                .filter(Column("meetingId") == meetingId.rawValue)
+                .order(Column("createdAt"))
+                .fetchAll(db)
+                .map { SeriesID($0.seriesId) }
+        }
+    }
+
     /// Insert-or-update a series/meeting membership link.
     public func addMember(
         seriesId: SeriesID,

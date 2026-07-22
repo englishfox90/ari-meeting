@@ -35,6 +35,12 @@ struct MeetingDetailView: View {
     private static let minSummaryWidth: CGFloat = 480
 
     @State private var viewModel: MeetingDetailViewModel
+    @State private var seriesViewModel: AddToSeriesViewModel
+    /// Drives the "Add to series" popover in the meeting header (← the old app's series affordance).
+    @State private var showingSeriesPicker = false
+    /// The pending title for the "Create new series" field, pre-filled with the meeting title when
+    /// the popover opens.
+    @State private var newSeriesTitle = ""
     @State private var audioController = AudioPlayerController()
     @State private var narrowSection: NarrowSection = .summary
     @State private var isNarrowLayout = false
@@ -74,6 +80,7 @@ struct MeetingDetailView: View {
         self.meetingId = meetingId
         self.initialSeek = initialSeek
         _viewModel = State(initialValue: MeetingDetailViewModel(database: database))
+        _seriesViewModel = State(initialValue: AddToSeriesViewModel(database: database))
     }
 
     private enum NarrowSection: String, CaseIterable, Identifiable {
@@ -134,6 +141,7 @@ struct MeetingDetailView: View {
             audioController.reset()
             narrowSection = .summary
             await viewModel.load(meetingId)
+            await seriesViewModel.load(meetingId: meetingId)
             // Load templates + restore the picker's selection from whatever summary just
             // resolved (docs/plans/swift-meeting-generation-flow.md, Track 1) — honest: reflects
             // the summary actually on screen, never a fabricated default selection.
@@ -300,8 +308,129 @@ struct MeetingDetailView: View {
                 .marginaliaTextStyle(.title1, in: scheme, ink: .inkHeading)
             Text(meeting.createdAt.formatted(date: .abbreviated, time: .shortened))
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+            seriesAffordance
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Add to series (← the old app's meeting-header series affordance)
+
+    /// The current-series chips (removable) plus the button that opens the add/create popover.
+    /// When the meeting is in no series, this is just a quiet "Add to series" button — nothing is
+    /// implied about membership that isn't real (No-Fake-State).
+    private var seriesAffordance: some View {
+        HStack(spacing: MarginaliaSpacing.xs.value) {
+            ForEach(seriesViewModel.currentSeries) { series in
+                seriesChip(series)
+            }
+            Button {
+                newSeriesTitle = viewModel.meeting.value?.title ?? ""
+                showingSeriesPicker = true
+            } label: {
+                Label(
+                    seriesViewModel.currentSeries.isEmpty ? "Add to series" : "Add to another series",
+                    systemImage: "plus"
+                )
+            }
+            .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+            .popover(isPresented: $showingSeriesPicker, arrowEdge: .bottom) {
+                seriesPickerContent
+            }
+        }
+        .padding(.top, MarginaliaSpacing.xs.value)
+    }
+
+    private func seriesChip(_ series: SeriesSummary) -> some View {
+        HStack(spacing: MarginaliaSpacing.xs.value) {
+            Image(systemName: "square.stack.3d.up")
+                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+            Text(series.title)
+                .marginaliaTextStyle(.callout, in: scheme)
+            Button {
+                Task { await seriesViewModel.remove(seriesId: series.id, meetingId: meetingId) }
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+            .help("Remove from “\(series.title)”")
+        }
+        .padding(.horizontal, MarginaliaSpacing.sm.value)
+        .padding(.vertical, MarginaliaSpacing.xs.value)
+        .background {
+            RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
+                .fill(Color.marginalia(.elevated, in: scheme))
+        }
+    }
+
+    private var seriesPickerContent: some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+            MarginaliaSearchField(
+                text: seriesSearchBinding,
+                prompt: "Search series…",
+                scheme: scheme,
+                size: .compact
+            )
+            if !seriesViewModel.filteredSeries.isEmpty {
+                Text("Existing series")
+                    .marginaliaTextStyle(.caption, in: scheme)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(seriesViewModel.filteredSeries) { series in
+                            Button {
+                                Task {
+                                    await seriesViewModel.addToExisting(seriesId: series.id, meetingId: meetingId)
+                                    if seriesViewModel.errorMessage == nil { showingSeriesPicker = false }
+                                }
+                            } label: {
+                                HStack {
+                                    Text(series.title)
+                                        .marginaliaTextStyle(.body, in: scheme)
+                                    Spacer(minLength: MarginaliaSpacing.md.value)
+                                    Text(meetingCountLabel(series.meetingCount))
+                                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                                }
+                                .contentShape(Rectangle())
+                                .padding(.vertical, MarginaliaSpacing.xs.value)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxHeight: 220)
+            }
+            Divider().overlay(Color.marginalia(.hairline, in: scheme))
+            Text("Create new series")
+                .marginaliaTextStyle(.caption, in: scheme)
+            HStack(spacing: MarginaliaSpacing.sm.value) {
+                MarginaliaTextField(text: $newSeriesTitle, prompt: "New series name", scheme: scheme)
+                Button("Create") {
+                    Task {
+                        await seriesViewModel.createAndAdd(title: newSeriesTitle, meetingId: meetingId)
+                        if seriesViewModel.errorMessage == nil { showingSeriesPicker = false }
+                    }
+                }
+                .buttonStyle(.marginalia(.primary, .regular, in: scheme))
+                .disabled(newSeriesTitle.trimmingCharacters(in: .whitespaces).isEmpty || seriesViewModel.isBusy)
+            }
+            if let error = seriesViewModel.errorMessage {
+                Text(error)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .error)
+            }
+        }
+        .padding(MarginaliaSpacing.md.value)
+        .frame(width: 340)
+    }
+
+    private var seriesSearchBinding: Binding<String> {
+        Binding(
+            get: { seriesViewModel.searchText },
+            set: { seriesViewModel.searchText = $0 }
+        )
+    }
+
+    private func meetingCountLabel(_ count: Int) -> String {
+        count == 1 ? "1 meeting" : "\(count) meetings"
     }
 
     @ViewBuilder

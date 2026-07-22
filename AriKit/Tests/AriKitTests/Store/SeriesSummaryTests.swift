@@ -70,4 +70,30 @@ struct SeriesSummaryTests {
         #expect(summaries.map(\.id) == [SeriesID("s-live")])
         #expect(summaries[0].meetingCount == 1)
     }
+
+    @Test("seriesIds(forMeeting:) is the reverse of membership, oldest link first")
+    func reverseMembershipLookup() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try await makeSeries(db, id: "s-a", title: "Alpha", at: base)
+        try await makeSeries(db, id: "s-b", title: "Beta", at: base)
+        try await makeSeries(db, id: "s-c", title: "Gamma", at: base)
+        try await db.meetings.upsert(Meeting(id: MeetingID("m1"), title: "m1", createdAt: base, updatedAt: base))
+        try await db.meetings.upsert(Meeting(id: MeetingID("m2"), title: "m2", createdAt: base, updatedAt: base))
+
+        // m1 joins Beta then Alpha; m2 joins Gamma only.
+        try await db.series.addMember(seriesId: SeriesID("s-b"), meetingId: MeetingID("m1"), at: base)
+        try await db.series.addMember(seriesId: SeriesID("s-a"), meetingId: MeetingID("m1"), at: base.addingTimeInterval(60))
+        try await db.series.addMember(seriesId: SeriesID("s-c"), meetingId: MeetingID("m2"), at: base)
+
+        let m1 = try await db.series.seriesIds(forMeeting: MeetingID("m1"))
+        #expect(m1 == [SeriesID("s-b"), SeriesID("s-a")]) // oldest link first
+        let m2 = try await db.series.seriesIds(forMeeting: MeetingID("m2"))
+        #expect(m2 == [SeriesID("s-c")])
+
+        // Removing a link drops it from the reverse lookup.
+        _ = try await db.series.removeMember(seriesId: SeriesID("s-b"), meetingId: MeetingID("m1"))
+        #expect(try await db.series.seriesIds(forMeeting: MeetingID("m1")) == [SeriesID("s-a")])
+    }
 }
