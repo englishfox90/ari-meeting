@@ -16,15 +16,13 @@
 //      ├── Engine        ported capture/STT/summarization pipeline (Phase-gated)
 //      └── DesignSystem  the Marginalia theme (colors/type/spacing/motion) — LIVE today
 //
-//  STATUS: mostly SCAFFOLD. Per the plan's WIP limits (principle 8), Store/Recall/Context/
-//  Engine carry no engine code yet — Phase 0 spikes (S1–S4) gate that. Two modules are real
-//  today: DesignSystem (both future app targets need Marginalia themed from their first screen,
-//  swift-conventions.md, so it isn't gated behind Phase 0) and Models — the shared domain
-//  value types, ported 2026-07-17 (persistence-agnostic, so not spike-gated; the GRDB Store
-//  over them is still Phase 3.1). See docs/plans/arikit-models.md. This
-//  package exists now so the Claude-Code Swift tooling (/swift-build, /swift-test, the
-//  PostToolUse SwiftLint/SwiftFormat hook, XcodeBuildMCP's swift_package_build/test) has a
-//  real home to operate on from day one, and so net-new Swift work has somewhere to land.
+//  STATUS (2026-07-21): substantially REAL. Live modules: Models, Store (GRDB + legacy
+//  importer, Phase 3.1), Recall (hybrid retrieval + safety shell, Slices 1–8), Engine
+//  (SpeechAnalyzer STT, summary + LLM providers, persons, Diarization), DesignSystem
+//  (Marginalia), plus the separate targets AriCapture (pure-DSP capture core),
+//  AriViewModels (@Observable read/recording/identification VMs), AriKitEngineMLX
+//  (on-device MLX summary, .v5 exception), and AriKitDiarizationFluidAudio (CoreML
+//  diarization provider). Only Context remains thin. Per-subsystem plans: docs/plans/.
 //
 //  Platform floor is macOS 26 / iOS 26 — the accepted "latest-OS-only" constraint
 //  (plan principle 7): SpeechAnalyzer + FoundationModels are 26+. Swift 6 language mode

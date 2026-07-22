@@ -3,7 +3,7 @@
 This project is migrating to a **100% Swift, Apple-only** codebase (`plans/swift-migration-plan.md`). Two Swift worlds coexist during the strangler migration:
 
 - **Sidecars** (`apple-helper/`, `ari-notch/`, `diarize-helper/`) — existing SwiftPM executables driven over NDJSON stdio. Live today.
-- **`AriKit/`** — the shared domain package (Models / Store / Recall / Context) that the macOS `Ari` app and the iOS `Ari Lite` app will both consume. **Scaffold today**; real subsystems land phase-by-phase, gated by the Phase-0 spikes.
+- **`AriKit/`** — the shared domain package that the macOS `Ari` app (live: `Ari/Ari.xcodeproj`) and the later iOS `Ari Lite` app consume. **Substantially real (2026-07-21)**: Models, Store (GRDB + legacy importer), Recall (full safety shell), Engine (STT/summary/providers/persons/diarization), plus the separate `AriCapture`, `AriViewModels`, `AriKitEngineMLX`, and `AriKitDiarizationFluidAudio` targets — 750+ tests. Remaining engine gaps are tracked in `plans/swift-migration-plan.md` ("Still deferred").
 
 **The Rust/Tauri app is FROZEN (decided 2026-07-16).** All of F1–F8 ship on the current Rust stack as-is — that frozen build is the baseline. Forward is **Swift-first and Swift-only as the go-forward track**: net-new features land in the Swift tree; the Rust app gets *reactive maintenance only*, and even those fixes are done Swift-side when the seam reasonably allows. We never extend the Rust/React app with net-new capability (plan principle 8, WIP limits). There is no parallel "keep building on Rust" track.
 
