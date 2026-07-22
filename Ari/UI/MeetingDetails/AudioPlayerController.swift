@@ -21,6 +21,11 @@ final class AudioPlayerController {
     private var player: AVPlayer?
     private var timeObserverToken: Any?
     private var durationTask: Task<Void, Never>?
+    /// The boundary observer installed by `playClip(fromSeconds:toSeconds:)` to auto-pause at a
+    /// clip's end. Must never survive past the clip it was installed for — `play()`, `pause()`,
+    /// `seek(toSeconds:)`, and `teardown()` all remove it first, so a stale clip boundary can
+    /// never fire mid a later full "Listen back" playback.
+    private var clipBoundaryObserverToken: Any?
 
     /// Loads a new audio file, replacing any currently-loaded player.
     func load(url: URL) {
@@ -64,16 +69,19 @@ final class AudioPlayerController {
     }
 
     func play() {
+        removeClipBoundary()
         player?.play()
         isPlaying = true
     }
 
     func pause() {
+        removeClipBoundary()
         player?.pause()
         isPlaying = false
     }
 
     func seek(toSeconds seconds: Double) {
+        removeClipBoundary()
         let clamped = duration > 0 ? min(max(seconds, 0), duration) : max(seconds, 0)
         // Reflect the target immediately so a scrubber drag (or a moment-chip tap while paused)
         // tracks without waiting for the periodic observer's next tick.
@@ -81,9 +89,43 @@ final class AudioPlayerController {
         player?.seek(to: CMTime(seconds: clamped, preferredTimescale: 600))
     }
 
+    /// Plays a bounded clip: seeks to `fromSeconds`, plays, and — when `toSeconds` is known —
+    /// installs a boundary time observer that pauses playback once reached (the fix for the
+    /// "snippet play never stops" bug: identify-speakers evidence clips must not bleed into the
+    /// following transcript audio). `toSeconds == nil` (no known end) plays on unbounded, same as
+    /// a plain `seek` + `play`.
+    func playClip(fromSeconds start: Double, toSeconds end: Double?) {
+        // `seek`/`play` each remove any previously-pending clip boundary first, so starting a new
+        // clip can never leave a stale observer from the last one armed.
+        seek(toSeconds: start)
+        play()
+        guard let end, end > start, let player else { return }
+        let boundaryTime = CMTime(seconds: end, preferredTimescale: 600)
+        clipBoundaryObserverToken = player.addBoundaryTimeObserver(
+            forTimes: [NSValue(time: boundaryTime)],
+            queue: .main
+        ) { [weak self] in
+            // Fires on `.main`, i.e. the MainActor's executor — safe to touch main-actor state
+            // directly, mirroring the periodic time observer above. `pause()` removes this very
+            // observer as its first action; AVFoundation supports removing a boundary observer
+            // from within its own callback.
+            MainActor.assumeIsolated {
+                self?.pause()
+            }
+        }
+    }
+
+    private func removeClipBoundary() {
+        if let clipBoundaryObserverToken, let player {
+            player.removeTimeObserver(clipBoundaryObserverToken)
+        }
+        clipBoundaryObserverToken = nil
+    }
+
     private func teardown() {
         durationTask?.cancel()
         durationTask = nil
+        removeClipBoundary()
         if let timeObserverToken, let player {
             player.removeTimeObserver(timeObserverToken)
         }

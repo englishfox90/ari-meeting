@@ -17,6 +17,7 @@ struct SpeakerSamplesTests {
         _ id: String,
         text: String,
         start: Double?,
+        end: Double? = nil,
         speakerId: SpeakerID? = speaker
     ) -> Transcript {
         Transcript(
@@ -25,6 +26,7 @@ struct SpeakerSamplesTests {
             transcript: text,
             timestamp: "0",
             audioStartTime: start,
+            audioEndTime: end,
             speakerId: speakerId
         )
     }
@@ -61,6 +63,17 @@ struct SpeakerSamplesTests {
         ]
         let samples = SpeakerSamples.select(from: rows, speakerId: Self.speaker)
         #expect(samples.map { $0.id } == [TranscriptID("3")])
+    }
+
+    @Test("endSeconds is carried from audioEndTime, nil when absent")
+    func endSecondsCarriedFromAudioEndTime() {
+        let rows = [
+            Self.row("1", text: "has a known end", start: 10, end: 15),
+            Self.row("2", text: "has no known end", start: 20, end: nil),
+        ]
+        let samples = SpeakerSamples.select(from: rows, speakerId: Self.speaker)
+        #expect(samples.first { $0.id == TranscriptID("1") }?.endSeconds == 15)
+        #expect(samples.first { $0.id == TranscriptID("2") }?.endSeconds == nil)
     }
 
     @Test("rows without an audio start time are excluded")

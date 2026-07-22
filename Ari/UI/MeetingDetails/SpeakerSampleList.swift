@@ -19,8 +19,9 @@ struct SpeakerSampleList: View {
     let audioAvailable: Bool
     /// Whether the shared meeting player is currently playing.
     let isPlaying: Bool
-    /// Seek the meeting audio to `seconds` and start playing that moment.
-    let onPlayClip: (Double) -> Void
+    /// Play the clip from its start; the second argument is the clip's known end (`nil` if
+    /// unknown), so playback stops at the clip boundary instead of bleeding into later audio.
+    let onPlayClip: (Double, Double?) -> Void
     /// Cap how many lines to render (`nil` = all provided) — mirrors the TS `limit` prop.
     var limit: Int?
 
@@ -56,7 +57,7 @@ struct SpeakerSampleList: View {
         HStack(alignment: .top, spacing: MarginaliaSpacing.sm.value) {
             Button {
                 activeClipId = sample.id
-                onPlayClip(sample.startSeconds)
+                onPlayClip(sample.startSeconds, sample.endSeconds)
             } label: {
                 Image(systemName: active ? "pause.circle" : "play.circle")
                     .foregroundStyle(active ? Color.marginalia(.accent, in: scheme) : Color.marginalia(.inkSecondary, in: scheme))

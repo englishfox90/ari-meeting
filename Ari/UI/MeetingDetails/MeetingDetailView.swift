@@ -461,9 +461,8 @@ struct MeetingDetailView: View {
                     return false
                 }(),
                 isPlaying: audioController.isPlaying,
-                onPlayClip: { seconds in
-                    audioController.seek(toSeconds: seconds)
-                    audioController.play()
+                onPlayClip: { start, end in
+                    audioController.playClip(fromSeconds: start, toSeconds: end)
                 }
             )
     }

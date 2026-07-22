@@ -34,8 +34,9 @@ struct IdentifySpeakersSheet: View {
     let audioAvailable: Bool
     /// Whether the shared meeting player is currently playing (drives the active-clip highlight).
     let isPlaying: Bool
-    /// Seek the meeting audio to `seconds` and start playing that moment.
-    let onPlayClip: (Double) -> Void
+    /// Play the clip from its start; the second argument is the clip's known end (`nil` if
+    /// unknown) — clip-bounded playback (`AudioPlayerController.playClip`).
+    let onPlayClip: (Double, Double?) -> Void
 
     private enum CountMode: String, CaseIterable, Identifiable, Hashable, Sendable {
         case exact, uncertain
@@ -69,7 +70,6 @@ struct IdentifySpeakersSheet: View {
                 .padding(MarginaliaSpacing.lg.value)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color.marginalia(.canvas, in: scheme))
             .navigationTitle("Identify speakers")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -77,22 +77,13 @@ struct IdentifySpeakersSheet: View {
                         .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
                 }
             }
-        }
-        .frame(minWidth: 420, minHeight: 480)
-        .task {
-            await viewModel.loadHint(for: meetingId)
-            await viewModel.loadAssignablePeople()
-            if countText.isEmpty, case let .upperBound(n) = viewModel.prefilledHint?.hint {
-                countText = String(n)
-                viewModel.setUncertainCount(n)
-            }
-        }
-        .sheet(isPresented: Binding(
-            get: { assignSpeakerId != nil },
-            set: { if !$0 { assignSpeakerId = nil } }
-        )) {
-            if let speakerId = assignSpeakerId {
-                AssignPersonSheet(
+            // Pushed, not a nested `.sheet` (liquid-glass-adoption.md rule 45: stock
+            // presentation, zero custom backgrounds, and no modal-on-modal) — a `NavigationStack`
+            // already wraps this content, so "Assign person" pushes onto it. The Back affordance
+            // comes from the stack for free; confirming pops back to the results list by clearing
+            // `assignSpeakerId`, the same signal that drove the old sheet's dismissal.
+            .navigationDestination(item: $assignSpeakerId) { speakerId in
+                AssignPersonView(
                     people: viewModel.assignablePeople,
                     suggestions: namedSuggestions(for: speakerId),
                     samples: samplesFor(speakerId),
@@ -108,9 +99,18 @@ struct IdentifySpeakersSheet: View {
                             markConfirmed(speakerId, personId: personId)
                             assignSpeakerId = nil
                         }
-                    },
-                    onCancel: { assignSpeakerId = nil }
+                    }
                 )
+            }
+        }
+        // Widened for the two-column assign destination (Evidence ~55% | suggestions/people/new).
+        .frame(minWidth: 760, minHeight: 520)
+        .task {
+            await viewModel.loadHint(for: meetingId)
+            await viewModel.loadAssignablePeople()
+            if countText.isEmpty, case let .upperBound(n) = viewModel.prefilledHint?.hint {
+                countText = String(n)
+                viewModel.setUncertainCount(n)
             }
         }
     }
@@ -241,7 +241,7 @@ struct IdentifySpeakersSheet: View {
                     }
                 }
                 if result.unresolvedRows > 0 {
-                    Text("\(result.unresolvedRows) transcript rows could not be matched to a speaker.")
+                    Text("\(result.unresolvedRows) transcript \(result.unresolvedRows == 1 ? "row" : "rows") could not be matched to a speaker.")
                         .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                 }
             }
@@ -273,7 +273,7 @@ struct IdentifySpeakersSheet: View {
         }
     }
 
-    /// D9b review fix: mark a speaker row confirmed after the `AssignPersonSheet` flow, so it
+    /// D9b review fix: mark a speaker row confirmed after the `AssignPersonView` flow, so it
     /// stops rendering as Unidentified/re-confirmable. Best-effort name resolution: the freshly
     /// (re)loaded assignable-people list, falling back to the resolved display name once the
     /// caller's `onSpeakersChanged` reload catches up.
@@ -301,22 +301,23 @@ struct IdentifySpeakersSheet: View {
     }
 }
 
-/// The "Assign person…" picker: ranked suggestions (plan §6, parity-M3) above the full
-/// assignable-person list, plus "New person…". Selecting a row is the only write trigger — the
-/// caller's `onSelect` performs the actual confirm.
-private struct AssignPersonSheet: View {
+/// The "Assign person…" destination — pushed onto the enclosing `NavigationStack`, not a nested
+/// modal (liquid-glass-adoption.md rule 45). Two scrollable columns, no painted background (the
+/// system sheet supplies the glass): **Evidence** (left, ~55% width — the full, up-to-5-line
+/// identification evidence, unlike the compact rows in the results list, mirroring the
+/// Rust/React `SpeakerAssignDialog` passing no `limit` prop) and, on the right, ranked
+/// suggestions (when present) above the full assignable-person list, then "New person…".
+/// Selecting a row is the only write trigger — the caller's `onSelect` performs the actual
+/// confirm and pops the stack.
+private struct AssignPersonView: View {
     let people: [Person]
     let suggestions: [(personId: PersonID, name: String, score: Float)]
-    /// The full (up to 5) identification evidence for the speaker being assigned — no `limit`,
-    /// unlike the compact rows in the results list (mirrors the Rust/React `SpeakerAssignDialog`
-    /// passing no `limit` prop).
     let samples: [SpeakerSamples.SpeakerSample]
     let audioAvailable: Bool
     let isPlaying: Bool
-    let onPlayClip: (Double) -> Void
+    let onPlayClip: (Double, Double?) -> Void
     let createPerson: (String) async throws -> PersonID
     let onSelect: (PersonID) -> Void
-    let onCancel: () -> Void
 
     @Environment(\.colorScheme) private var scheme
     @State private var newPersonName: String = ""
@@ -325,81 +326,107 @@ private struct AssignPersonSheet: View {
     @State private var createPersonError: String?
 
     var body: some View {
-        NavigationStack {
-            List {
-                if !samples.isEmpty {
-                    Section("Evidence") {
-                        SpeakerSampleList(
-                            samples: samples,
-                            audioAvailable: audioAvailable,
-                            isPlaying: isPlaying,
-                            onPlayClip: onPlayClip
-                        )
-                    }
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                evidenceColumn
+                    .frame(width: geometry.size.width * 0.55, alignment: .topLeading)
+                Divider().overlay(Color.marginalia(.hairline, in: scheme))
+                peopleColumn
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .navigationTitle("Assign person")
+    }
+
+    private var evidenceColumn: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+                SectionHeader(title: "Evidence")
+                if samples.isEmpty {
+                    // No-Fake-State: honest, not a fabricated "no evidence yet" implying evidence
+                    // is coming.
+                    Text("No transcribed lines available for this speaker.")
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                } else {
+                    SpeakerSampleList(
+                        samples: samples,
+                        audioAvailable: audioAvailable,
+                        isPlaying: isPlaying,
+                        onPlayClip: onPlayClip
+                    )
                 }
+            }
+            .padding(MarginaliaSpacing.md.value)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var peopleColumn: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.lg.value) {
                 if !suggestions.isEmpty {
-                    Section("Suggested") {
-                        ForEach(suggestions, id: \.personId) { suggestion in
-                            Button {
-                                onSelect(suggestion.personId)
-                            } label: {
-                                CardRow(
-                                    title: suggestion.name,
-                                    metadata: "\(Int((suggestion.score * 100).rounded()))% match"
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                Section("All people") {
-                    ForEach(people) { person in
-                        Button {
-                            onSelect(person.id)
-                        } label: {
-                            CardRow(title: person.displayName)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                Section("New person") {
                     VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-                        HStack(spacing: MarginaliaSpacing.sm.value) {
-                            MarginaliaTextField(text: $newPersonName, prompt: "Name", scheme: scheme)
-                            Button("Add") {
-                                let name = newPersonName.trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !name.isEmpty else { return }
-                                createPersonError = nil
-                                Task {
-                                    do {
-                                        let personId = try await createPerson(name)
-                                        onSelect(personId)
-                                    } catch {
-                                        createPersonError = "Couldn't create \(name): \(error.localizedDescription)"
-                                    }
+                        SectionHeader(title: "Looks like…")
+                        pickerList(suggestions.map { suggestion in
+                            (id: suggestion.personId, title: suggestion.name, metadata: "\(Int((suggestion.score * 100).rounded()))% match")
+                        })
+                    }
+                }
+                VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                    SectionHeader(title: "All people")
+                    if people.isEmpty {
+                        Text("No people yet — add one below.")
+                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                    } else {
+                        pickerList(people.map { (id: $0.id, title: $0.displayName, metadata: nil) })
+                    }
+                }
+                VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                    SectionHeader(title: "New person")
+                    HStack(spacing: MarginaliaSpacing.sm.value) {
+                        MarginaliaTextField(text: $newPersonName, prompt: "Name", scheme: scheme)
+                        Button("Add") {
+                            let name = newPersonName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !name.isEmpty else { return }
+                            createPersonError = nil
+                            Task {
+                                do {
+                                    let personId = try await createPerson(name)
+                                    onSelect(personId)
+                                } catch {
+                                    createPersonError = "Couldn't create \(name): \(error.localizedDescription)"
                                 }
                             }
-                            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                            .disabled(newPersonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        if let createPersonError {
-                            Text(createPersonError)
-                                .marginaliaTextStyle(.callout, in: scheme, ink: .error)
-                        }
+                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                        .disabled(newPersonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if let createPersonError {
+                        Text(createPersonError)
+                            .marginaliaTextStyle(.callout, in: scheme, ink: .error)
                     }
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(Color.marginalia(.canvas, in: scheme))
-            .navigationTitle("Assign person")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
-                        .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+            .padding(MarginaliaSpacing.md.value)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// A flat, tappable list of picker rows sharing one hairline-divided layout — used for both
+    /// the "Looks like…" suggestions and "All people".
+    private func pickerList(_ rows: [(id: PersonID, title: String, metadata: String?)]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(rows, id: \.id) { row in
+                Button {
+                    onSelect(row.id)
+                } label: {
+                    CardRow(title: row.title, metadata: row.metadata)
+                }
+                .buttonStyle(.plain)
+                if row.id != rows.last?.id {
+                    Divider().overlay(Color.marginalia(.hairline, in: scheme))
                 }
             }
         }
-        .frame(minWidth: 360, minHeight: 420)
     }
 }

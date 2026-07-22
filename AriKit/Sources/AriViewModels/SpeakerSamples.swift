@@ -22,11 +22,16 @@ public enum SpeakerSamples {
         public let text: String
         /// Recording-relative start time in seconds (drives clip playback).
         public let startSeconds: Double
+        /// Recording-relative end time in seconds, sourced from `Transcript.audioEndTime` —
+        /// `nil` when the row has no known end (clip playback then plays to the end of the
+        /// recording rather than stopping early; see `AudioPlayerController.playClip`).
+        public let endSeconds: Double?
 
-        public init(id: TranscriptID, text: String, startSeconds: Double) {
+        public init(id: TranscriptID, text: String, startSeconds: Double, endSeconds: Double? = nil) {
             self.id = id
             self.text = text
             self.startSeconds = startSeconds
+            self.endSeconds = endSeconds
         }
     }
 
@@ -52,7 +57,8 @@ public enum SpeakerSamples {
             SpeakerSample(
                 id: row.id,
                 text: row.transcript.trimmingCharacters(in: .whitespacesAndNewlines),
-                startSeconds: row.audioStartTime ?? 0
+                startSeconds: row.audioStartTime ?? 0,
+                endSeconds: row.audioEndTime
             )
         }
     }
