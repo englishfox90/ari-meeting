@@ -9,6 +9,9 @@ import SwiftUI
 struct TranscriptSegmentRow: View {
     let line: Transcript
     let speakerName: String?
+    /// The speaker's real voiceprint signature, or `nil` when none is enrolled — the glyph then
+    /// renders its honest placeholder (No-Fake-State), never a fabricated ring.
+    var speakerSignature: [Float]?
     let onSeek: (Double) -> Void
     @Environment(\.colorScheme) private var scheme
 
@@ -27,7 +30,14 @@ struct TranscriptSegmentRow: View {
                     .buttonStyle(.plain)
                 }
                 if let speakerName {
-                    MarginaliaBadge(speakerName, style: .neutral, symbol: "person.crop.circle", scheme: scheme)
+                    // The speaker's voiceprint ring as the avatar — same voice → same ring. A
+                    // `nil` signature renders the glyph's honest placeholder dot, never a fake
+                    // ring (No-Fake-State).
+                    HStack(spacing: MarginaliaSpacing.xs.value) {
+                        VoiceprintGlyph(signature: speakerSignature, size: 18)
+                        Text(speakerName)
+                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                    }
                 } else {
                     // Honest: never a fabricated "Speaker 1" — diarization simply hasn't resolved
                     // this segment (No-Fake-State).

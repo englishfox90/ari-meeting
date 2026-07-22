@@ -9,6 +9,7 @@ import SwiftUI
 struct TranscriptListView: View {
     let transcript: [Transcript]
     let displayName: (SpeakerID?) -> String?
+    var signature: (SpeakerID?) -> [Float]? = { _ in nil }
     let onSeek: (Double) -> Void
     @Environment(\.colorScheme) private var scheme
 
@@ -26,7 +27,12 @@ struct TranscriptListView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
                     ForEach(transcript) { line in
-                        TranscriptSegmentRow(line: line, speakerName: displayName(line.speakerId), onSeek: onSeek)
+                        TranscriptSegmentRow(
+                            line: line,
+                            speakerName: displayName(line.speakerId),
+                            speakerSignature: signature(line.speakerId),
+                            onSeek: onSeek
+                        )
                     }
                 }
                 .padding(MarginaliaSpacing.md.value)

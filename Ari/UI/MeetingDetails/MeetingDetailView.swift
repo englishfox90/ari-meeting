@@ -232,6 +232,7 @@ struct MeetingDetailView: View {
             TranscriptListView(
                 transcript: viewModel.transcript,
                 displayName: viewModel.displayName(for:),
+                signature: viewModel.signature(for:),
                 onSeek: { audioController.seek(toSeconds: $0) }
             )
         }
@@ -259,6 +260,7 @@ struct MeetingDetailView: View {
                     TranscriptListView(
                         transcript: viewModel.transcript,
                         displayName: viewModel.displayName(for:),
+                        signature: viewModel.signature(for:),
                         onSeek: { audioController.seek(toSeconds: $0) }
                     )
                 }

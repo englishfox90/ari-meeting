@@ -27,6 +27,10 @@ public final class MeetingDetailViewModel {
     public private(set) var notes: MeetingNote?
     public private(set) var participants: [Person] = []
     public private(set) var speakerNames: [SpeakerID: String] = [:]
+    /// Render-ready voiceprint signature per speaker, derived from the speaker's real centroid
+    /// (`Voiceprint.signature(fromCentroid:)`). A speaker with no usable centroid is simply
+    /// absent — the glyph then renders its honest placeholder, never a fabricated ring.
+    public private(set) var speakerSignatures: [SpeakerID: [Float]] = [:]
     public private(set) var audio: AudioAvailability = .unresolved
     /// Recording-relative seconds of every citation marker in the summary, sorted and unique
     /// (empty when there is no summary or it carries no markers — never fabricated).
@@ -51,11 +55,13 @@ public final class MeetingDetailViewModel {
             referencedMoments = ReferencedMoments.parse(from: summary?.bodyMarkdown ?? "")
             notes = try await database.meetingNotes.find(id)
             participants = try await database.persons.participants(inMeeting: id)
+            let speakers = try await database.speakers.forMeeting(id)
             speakerNames = try await Self.resolveSpeakerNames(
-                meetingId: id,
+                speakers: speakers,
                 participants: participants,
                 database: database
             )
+            speakerSignatures = Self.resolveSpeakerSignatures(speakers: speakers)
             audio = Self.resolveAudioAvailability(
                 for: resolved,
                 fileExists: { FileManager.default.fileExists(atPath: $0.path) }
@@ -72,12 +78,18 @@ public final class MeetingDetailViewModel {
         return speakerNames[speakerId]
     }
 
+    /// The render-ready voiceprint signature for a transcript segment's speaker, or `nil` when
+    /// none is enrolled yet (the glyph then shows its honest placeholder, never a fake ring).
+    public func signature(for speakerId: SpeakerID?) -> [Float]? {
+        guard let speakerId else { return nil }
+        return speakerSignatures[speakerId]
+    }
+
     private static func resolveSpeakerNames(
-        meetingId: MeetingID,
+        speakers: [Speaker],
         participants: [Person],
         database: AppDatabase
     ) async throws -> [SpeakerID: String] {
-        let speakers = try await database.speakers.forMeeting(meetingId)
         let participantsById = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
 
         var names: [SpeakerID: String] = [:]
@@ -97,6 +109,16 @@ public final class MeetingDetailViewModel {
             }
         }
         return names
+    }
+
+    private static func resolveSpeakerSignatures(speakers: [Speaker]) -> [SpeakerID: [Float]] {
+        var signatures: [SpeakerID: [Float]] = [:]
+        for speaker in speakers {
+            if let signature = Voiceprint.signature(fromCentroid: speaker.centroid) {
+                signatures[speaker.id] = signature
+            }
+        }
+        return signatures
     }
 
     private static func resolveAudioAvailability(
