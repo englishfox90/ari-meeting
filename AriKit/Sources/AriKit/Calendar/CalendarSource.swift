@@ -85,6 +85,32 @@ public struct NativeEvent: Sendable, Hashable {
         self.occurrenceDate = occurrenceDate
         self.isDetached = isDetached
     }
+
+    /// Builds the stable per-row identifier for an event.
+    ///
+    /// EventKit returns every occurrence of a recurring series as a separate `EKEvent` that all
+    /// share ONE `eventIdentifier`. Keying the DB row on that alone collapses the whole series to
+    /// a single row — only the last occurrence written in a sync pass survives, so most instances
+    /// (including "today's") silently vanish. Recurring, non-detached occurrences are therefore
+    /// disambiguated by their `occurrenceDate`, giving each instance a distinct row.
+    ///
+    /// Non-recurring events — and detached exceptions, which EventKit already assigns their own
+    /// distinct `eventIdentifier` — keep the bare identifier, so their ids are unchanged and stable
+    /// across this fix (existing rows re-match on re-sync instead of duplicating).
+    public static func stableID(
+        eventIdentifier: String,
+        hasRecurrenceRules: Bool,
+        isDetached: Bool,
+        occurrenceDate: Date?
+    ) -> String {
+        guard hasRecurrenceRules, !isDetached, let occurrenceDate else {
+            return eventIdentifier
+        }
+        // Whole-second granularity separates occurrences (a series never has two instances within
+        // the same second) and keeps the id deterministic across syncs.
+        let seconds = Int(occurrenceDate.timeIntervalSince1970.rounded())
+        return "\(eventIdentifier)|\(seconds)"
+    }
 }
 
 /// The seam the sync engine and the Settings VM depend on; `EventKitCalendarSource` conforms in

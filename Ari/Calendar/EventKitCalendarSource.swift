@@ -57,8 +57,18 @@ actor EventKitCalendarSource: CalendarSourcing {
         // Events without a persisted identifier (not yet saved) can't be tracked across syncs —
         // skip them (parity: `eventkit.rs:221-226`).
         return events.compactMap { event in
-            guard let id = event.eventIdentifier else { return nil }
+            guard let eventIdentifier = event.eventIdentifier else { return nil }
             let calendar = event.calendar
+            // Recurring occurrences all share one `eventIdentifier`; disambiguate by occurrence
+            // date so each instance persists as its own row (see `NativeEvent.stableID`). Without
+            // this, a whole recurring series collapses to a single DB row and most occurrences
+            // (including today's) never appear in the calendar view.
+            let id = NativeEvent.stableID(
+                eventIdentifier: eventIdentifier,
+                hasRecurrenceRules: event.hasRecurrenceRules,
+                isDetached: event.isDetached,
+                occurrenceDate: event.occurrenceDate
+            )
             return NativeEvent(
                 id: id,
                 calendarId: calendar?.calendarIdentifier ?? "",
