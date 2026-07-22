@@ -31,7 +31,7 @@ struct MeetingSummaryViewModelTests {
     }
 
     private func makeViewModel(
-        generateOperation: @escaping MeetingSummaryViewModel.GenerateOperation = { _, _, _ in
+        generateOperation: @escaping MeetingSummaryViewModel.GenerateOperation = { _, _, _, _ in
             Summary(id: "summary-1", meetingId: "meeting-1", bodyMarkdown: "# Recap", createdAt: Date(), updatedAt: Date())
         },
         cancelOperation: @escaping MeetingSummaryViewModel.CancelOperation = { _ in },
@@ -55,7 +55,7 @@ struct MeetingSummaryViewModelTests {
     @Test("generate success sets .idle and returns the real summary")
     func generateSuccessReturnsSummary() async {
         let expected = makeSummary()
-        let viewModel = makeViewModel(generateOperation: { _, _, _ in expected })
+        let viewModel = makeViewModel(generateOperation: { _, _, _, _ in expected })
 
         let result = await viewModel.generate(meetingId: meetingId, speakerCount: 3)
 
@@ -66,7 +66,7 @@ struct MeetingSummaryViewModelTests {
 
     @Test("generate failure surfaces .failed honestly and returns nil")
     func generateFailureSurfacesFailedState() async {
-        let viewModel = makeViewModel(generateOperation: { _, _, _ in throw StubError() })
+        let viewModel = makeViewModel(generateOperation: { _, _, _, _ in throw StubError() })
 
         let result = await viewModel.generate(meetingId: meetingId, speakerCount: nil)
 
@@ -80,7 +80,7 @@ struct MeetingSummaryViewModelTests {
 
     @Test("Swift cancellation maps to .idle, not .failed")
     func swiftCancellationMapsToIdle() async {
-        let viewModel = makeViewModel(generateOperation: { _, _, _ in throw CancellationError() })
+        let viewModel = makeViewModel(generateOperation: { _, _, _, _ in throw CancellationError() })
 
         let result = await viewModel.generate(meetingId: meetingId, speakerCount: nil)
 
@@ -90,7 +90,7 @@ struct MeetingSummaryViewModelTests {
 
     @Test("LLMError.cancelled maps to .idle, not .failed")
     func llmCancelledMapsToIdle() async {
-        let viewModel = makeViewModel(generateOperation: { _, _, _ in throw LLMError.cancelled })
+        let viewModel = makeViewModel(generateOperation: { _, _, _, _ in throw LLMError.cancelled })
 
         let result = await viewModel.generate(meetingId: meetingId, speakerCount: nil)
 
@@ -100,7 +100,7 @@ struct MeetingSummaryViewModelTests {
 
     @Test("a non-cancellation LLMError still surfaces .failed honestly")
     func nonCancellationLLMErrorSurfacesFailed() async {
-        let viewModel = makeViewModel(generateOperation: { _, _, _ in
+        let viewModel = makeViewModel(generateOperation: { _, _, _, _ in
             throw LLMError.notConfigured("no model configured")
         })
 
@@ -117,7 +117,7 @@ struct MeetingSummaryViewModelTests {
     func reentrantGenerateIsRefused() async {
         let spy = CallSpy()
         let (gate, gateContinuation) = AsyncStream<Void>.makeStream()
-        let viewModel = makeViewModel(generateOperation: { _, _, _ in
+        let viewModel = makeViewModel(generateOperation: { _, _, _, _ in
             await spy.record()
             for await _ in gate { break }
             return Summary(id: "summary-1", meetingId: "meeting-1", bodyMarkdown: "# Recap", createdAt: Date(), updatedAt: Date())
@@ -152,6 +152,38 @@ struct MeetingSummaryViewModelTests {
         #expect(viewModel.templates.map(\.id).sorted() == ["daily_standup", "standard_meeting"])
     }
 
+    @Test("generate forwards the selected template id and trimmed custom instructions")
+    func generateForwardsTemplateAndInstructions() async {
+        actor Captured {
+            var templateID: String?
+            var instructions: String?
+            func store(_ template: String?, _ instructions: String) {
+                templateID = template
+                self.instructions = instructions
+            }
+        }
+        let captured = Captured()
+        let viewModel = makeViewModel(generateOperation: { _, templateID, _, instructions in
+            await captured.store(templateID, instructions)
+            return Summary(id: "s", meetingId: "meeting-1", bodyMarkdown: "# Recap", createdAt: Date(), updatedAt: Date())
+        })
+        viewModel.selectedTemplateID = "one_on_one"
+        viewModel.customInstructions = "  Focus on decisions.  "
+
+        _ = await viewModel.generate(meetingId: meetingId, speakerCount: nil)
+
+        #expect(await captured.templateID == "one_on_one")
+        #expect(await captured.instructions == "Focus on decisions.")
+    }
+
+    @Test("reset clears custom instructions so they never bleed across meetings")
+    func resetClearsCustomInstructions() {
+        let viewModel = makeViewModel()
+        viewModel.customInstructions = "Only for meeting A"
+        viewModel.reset()
+        #expect(viewModel.customInstructions.isEmpty)
+    }
+
     @Test("restoreSelection mirrors the summary's templateId, or nil for Auto")
     func restoreSelectionMirrorsSummaryTemplateId() {
         let viewModel = makeViewModel()
@@ -171,7 +203,7 @@ struct MeetingSummaryViewModelTests {
     func resetClearsStaleState() async {
         // .failed → .idle (the cross-meeting bleed guard: a previous meeting's error must not
         // survive onto the next meeting the shared view model is reused for).
-        let failing = makeViewModel(generateOperation: { _, _, _ in throw StubError() })
+        let failing = makeViewModel(generateOperation: { _, _, _, _ in throw StubError() })
         _ = await failing.generate(meetingId: meetingId, speakerCount: nil)
         guard case .failed = failing.state else {
             Issue.record("precondition: expected .failed, got \(failing.state)")

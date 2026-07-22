@@ -126,6 +126,31 @@ struct SummaryServiceTests {
         #expect(updated.summaryModel == "claude-3-5-sonnet")
     }
 
+    @Test("The Swift 'Untitled meeting' placeholder is renamed to the AI-generated meeting name")
+    func untitledMeetingPlaceholderIsRenamed() async throws {
+        let db = try AppDatabase.makeInMemory()
+        // The RecordingSession default for an un-named recording — must be treated as an app
+        // placeholder, not a user title, so the generated name replaces it.
+        let meeting = makeMeeting(id: "meeting-untitled", title: "Untitled meeting")
+        try await db.meetings.upsert(meeting)
+
+        let stub = StubLLMClient(kind: .claude, cannedResponse: "# Preston 1:1\n\n**Summary**\n\nDetails.")
+        let service = makeService(db: db, clientFactory: { _ in stub })
+
+        let request = SummaryProcessRequest(
+            meetingId: meeting.id,
+            text: "[00:00] Paul: hello",
+            modelProviderKey: "claude",
+            modelName: "claude-3-5-sonnet",
+            templateId: "standard_meeting",
+            detectedTranscriptLanguage: "en"
+        )
+        _ = try await service.processTranscript(request)
+
+        let updated = try #require(try await db.meetings.find(meeting.id))
+        #expect(updated.title == "Preston 1:1")
+    }
+
     @Test("An explicit user-given title is preserved even though a name was generated")
     func explicitTitleIsPreserved() async throws {
         let db = try AppDatabase.makeInMemory()

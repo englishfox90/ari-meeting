@@ -96,7 +96,12 @@ public struct SummaryRunner: Sendable {
     /// persistence to `SummaryService.processTranscript`. Throws `LLMError.notConfigured` when
     /// there is nothing to summarize or no summary provider/model is configured — both honest,
     /// actionable failures rather than a silently-empty summary.
-    public func generate(meetingId: MeetingID, templateId: String?, speakerCount: Int?) async throws -> Summary {
+    public func generate(
+        meetingId: MeetingID,
+        templateId: String?,
+        speakerCount: Int?,
+        customInstructions: String = ""
+    ) async throws -> Summary {
         let text = try await transcriptText(for: meetingId)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LLMError.notConfigured("This meeting has no transcript to summarize.")
@@ -117,7 +122,7 @@ public struct SummaryRunner: Sendable {
             text: text,
             modelProviderKey: modelConfig.providerKey,
             modelName: modelConfig.model,
-            customPrompt: "",
+            customPrompt: customInstructions,
             templateId: resolvedTemplateId,
             summaryLanguage: try? await database.settings.string(forKey: .summaryLanguage),
             detectedTranscriptLanguage: nil,

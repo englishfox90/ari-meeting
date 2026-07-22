@@ -243,7 +243,11 @@ public struct SummaryService: Sendable {
     /// gate that decides whether the generated meeting name is allowed to rename the meeting.
     static func isAutomaticMeetingTitle(_ rawTitle: String) -> Bool {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if title == "New Meeting" || title == "+ New Call" {
+        // "Untitled meeting" is the Swift `RecordingSession` default for an un-named recording
+        // (RecordingSession.swift) — an app-assigned placeholder just like the Rust-era
+        // "New Meeting"/"+ New Call". Without it the AI-generated title never replaced the
+        // placeholder, so freshly recorded meetings kept showing "Untitled meeting".
+        if title == "New Meeting" || title == "+ New Call" || title == "Untitled meeting" {
             return true
         }
         guard title.hasPrefix("Meeting ") else {
