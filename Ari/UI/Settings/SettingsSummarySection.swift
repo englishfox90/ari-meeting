@@ -281,10 +281,12 @@ struct SettingsSummarySection: View {
         SettingsCard(title: "Meeting search index") {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
                 if let summary = viewModel.indexSummary {
-                    Text("\(summary.indexedMeetings) meetings indexed")
+                    Text("\(summary.indexedMeetings) \(summary.indexedMeetings == 1 ? "meeting" : "meetings") indexed")
                         .marginaliaTextStyle(.body, in: scheme)
-                    Text("\(summary.chunkCount) chunks, \(summary.embeddedChunkCount) embedded")
-                        .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
+                    Text(
+                        "\(summary.chunkCount) \(summary.chunkCount == 1 ? "chunk" : "chunks"), \(summary.embeddedChunkCount) embedded"
+                    )
+                    .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
                 } else {
                     Text("No index stats available yet.")
                         .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
