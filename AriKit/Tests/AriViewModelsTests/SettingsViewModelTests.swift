@@ -90,8 +90,7 @@ struct SettingsViewModelTests {
             viewModel.notchAvailability,
             viewModel.menuBarAvailability,
             viewModel.recordingAlertsAvailability,
-            viewModel.recordingStartNotificationAvailability,
-            viewModel.audioBackendAvailability
+            viewModel.recordingStartNotificationAvailability
         ]
 
         for group in groups {

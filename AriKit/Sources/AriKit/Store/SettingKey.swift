@@ -36,9 +36,9 @@ public enum SettingKey: String, Sendable, CaseIterable {
     case recordingsMicDevice
     // NOTE: `.recordingsSystemDevice` was retired (settings-audio-devices.md decision B) — system
     // audio is a single global Core Audio process tap anchored to the default output device, so a
-    // persisted per-device selection could never take effect. Any orphaned row from an older build
-    // is simply unread.
-    case recordingsAudioBackend
+    // persisted per-device selection could never take effect. `.recordingsAudioBackend` was
+    // likewise retired — Core Audio is the only capture backend on Apple, so there was never a
+    // second option to select. Any orphaned rows from an older build are simply unread.
 
     // Transcription
     case transcriptionProvider

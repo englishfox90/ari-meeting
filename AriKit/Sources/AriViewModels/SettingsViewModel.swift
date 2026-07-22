@@ -36,7 +36,6 @@ public final class SettingsViewModel {
         public static let recordingAlerts = true
         public static let saveAudioRecordings = true
         public static let recordingStartNotification = false
-        public static let audioBackend = "coreAudio"
         /// On-device SpeechTranscriber language. `"auto"` = follow the system language
         /// (`STTLocale.resolveRequestedLocale`). Provider/model selection is gone — Apple's
         /// SpeechTranscriber is the Swift app's sole transcription engine.
@@ -76,7 +75,6 @@ public final class SettingsViewModel {
     /// The persisted microphone device UID (`kAudioDevicePropertyDeviceUID`), or `nil` = system
     /// default. May be a stable UID that isn't currently attached — see `micDeviceIsPresent`.
     public private(set) var micDevice: String?
-    public private(set) var audioBackend: String = Defaults.audioBackend
 
     /// Real enumerated input devices (docs/plans/settings-audio-devices.md §2.4), refreshed by
     /// `refreshAudioDevices()`. Honestly empty until a refresh runs / on failure — never a
@@ -92,9 +90,6 @@ public final class SettingsViewModel {
     /// LIVE (docs/plans/settings-audio-devices.md) — real CoreAudio HAL enumeration binds into
     /// the Swift capture stack; system audio is an honest read-only row (single global tap).
     public let deviceSelectionAvailability: Availability = .live
-    public let audioBackendAvailability: Availability = .disabled(
-        reason: "Audio backend selection hasn't been ported to the Swift capture stack yet."
-    )
 
     /// Whether the persisted `micDevice` UID currently corresponds to an attached device.
     /// `nil` (system default) is always "present". A stored-but-absent UID (unplugged, or a
@@ -181,8 +176,6 @@ public final class SettingsViewModel {
         recordingStartNotification = await (try? settings.bool(forKey: .recordingsStartNotification))
             ?? Defaults.recordingStartNotification
         micDevice = await (try? settings.string(forKey: .recordingsMicDevice)) ?? nil
-        audioBackend = await (try? settings.string(forKey: .recordingsAudioBackend))
-            ?? Defaults.audioBackend
 
         transcriptionEngineAvailable = speechAssets.isEngineAvailable()
         transcriptionLanguage = await (try? settings.string(forKey: .transcriptionLanguage))
@@ -251,11 +244,6 @@ public final class SettingsViewModel {
             try await database.settings.remove(forKey: .recordingsMicDevice)
         }
         micDevice = value
-    }
-
-    public func setAudioBackend(_ value: String) async throws {
-        try await database.settings.setString(value, forKey: .recordingsAudioBackend)
-        audioBackend = value
     }
 
     // MARK: - Transcription (on-device Apple SpeechTranscriber)
