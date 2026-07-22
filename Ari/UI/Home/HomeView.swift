@@ -90,19 +90,21 @@ struct HomeView: View {
     /// instant, offline, and never theatrical.
     private var greetingPhrase: String {
         switch Calendar.current.component(.hour, from: Date.now) {
-        case 5..<12: "Good morning"
-        case 12..<18: "Good afternoon"
-        case 18..<23: "Good evening"
+        case 5 ..< 12: "Good morning"
+        case 12 ..< 18: "Good afternoon"
+        case 18 ..< 23: "Good evening"
         default: "Hello"
         }
     }
 
-    /// The owner's first name, from real sources only: the owner profile in the persons
-    /// table when one exists, otherwise the macOS account's full name. `nil` (no name
-    /// anywhere) renders the greeting phrase alone — never a placeholder name.
+    /// The owner's first name, from the owner profile only (persons table, `isOwner`). The
+    /// profile is seeded from the macOS account name at launch (`AppEnvironment.bootstrap`), so
+    /// this reflects whatever the user has authored in the People owner card — editing the name
+    /// there drives the greeting. `nil`/blank (no owner, or an owner whose name was cleared)
+    /// renders the greeting phrase alone — never a placeholder name.
     private var ownerFirstName: String? {
-        let full = viewModel.ownerName ?? NSFullUserName()
-        guard let first = full.split(separator: " ").first, !first.isEmpty else { return nil }
+        guard let full = viewModel.ownerName,
+              let first = full.split(separator: " ").first, !first.isEmpty else { return nil }
         return String(first)
     }
 
@@ -110,7 +112,7 @@ struct HomeView: View {
         [
             counted(viewModel.meetingCount, "meeting", "meetings"),
             counted(viewModel.personCount, "person", "people"),
-            counted(viewModel.seriesCount, "series", "series"),
+            counted(viewModel.seriesCount, "series", "series")
         ].joined(separator: " · ")
     }
 
@@ -165,7 +167,6 @@ struct HomeView: View {
         }
     }
 
-    @ViewBuilder
     private var recentShelf: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
             shelfHeader("Recent meetings", viewAll: .savedMeetings)

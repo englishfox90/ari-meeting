@@ -99,6 +99,13 @@ final class AppEnvironment {
 
             meetingCount = try await db.meetings.all().count
 
+            // Seed the owner profile from the macOS account name if none exists yet (runs AFTER
+            // the legacy import, so an imported owner is respected). This backs the Home greeting
+            // and the People owner card with a real, editable record instead of a display-only
+            // `NSFullUserName()` fallback. Idempotent + best-effort: a failure just leaves the
+            // owner unset (the greeting then honestly shows no name), never blocks launch.
+            _ = try? await db.persons.ensureOwner(defaultDisplayName: NSFullUserName())
+
             // The real recording vertical (R5 capture + R6 live SpeechTranscriber).
             recordingSession = try RecordingSession(
                 database: db,

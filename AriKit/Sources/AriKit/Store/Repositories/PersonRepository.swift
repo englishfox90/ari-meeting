@@ -219,6 +219,36 @@ public struct PersonRepository: Sendable {
         }
     }
 
+    /// Idempotently guarantees an owner row exists, returning it. If a non-deleted owner is
+    /// already set it is returned **unchanged** (authored identity is never clobbered); otherwise
+    /// a new owner is created from `defaultDisplayName` (trimmed; falls back to `"You"` when
+    /// empty). Used at app launch to seed the owner profile from the macOS account name so the
+    /// Home greeting and People owner card are backed by a real, editable record rather than a
+    /// display-only fallback. The check-then-insert runs in one write transaction, so the
+    /// single-owner invariant holds without needing `setOwner`.
+    @discardableResult
+    public func ensureOwner(defaultDisplayName: String, at date: Date = Date()) async throws -> Person {
+        try await dbWriter.write { db in
+            if let existing = try PersonRecord
+                .filter(Column("isOwner") == true)
+                .filter(Column("isDeleted") == false)
+                .fetchOne(db) {
+                return existing.asModel()
+            }
+
+            let trimmed = defaultDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let record = PersonRecord(Person(
+                id: PersonID(UUID().uuidString),
+                displayName: trimmed.isEmpty ? "You" : trimmed,
+                isOwner: true,
+                createdAt: date,
+                updatedAt: date
+            ))
+            try record.insert(db)
+            return record.asModel()
+        }
+    }
+
     /// Case-insensitive, non-deleted lookup by email. Store-internal (mirrors Rust's
     /// `get_by_email`); nested inside a transaction by callers that need read-then-write.
     private static func findByEmail(_ email: String, db: Database) throws -> PersonRecord? {

@@ -394,4 +394,45 @@ struct PeopleViewParitySlice1Tests {
         #expect(byPerson[alice] == "speaker-alice-owner")
         #expect(byPerson[bob] == "speaker-bob-confirmed")
     }
+
+    // MARK: - ensureOwner (owner-profile seeding)
+
+    @Test("ensureOwner creates an owner from the default name when none exists")
+    func ensureOwnerCreatesFromDefault() async throws {
+        let db = try AppDatabase.makeInMemory()
+
+        let owner = try await db.persons.ensureOwner(defaultDisplayName: "Paul Fox-Reeks", at: base)
+
+        #expect(owner.isOwner)
+        #expect(owner.displayName == "Paul Fox-Reeks")
+        let fetched = try await db.persons.owner()
+        #expect(fetched?.id == owner.id)
+        #expect(try await db.persons.all().count == 1)
+    }
+
+    @Test("ensureOwner returns the existing owner unchanged and never creates a second")
+    func ensureOwnerIsIdempotent() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let existingId: PersonID = "owner-existing"
+        try await db.persons.upsert(person(
+            id: existingId, displayName: "Authored Owner", role: "VP", isOwner: true
+        ))
+
+        let result = try await db.persons.ensureOwner(defaultDisplayName: "Paul Fox-Reeks", at: base)
+
+        #expect(result.id == existingId)
+        #expect(result.displayName == "Authored Owner")
+        #expect(result.role == "VP")
+        #expect(try await db.persons.all().count == 1)
+    }
+
+    @Test("ensureOwner falls back to \"You\" when the default name is blank")
+    func ensureOwnerBlankNameFallsBackToYou() async throws {
+        let db = try AppDatabase.makeInMemory()
+
+        let owner = try await db.persons.ensureOwner(defaultDisplayName: "   ", at: base)
+
+        #expect(owner.displayName == "You")
+        #expect(owner.isOwner)
+    }
 }
