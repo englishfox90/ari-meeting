@@ -66,8 +66,10 @@ struct MenuBarContentView: View {
         // Bootstrap even when no main window is open (menu-bar-only state) — idempotent-guarded, so
         // a no-op when the window already ran it at launch.
         .task { await environment.bootstrap() }
-        // Re-runs when the shell becomes ready (build + load the brief) and on each panel open —
-        // a meeting that has since started or passed re-sorts or drops off, exactly like Home.
+        // Builds + loads the brief once the shell is ready. `load()` re-filters against a fresh
+        // `now`, so whenever SwiftUI re-runs this task (readiness flip, or a content recreate on
+        // panel reopen) a since-passed meeting re-sorts or drops off. Even a snapshot that lags one
+        // open is honest — every row is a real DB event, never fabricated (same posture as Home).
         .task(id: environment.status == .ready) { await loadBrief() }
     }
 

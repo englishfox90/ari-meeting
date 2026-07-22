@@ -43,6 +43,9 @@ retire the DB key `.generalShowInMenuBar` and mirror `AppearanceStore` with a ne
 ### Reused seams (no new capability at the wrong layer)
 
 - `CalendarBriefViewModel` / `CalendarBriefSection` — upcoming-meetings list + Record handoff.
+  The panel builds the VM once the shell is ready and reloads via `.task(id:)`; `load()` re-filters
+  against a fresh `now`, so a since-passed meeting drops off whenever the task re-runs. A snapshot
+  that lags one reopen is still honest — every row is a real DB event, never fabricated.
 - `RecordingSession` — the app-wide, mount-independent recording brain (start/stop/state).
 - `AppEnvironment.startRecordingFromReminder(eventId:)` — the prime-and-start-immediately path,
   reused for event Record; a new sibling `startRecordingFromMenuBar()` covers the no-event Start.
