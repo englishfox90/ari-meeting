@@ -19,19 +19,30 @@ import SwiftUI
 
 struct HomeView: View {
     let database: AppDatabase
+    /// `nil` until `AppEnvironment.bootstrap()` constructs the real session — the calendar brief's
+    /// Record buttons stay honestly disabled until then, same posture as the Calendar page.
+    let recordingSession: RecordingSession?
     @Binding var selection: SidebarSection
 
     @State private var viewModel: HomeViewModel
+    @State private var brief: CalendarBriefViewModel
     @Environment(\.colorScheme) private var scheme
 
     /// Reading measure for the page — shelves and grids stay calm instead of stretching
     /// edge-to-edge on wide windows.
     private static let contentMaxWidth: CGFloat = 920
 
-    init(database: AppDatabase, selection: Binding<SidebarSection>) {
+    init(
+        database: AppDatabase,
+        calendarSource: (any CalendarSourcing)?,
+        recordingSession: RecordingSession?,
+        selection: Binding<SidebarSection>
+    ) {
         self.database = database
+        self.recordingSession = recordingSession
         _selection = selection
         _viewModel = State(initialValue: HomeViewModel(database: database))
+        _brief = State(initialValue: CalendarBriefViewModel(database: database, source: calendarSource))
     }
 
     var body: some View {
@@ -39,6 +50,12 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.xxl.value) {
                 header
                 captureHero
+                CalendarBriefSection(
+                    viewModel: brief,
+                    scheme: scheme,
+                    canRecord: recordingSession != nil && !(recordingSession?.isActive ?? true),
+                    onRecord: { startMeeting(from: $0) }
+                )
                 recentShelf
                 recordGrid
                 localFootnote
@@ -54,6 +71,28 @@ struct HomeView: View {
         .background(MarginaliaCanvasWash(scheme: scheme))
         .navigationTitle("Home")
         .task { await viewModel.observe() }
+        // Re-reads on every appearance against a fresh `now` — a meeting that has since started or
+        // passed re-sorts or drops off the brief when the owner returns to Home.
+        .task { await brief.load() }
+    }
+
+    // MARK: - Calendar brief → recording handoff
+
+    /// Start a recording pre-named after a calendar event, mirroring `CalendarPageView.startMeeting`
+    /// exactly (S7 Slice 3 handoff): reset a parked terminal session, seed the title only when the
+    /// field is blank, attach the pending calendar link, then route to the recording page. The
+    /// `canRecord` gate already disables the button while active/pre-bootstrap; this re-guards
+    /// defensively so a stale tap can never start a second recording.
+    private func startMeeting(from event: CalendarEvent) {
+        guard let recordingSession, !recordingSession.isActive else { return }
+        recordingSession.reset()
+        if recordingSession.pendingTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            recordingSession.pendingTitle = event.title
+        }
+        recordingSession.pendingCalendarLink = RecordingSession.PendingCalendarLink(
+            eventId: event.id, eventTitle: event.title
+        )
+        selection = .newMeeting
     }
 
     // MARK: - Header
