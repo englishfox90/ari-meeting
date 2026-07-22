@@ -166,7 +166,7 @@ struct MeetingDetailView: View {
 
     private func rightRail(_ meeting: Meeting) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            audioSection
+            missingAudioNotice
             sourceRecordSection(meeting)
             Divider().overlay(Color.marginalia(.hairline, in: scheme))
             transcriptHeader
@@ -176,6 +176,12 @@ struct MeetingDetailView: View {
                 onSeek: { audioController.seek(toSeconds: $0) }
             )
         }
+        // The glass transport floats over the SCROLLING transcript (safeAreaInset) — glass
+        // needs content moving beneath it to read as glass; inline on the flat rail it drew
+        // as opaque pills (the same chrome-layer lesson as the section switcher).
+        .safeAreaInset(edge: .bottom, alignment: .leading) {
+            floatingTransport
+        }
     }
 
     // MARK: - Narrow: single stacked column
@@ -184,7 +190,7 @@ struct MeetingDetailView: View {
     /// — the switcher itself lives in the window's glass layer, not in the content column.
     private func narrowColumn(_ meeting: Meeting) -> some View {
         VStack(spacing: 0) {
-            audioSection
+            missingAudioNotice
             switch narrowSection {
             case .summary:
                 ScrollView {
@@ -202,6 +208,11 @@ struct MeetingDetailView: View {
             case .notes:
                 notesBody
             }
+        }
+        // Same chrome-layer rule as the wide rail: the transport floats over the scrolling
+        // section content, never inline as an opaque band.
+        .safeAreaInset(edge: .bottom, alignment: .leading) {
+            floatingTransport
         }
     }
 
@@ -278,26 +289,25 @@ struct MeetingDetailView: View {
         }
     }
 
-    /// The Listen Back transport when audio resolves; otherwise the honest missing-file reason
-    /// (opaque content layer — a status note, not a control).
+    /// The floating glass transport — rendered only when audio genuinely resolved, placed by
+    /// callers in a bottom `safeAreaInset` so content scrolls beneath the glass.
     @ViewBuilder
-    private var audioSection: some View {
-        // A `nil` audioReference means "the transport is absent" (there's no recording) — the
-        // missing-file reason text is reserved for a REAL reference that didn't resolve.
-        if viewModel.meeting.value?.audioReference == nil {
-            EmptyView()
-        } else {
-            switch viewModel.audio {
-            case .available:
-                ListenBackPanel(controller: audioController)
-            case let .missing(reason):
-                Text(reason)
-                    .marginaliaTextStyle(.caption, in: scheme)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(MarginaliaSpacing.md.value)
-            case .unresolved:
-                EmptyView()
-            }
+    private var floatingTransport: some View {
+        if viewModel.meeting.value?.audioReference != nil, case .available = viewModel.audio {
+            ListenBackPanel(controller: audioController)
+        }
+    }
+
+    /// The honest missing-file reason — an inline, opaque content-layer status note (never
+    /// floating glass). Reserved for a REAL `audioReference` that didn't resolve; a `nil`
+    /// reference renders nothing (there's no recording to miss).
+    @ViewBuilder
+    private var missingAudioNotice: some View {
+        if viewModel.meeting.value?.audioReference != nil, case let .missing(reason) = viewModel.audio {
+            Text(reason)
+                .marginaliaTextStyle(.caption, in: scheme)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(MarginaliaSpacing.md.value)
         }
     }
 
