@@ -71,6 +71,14 @@ let package = Package(
         .library(
             name: "AriViewModels",
             targets: ["AriViewModels"]
+        ),
+        // D7 (docs/plans/arikit-diarization.md §2.1/§5) — the sole real `DiarizationProvider`
+        // conformer. Depends on `AriKit` + FluidAudio only, never the reverse: core `AriKit`
+        // gains no FluidAudio dependency, so `swift build`/`swift test AriKit` stays headless
+        // and model-free.
+        .library(
+            name: "AriKitDiarizationFluidAudio",
+            targets: ["AriKitDiarizationFluidAudio"]
         )
     ],
     dependencies: [
@@ -80,7 +88,10 @@ let package = Package(
         // can resolve them; core AriKit stays headless/Metal-toolchain-free.
         .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", exact: "3.31.4"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
-        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0")
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
+        // AriKitDiarizationFluidAudio-only (plan §2.1, D7). Exact pin per the S3 spike
+        // (`spikes/fluidaudio-s3/Package.swift`); core `AriKit` does not depend on this.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.5")
     ],
     targets: [
         .target(
@@ -177,6 +188,36 @@ let package = Package(
             dependencies: ["AriKitEngineMLX"],
             swiftSettings: [
                 .swiftLanguageMode(.v5)
+            ]
+        ),
+        // D7 (docs/plans/arikit-diarization.md §2.1, §5) — `FluidAudioDiarizationProvider`,
+        // the sole real `DiarizationProvider` conformer. macOS-only in practice (`#if
+        // os(macOS)` in source); depends on `AriKit` (for the seam types) + FluidAudio only.
+        //
+        // Swift 6 mode: attempted `.v6` first per plan §9 R1 — the S3 spike (tools-version
+        // 6.2, no language-mode pin) already compiles FluidAudio-consuming code clean under
+        // the default v6 mode, and this target compiles clean too, so no `.v5` documented
+        // exception is needed here (unlike `AriKitEngineMLX` above).
+        .target(
+            name: "AriKitDiarizationFluidAudio",
+            dependencies: [
+                "AriKit",
+                .product(name: "FluidAudio", package: "FluidAudio")
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .testTarget(
+            name: "AriKitDiarizationFluidAudioTests",
+            dependencies: ["AriKitDiarizationFluidAudio", "AriKit"],
+            // The opt-in integration test's bundled 2-voice fixture (plan §5 D7) resolves via
+            // `Bundle.module`, same pattern as `AriCaptureTests`.
+            resources: [
+                .copy("Fixtures")
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
             ]
         )
     ]
