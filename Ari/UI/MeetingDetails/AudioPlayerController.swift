@@ -105,11 +105,10 @@ final class AudioPlayerController {
             forTimes: [NSValue(time: boundaryTime)],
             queue: .main
         ) { [weak self] in
-            // Fires on `.main`, i.e. the MainActor's executor — safe to touch main-actor state
-            // directly, mirroring the periodic time observer above. `pause()` removes this very
-            // observer as its first action; AVFoundation supports removing a boundary observer
-            // from within its own callback.
-            MainActor.assumeIsolated {
+            // Fires on `.main`. `pause()` removes this very observer — hop to the next main-queue
+            // turn first so the removal never runs inside the observer's own callback frame
+            // (AVFoundation tolerates in-callback removal inconsistently across versions).
+            Task { @MainActor in
                 self?.pause()
             }
         }
