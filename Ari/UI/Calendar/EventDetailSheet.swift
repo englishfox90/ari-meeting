@@ -107,20 +107,28 @@ struct EventDetailSheet: View {
                     detailRow(icon: "person", text: organizer)
                 }
                 if let notes, !notes.isEmpty {
-                    detailRow(icon: "note.text", text: notes)
+                    // Google/Loom/Meet embed raw HTML in descriptions — parse it into styled
+                    // text (bold/links/entities) instead of showing markup verbatim.
+                    detailRow(icon: "note.text", attributed: RichNotes.attributed(from: notes))
                 }
             }
         }
     }
 
     private func detailRow(icon: String, text: String) -> some View {
+        detailRow(icon: icon, attributed: AttributedString(text))
+    }
+
+    private func detailRow(icon: String, attributed: AttributedString) -> some View {
         HStack(alignment: .top, spacing: MarginaliaSpacing.sm.value) {
             Image(systemName: icon)
                 .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
                 .frame(width: 18)
-            Text(text)
+            Text(attributed)
                 .marginaliaTextStyle(.body, in: scheme)
+                .tint(Color.marginalia(.accent, in: scheme))
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
     }
 
