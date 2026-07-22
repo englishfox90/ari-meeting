@@ -14,6 +14,14 @@
 import AriKit
 
 public enum AriKitEngineMLX {
+    /// The default on-device summary model — the S1-validated Qwen3.5-4B 4-bit MLX build
+    /// (`docs/plans/arikit-engine-extras.md §1`, `swift-migration-plan.md` S1). Note the `-MLX-`
+    /// infix: this is the real HF repo id, not the `Qwen3.5-4B-4bit` shorthand seen in prose.
+    /// The app supplies this as `ProviderConfig.model` when the `.mlx` provider is selected with no
+    /// explicit model (the Settings UI shows no model field for on-device Qwen). `MLXClient`
+    /// applies the required Qwen3.x `enable_thinking: false` carry-forward itself.
+    public static let defaultModelID = "mlx-community/Qwen3.5-4B-MLX-4bit"
+
     /// The `MLXClientProvider` closure this module installs — constructs a real `MLXClient` for
     /// any resolved `.mlx` config. Exposed directly so callers that already own their own
     /// mutable slot (or that call `ProviderFactory.make` inline) can use it without going through

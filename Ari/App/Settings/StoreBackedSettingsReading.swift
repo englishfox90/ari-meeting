@@ -6,6 +6,7 @@
 //  exactly like `SummaryService` already tolerates (`SummarySettings.swift`'s header).
 //
 import AriKit
+import AriKitEngineMLX
 import AriViewModels
 import Foundation
 
@@ -45,8 +46,17 @@ struct StoreBackedSettingsReading: SettingsReading {
         // was selected (the Settings UI deliberately shows no model field for on-device Qwen).
         let provider = try await database.settings.string(forKey: .summaryProvider)
             ?? SettingsViewModel.Defaults.summaryProvider
-        let model = try await database.settings.string(forKey: .summaryModel)
+        var model = try await database.settings.string(forKey: .summaryModel)
             ?? SettingsViewModel.Defaults.summaryModel
+
+        // On-device Qwen has a single fixed model (the Settings UI shows no model field for it), so
+        // its stored model is empty by design — supply the canonical repo id so `.mlx` resolves to
+        // a loadable model instead of tripping ProviderFactory's per-kind "model is required" guard.
+        if model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           ProviderKind.from(provider) == .mlx {
+            model = AriKitEngineMLX.defaultModelID
+        }
+
         return SummaryModelConfig(providerKey: provider, model: model)
     }
 }

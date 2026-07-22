@@ -77,6 +77,14 @@ let package = Package(
         .library(
             name: "AriKitDiarizationFluidAudio",
             targets: ["AriKitDiarizationFluidAudio"]
+        ),
+        // Track E (docs/plans/arikit-engine-extras.md §1) — the on-device MLX summary backend,
+        // exposed so the app target can link it and inject `AriKitEngineMLX.mlxClientProvider`
+        // into `ProviderFactory.make(config:mlxClientProvider:)`. Core `AriKit` never depends on
+        // this — the MLX/Metal-toolchain dependency stays scoped to app consumers only.
+        .library(
+            name: "AriKitEngineMLX",
+            targets: ["AriKitEngineMLX"]
         )
     ],
     dependencies: [

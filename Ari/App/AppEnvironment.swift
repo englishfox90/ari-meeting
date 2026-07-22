@@ -12,6 +12,7 @@
 import AriCapture
 import AriKit
 import AriKitDiarizationFluidAudio
+import AriKitEngineMLX
 import AriViewModels
 import Foundation
 import Observation
@@ -160,11 +161,20 @@ final class AppEnvironment {
             // is equivalent to reusing the one above, without an unrelated-existential cast.
             let settingsReader = StoreBackedSettingsReading(database: db)
             let summarySecrets = KeychainSecretStore()
+            // The on-device MLX provider (`.mlx`, the default summary backend) is injected here —
+            // core AriKit's `ProviderFactory` has no MLX dependency, so every summary/persons call
+            // site that might resolve `.mlx` must thread `AriKitEngineMLX.mlxClientProvider` through
+            // `ProviderFactory.make`. Without it a `.mlx` config throws "MLX client not registered".
+            let mlxClientProvider = AriKitEngineMLX.mlxClientProvider
+            let clientFactory: @Sendable (ProviderConfig) throws -> any LLMClient = {
+                try ProviderFactory.make(config: $0, mlxClientProvider: mlxClientProvider)
+            }
             let summaryService = SummaryService(
                 db: db,
                 settings: settingsReader,
                 secrets: summarySecrets,
-                cancellation: TaskCancellationCoordinator()
+                cancellation: TaskCancellationCoordinator(),
+                clientFactory: clientFactory
             )
             self.summaryService = summaryService
             let runner = SummaryRunner(
@@ -173,7 +183,7 @@ final class AppEnvironment {
                 secrets: summarySecrets,
                 summaryService: summaryService,
                 customTemplateDirectory: nil,
-                clientFactory: { try ProviderFactory.make(config: $0) }
+                clientFactory: clientFactory
             )
             summaryRunner = runner
 
@@ -202,13 +212,13 @@ final class AppEnvironment {
                 isAutoSummaryEnabled: {
                     // `try?` over a `Bool?`-returning call flattens (SE-0230), so this is already
                     // `Bool?`; default an unset/failed read to ON (the product default).
-                    (try? await db.settings.bool(forKey: .summaryAutomatic)) ?? true
+                    await (try? db.settings.bool(forKey: .summaryAutomatic)) ?? true
                 },
                 generateSummary: { mid, count in
                     _ = try await runner.generate(meetingId: mid, templateId: nil, speakerCount: count)
                 },
                 speakerCount: { mid in
-                    (try? await db.speakers.forMeeting(mid).count).flatMap { $0 > 0 ? $0 : nil }
+                    await (try? db.speakers.forMeeting(mid).count).flatMap { $0 > 0 ? $0 : nil }
                 },
                 cancelSummary: { mid in
                     _ = await runner.cancel(mid)
