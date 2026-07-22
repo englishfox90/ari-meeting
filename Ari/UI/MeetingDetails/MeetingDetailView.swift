@@ -47,7 +47,17 @@ struct MeetingDetailView: View {
     /// root's `diarizationService`/`speakerCountHintProvider` (docs/plans/arikit-diarization.md
     /// §5 D9b) aren't available until `AppEnvironment.bootstrap()` finishes.
     @State private var speakerIdentificationViewModel: SpeakerIdentificationViewModel?
-    @State private var showIdentifySpeakers = false
+    /// Item-driven sheet context: presenting via `.sheet(item:)` builds the content from THIS
+    /// value, so it can never see a stale nil view model. Presenting with `isPresented:` after
+    /// writing the VM in the same transaction rendered the sheet against the pre-write state
+    /// snapshot — the "Speaker identification isn't available" fallback on a healthy meeting.
+    @State private var identifyContext: IdentifySpeakersContext?
+
+    private struct IdentifySpeakersContext: Identifiable {
+        let id = UUID()
+        let viewModel: SpeakerIdentificationViewModel
+        let audioURL: URL
+    }
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
 
@@ -367,8 +377,8 @@ struct MeetingDetailView: View {
                 .disabled(!canIdentifySpeakers)
                 .help(canIdentifySpeakers ? "Identify speakers in this recording" : identifySpeakersDisabledReason)
             }
-            .sheet(isPresented: $showIdentifySpeakers) {
-                identifySpeakersSheet
+            .sheet(item: $identifyContext) { context in
+                identifySpeakersSheet(context)
             }
         }
     }
@@ -407,22 +417,24 @@ struct MeetingDetailView: View {
                 isRecording: { environment.recordingSession?.isActive ?? false }
             )
         }
-        if speakerIdentificationViewModel == nil {
-            // No service/hint provider (bootstrap incomplete or failed): an if-let sheet body
-            // would present an EMPTY sheet — indistinguishable from "nothing happened".
+        guard let vm = speakerIdentificationViewModel else {
+            // No service/hint provider (bootstrap incomplete or failed) — never present a
+            // dead sheet; the button click is a no-op with a log trail.
             Self.uiLog.error("identify-speakers: view model unavailable; not presenting sheet")
             return
         }
-        showIdentifySpeakers = true
+        guard case let .available(url) = viewModel.audio else {
+            Self.uiLog.error("identify-speakers: audio not available at click; not presenting")
+            return
+        }
+        identifyContext = IdentifySpeakersContext(viewModel: vm, audioURL: url)
     }
 
-    @ViewBuilder
-    private var identifySpeakersSheet: some View {
-        if let speakerIdentificationViewModel, case let .available(url) = viewModel.audio {
-            IdentifySpeakersSheet(
-                viewModel: speakerIdentificationViewModel,
+    private func identifySpeakersSheet(_ context: IdentifySpeakersContext) -> some View {
+        IdentifySpeakersSheet(
+                viewModel: context.viewModel,
                 meetingId: meetingId,
-                audioURL: url,
+                audioURL: context.audioURL,
                 displayName: viewModel.displayName(for:),
                 createPerson: { name in
                     // D9b review fix: surface the upsert failure instead of swallowing it with
@@ -440,15 +452,8 @@ struct MeetingDetailView: View {
                     return person.id
                 },
                 onSpeakersChanged: { await viewModel.load(meetingId) },
-                onDismiss: { showIdentifySpeakers = false }
+                onDismiss: { identifyContext = nil }
             )
-        } else {
-            // Honest fallback (No-Fake-State): the composition root hasn't finished bootstrapping
-            // the diarization service, or audio no longer resolves — never a dead/fake sheet.
-            Text("Speaker identification isn't available for this meeting right now.")
-                .marginaliaTextStyle(.body, in: scheme)
-                .padding(MarginaliaSpacing.lg.value)
-        }
     }
 
     private func emptyState(title: String, message: String) -> some View {
