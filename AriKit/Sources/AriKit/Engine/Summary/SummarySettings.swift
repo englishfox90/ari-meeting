@@ -69,7 +69,11 @@ public struct SummaryModelConfig: Sendable, Equatable {
 }
 
 /// ← the Custom OpenAI settings blob (`service.rs:388-414`).
-public struct CustomOpenAIConfig: Sendable, Equatable {
+///
+/// `Codable` so the app target's `StoreBackedSettingsReading` (settings-ui.md §2.3) can decode
+/// this straight out of the `summaryCustomOpenAIConfig` JSON blob stored in `SettingsRepository`
+/// — the field names below ARE the wire shape; do not rename without a migration.
+public struct CustomOpenAIConfig: Sendable, Equatable, Codable {
     public var endpoint: String
     public var apiKey: String?
     public var maxTokens: Int?

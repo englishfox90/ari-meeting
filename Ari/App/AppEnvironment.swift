@@ -44,6 +44,10 @@ final class AppEnvironment {
     /// page only ever renders it, never owns capture state itself.
     private(set) var recordingSession: RecordingSession?
 
+    /// The one Keychain-backed secrets store (docs/plans/settings-ui.md §2.3) — backs
+    /// `SecretsReading`/`RecallSecretsReading`/`SecretsStoring` all at once. Stateless, so it
+    /// needs no `bootstrap()` gating; available from construction.
+    let secrets: SecretsStoring = KeychainSecretStore()
     /// The single offline diarization orchestrator (docs/plans/arikit-diarization.md §5 D9b) —
     /// the FluidAudio provider is injected here, at the composition root, so core `AriKit` and
     /// `AriViewModels` never import FluidAudio directly. Constructed once `database` exists.
@@ -88,9 +92,9 @@ final class AppEnvironment {
             meetingCount = try await db.meetings.all().count
 
             // The real recording vertical (R5 capture + R6 live SpeechTranscriber).
-            recordingSession = RecordingSession(
+            recordingSession = try RecordingSession(
                 database: db,
-                recordingsRoot: try Self.recordingsRootURL(),
+                recordingsRoot: Self.recordingsRootURL(),
                 makeCaptureService: { folder in LiveCaptureService(meetingFolder: folder) },
                 transcription: SpeechLiveTranscriptionService()
             )

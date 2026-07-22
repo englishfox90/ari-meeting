@@ -228,9 +228,27 @@ struct SidebarView: View {
         .buttonStyle(.plain)
     }
 
+    /// The pinned Settings row — a real destination now (docs/plans/settings-ui.md §7), reflecting
+    /// selection highlight the same way `workbenchRow` does even though `.settings` is
+    /// deliberately NOT part of `SidebarSection.workbench`.
+    private var settingsRow: some View {
+        let isSelected = selection == .settings
+        return Button {
+            selection = .settings
+        } label: {
+            Label("Settings", systemImage: "gearshape")
+                .marginaliaTextStyle(.callout, in: scheme, ink: isSelected ? .accent : .inkSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .padding(.horizontal, MarginaliaSpacing.md.value)
+    }
+
     /// New meeting routes to the real recording page. About opens the real `AboutView` sheet.
-    /// Settings has no destination yet, so it renders as an explicitly disabled row rather than
-    /// claiming one (finding #14 — a Label alone reads as an enabled row to assistive tech).
+    /// Settings now routes to the real `SettingsView` shell (docs/plans/settings-ui.md §7) —
+    /// see `settingsRow` below.
     private var pinnedBottom: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             Divider().overlay(Color.marginalia(.hairline, in: scheme))
@@ -258,15 +276,7 @@ struct SidebarView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, MarginaliaSpacing.md.value)
 
-            Button {} label: {
-                Label("Settings", systemImage: "gearshape")
-                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-            .disabled(true)
-            .accessibilityRemoveTraits(.isButton)
-            .padding(.horizontal, MarginaliaSpacing.md.value)
+            settingsRow
 
             Button {
                 showingAbout = true
