@@ -1,10 +1,12 @@
 //
 //  SettingsTranscriptionSection.swift — Transcription settings (docs/plans/settings-ui.md §6).
 //
-//  The whole section is honest-disabled behind one `MarginaliaBanner(.info)`: provider/model
-//  selection and the per-provider download managers all still run in the frozen Rust engine —
-//  the Swift port hasn't reached this seam yet. Apple on-device transcription is deliberately
-//  excluded from this screen (plan §1) — never add an `apple` option here.
+//  LIVE, not honest-disabled: the Swift app transcribes entirely on-device with Apple's
+//  `SpeechTranscriber` (AriKit `Engine/STT/`). There is no provider/model choice to make —
+//  SpeechTranscriber is the sole engine — so this screen exposes the only real knobs: the
+//  transcription language and the on-device model download for that language. The Rust-era
+//  Parakeet/Whisper panel it replaced was misleading (the Swift app never runs those). Reversed
+//  the plan-§1 "exclude Apple" decision on 2026-07-21 once the STT port landed and shipped.
 //
 import AriKit
 import AriViewModels
@@ -19,59 +21,129 @@ struct SettingsTranscriptionSection: View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
             SectionHeader(title: "Transcription")
 
-            SettingsDisabledGroup(availability: viewModel.transcriptionAvailability) {
-                VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
-                    SettingsCard(title: "Provider") {
-                        Picker(selection: .constant(viewModel.transcriptionProvider)) {
-                            Text("Parakeet").tag("parakeet")
-                            Text("Whisper (local)").tag("localWhisper")
-                        } label: {
-                            MarginaliaMenuLabel(title: "Transcription provider", scheme: scheme)
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
+            engineCard
 
-                    modelManagerCard(
-                        title: "Parakeet",
-                        currentModel: viewModel.transcriptionProvider == "parakeet"
-                            ? viewModel.transcriptionModel
-                            : nil
-                    )
-
-                    modelManagerCard(
-                        title: "Whisper (local)",
-                        currentModel: viewModel.transcriptionProvider == "localWhisper"
-                            ? viewModel.transcriptionModel
-                            : nil
-                    )
-                }
+            if viewModel.transcriptionEngineAvailable {
+                languageCard
+                modelCard
             }
-            .padding(.horizontal, MarginaliaSpacing.md.value)
         }
     }
 
-    private func modelManagerCard(title: String, currentModel: String?) -> some View {
-        SettingsCard(title: "\(title) models") {
+    // MARK: - Engine
+
+    private var engineCard: some View {
+        SettingsCard(title: "Engine") {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-                HStack {
-                    Text(currentModel ?? "No model selected")
-                        .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
-                    Spacer(minLength: 0)
-                    if currentModel != nil {
-                        MarginaliaBadge("Active", style: .neutral, scheme: scheme)
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                        Text("On-device — Apple Speech")
+                            .marginaliaTextStyle(.body, in: scheme)
+                        Text("Meetings are transcribed entirely on this Mac. Audio never leaves the device.")
+                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                    }
+                    Spacer(minLength: MarginaliaSpacing.sm.value)
+                    if viewModel.transcriptionEngineAvailable {
+                        MarginaliaBadge("Available", style: .success, scheme: scheme)
+                    } else {
+                        MarginaliaBadge("Unavailable", style: .neutral, scheme: scheme)
                     }
                 }
 
-                HStack(spacing: MarginaliaSpacing.sm.value) {
-                    Button("Download") {}
-                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                    Button("Select") {}
-                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                    Button("Delete") {}
-                        .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+                if !viewModel.transcriptionEngineAvailable {
+                    MarginaliaBanner(
+                        kind: .error,
+                        message: "On-device speech transcription isn't available on this Mac.",
+                        scheme: scheme
+                    )
                 }
             }
         }
+        .padding(.horizontal, MarginaliaSpacing.md.value)
+    }
+
+    // MARK: - Language
+
+    private var languageCard: some View {
+        SettingsCard(title: "Language") {
+            Picker(selection: languageBinding) {
+                ForEach(viewModel.transcriptionLanguageOptions) { option in
+                    Text(option.name).tag(option.id)
+                }
+            } label: {
+                MarginaliaMenuLabel(title: "Transcription language", scheme: scheme)
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+        }
+        .padding(.horizontal, MarginaliaSpacing.md.value)
+    }
+
+    // MARK: - Language model
+
+    private var modelCard: some View {
+        SettingsCard(title: "Language model") {
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+                HStack {
+                    Text(modelStatusText)
+                        .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
+                    Spacer(minLength: 0)
+                    if viewModel.transcriptionModelInstalled == true {
+                        MarginaliaBadge("Installed", style: .success, scheme: scheme)
+                    }
+                }
+
+                switch viewModel.transcriptionModelInstall {
+                case let .installing(fraction):
+                    VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                        ProgressView(value: fraction)
+                            .tint(Color.marginalia(.accent, in: scheme))
+                        Text("Downloading… \(Int((fraction * 100).rounded()))%")
+                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                    }
+                case let .failed(message):
+                    MarginaliaBanner(kind: .error, message: message, scheme: scheme)
+                case .idle:
+                    EmptyView()
+                }
+
+                if viewModel.transcriptionModelInstalled != true, !isInstalling {
+                    Button("Download language model") {
+                        Task { await viewModel.installTranscriptionModel() }
+                    }
+                    .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                }
+            }
+        }
+        .padding(.horizontal, MarginaliaSpacing.md.value)
+    }
+
+    // MARK: - Derived state
+
+    private var modelStatusText: String {
+        switch viewModel.transcriptionModelInstalled {
+        case .some(true):
+            "The speech model for this language is installed."
+        case .some(false):
+            "The speech model for this language isn't downloaded yet."
+        case .none:
+            "Checking model availability…"
+        }
+    }
+
+    private var isInstalling: Bool {
+        if case .installing = viewModel.transcriptionModelInstall {
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Bindings
+
+    private var languageBinding: Binding<String> {
+        Binding(
+            get: { viewModel.transcriptionLanguage },
+            set: { newValue in Task { await viewModel.selectTranscriptionLanguage(newValue) } }
+        )
     }
 }

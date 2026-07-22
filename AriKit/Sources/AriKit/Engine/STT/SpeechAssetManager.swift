@@ -60,6 +60,14 @@ public struct SpeechAssetManager: Sendable {
         return installed.contains { $0.identifier(.bcp47) == targetID }
     }
 
+    /// Every locale the on-device `SpeechTranscriber` can transcribe (← `SpeechTranscriber
+    /// .supportedLocales`), for a language picker. Empty when the engine is unavailable on this
+    /// device — an honest empty list, never a fabricated set.
+    public func supportedLocales() async -> [Locale] {
+        guard isEngineAvailable() else { return [] }
+        return await SpeechTranscriber.supportedLocales
+    }
+
     /// Install the on-device speech model assets for `forLocale` (or the resolved current-locale
     /// sentinel if `nil`/empty), reporting REAL download progress via `onProgress`.
     ///

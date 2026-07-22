@@ -11,9 +11,15 @@ import Testing
 struct SettingsViewModelTests {
     private func makeViewModel(
         database: AppDatabase,
-        secrets: StubSecretsStoring = StubSecretsStoring()
+        secrets: StubSecretsStoring = StubSecretsStoring(),
+        speechAssets: SpeechAssetProviding = StubSpeechAssetProviding()
     ) -> SettingsViewModel {
-        SettingsViewModel(database: database, secrets: secrets, appearance: AppearanceStore())
+        SettingsViewModel(
+            database: database,
+            secrets: secrets,
+            appearance: AppearanceStore(),
+            speechAssets: speechAssets
+        )
     }
 
     @Test("load() applies honest defaults when nothing is stored")
@@ -24,7 +30,7 @@ struct SettingsViewModelTests {
 
         #expect(viewModel.showNotch == SettingsViewModel.Defaults.showNotch)
         #expect(viewModel.saveAudioRecordings == SettingsViewModel.Defaults.saveAudioRecordings)
-        #expect(viewModel.transcriptionProvider == SettingsViewModel.Defaults.transcriptionProvider)
+        #expect(viewModel.transcriptionLanguage == SettingsViewModel.Defaults.transcriptionLanguage)
         #expect(viewModel.summaryProvider == SettingsViewModel.Defaults.summaryProvider)
         #expect(viewModel.recallEmbedder == SettingsViewModel.Defaults.recallEmbedder)
     }
@@ -85,7 +91,6 @@ struct SettingsViewModelTests {
             viewModel.recordingStartNotificationAvailability,
             viewModel.deviceSelectionAvailability,
             viewModel.audioBackendAvailability,
-            viewModel.transcriptionAvailability,
             viewModel.modelDownloadsAvailability,
             viewModel.rebuildIndexAvailability,
             viewModel.nomicDownloadAvailability
@@ -98,6 +103,73 @@ struct SettingsViewModelTests {
             }
             #expect(!reason.isEmpty)
         }
+    }
+
+    @Test("transcription: engine available populates language options + honest not-installed state")
+    func transcriptionEngineAvailable() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(
+            database: database,
+            speechAssets: StubSpeechAssetProviding(
+                engineAvailable: true,
+                installed: false,
+                locales: [Locale(identifier: "en-US"), Locale(identifier: "fr-FR")]
+            )
+        )
+        await viewModel.load()
+
+        #expect(viewModel.transcriptionEngineAvailable)
+        // Automatic sentinel is always first, then the supported locales.
+        #expect(viewModel.transcriptionLanguageOptions.first?.id == "auto")
+        #expect(viewModel.transcriptionLanguageOptions.count == 3)
+        #expect(viewModel.transcriptionModelInstalled == false)
+        #expect(viewModel.transcriptionModelInstall == .idle)
+    }
+
+    @Test("transcription: engine unavailable yields empty options + nil install state (No-Fake-State)")
+    func transcriptionEngineUnavailable() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(
+            database: database,
+            speechAssets: StubSpeechAssetProviding(engineAvailable: false)
+        )
+        await viewModel.load()
+
+        #expect(viewModel.transcriptionEngineAvailable == false)
+        #expect(viewModel.transcriptionLanguageOptions.isEmpty)
+        #expect(viewModel.transcriptionModelInstalled == nil)
+    }
+
+    @Test("transcription: setTranscriptionLanguage persists and re-checks installed state")
+    func transcriptionLanguagePersists() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(
+            database: database,
+            speechAssets: StubSpeechAssetProviding(engineAvailable: true, installed: true)
+        )
+        await viewModel.load()
+
+        try await viewModel.setTranscriptionLanguage("fr-FR")
+        #expect(viewModel.transcriptionLanguage == "fr-FR")
+        #expect(viewModel.transcriptionModelInstalled == true)
+
+        let stored = try await database.settings.string(forKey: .transcriptionLanguage)
+        #expect(stored == "fr-FR")
+    }
+
+    @Test("transcription: installTranscriptionModel reaches installed + idle on success")
+    func transcriptionInstallSucceeds() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(
+            database: database,
+            speechAssets: StubSpeechAssetProviding(engineAvailable: true, installed: false)
+        )
+        await viewModel.load()
+        #expect(viewModel.transcriptionModelInstalled == false)
+
+        await viewModel.installTranscriptionModel()
+        #expect(viewModel.transcriptionModelInstalled == true)
+        #expect(viewModel.transcriptionModelInstall == .idle)
     }
 
     @Test("indexSummary reads the real RecallIndexRepository summary")

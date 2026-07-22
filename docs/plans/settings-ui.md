@@ -14,7 +14,9 @@ Build the **full native Settings UI shell** for the macOS `Ari` app, reaching fu
 
 **Scope (decided):** FULL UI shell for ALL sections now + honest disabled/"available once the engine ports" states for Rust-only backends. Real native persistence for what IS wireable.
 
-**EXCLUDE entirely:** the Apple on-device / "Apple Intelligence" panels — `AppleModelStatus`, transcription `apple` branch, summary `apple-foundation` branch, apple embedder. Do not port or placeholder them.
+**EXCLUDE entirely:** the "Apple Intelligence" summary/embedding panels — `AppleModelStatus`, summary `apple-foundation` branch, apple embedder. Do not port or placeholder them.
+
+> **AMENDED 2026-07-21 — Transcription is now a LIVE Apple panel.** The original plan excluded the transcription `apple` branch and shipped the Transcription tab honest-disabled around a Parakeet/Whisper picker. That was based on the (now stale) premise that Swift transcription still ran in the frozen Rust engine. It does not: the Swift app records and transcribes **on-device with Apple `SpeechTranscriber`** (AriKit `Engine/STT/`, shipped), so the disabled Parakeet/Whisper panel actively misrepresented the app. The Transcription tab is now LIVE over `SpeechAssetManager` (engine availability + language + on-device model download). Apple SpeechTranscriber is the Swift app's **sole** transcription engine — there is no provider/model choice. See §6.
 
 ## 2. Persistence design
 
@@ -134,11 +136,12 @@ Each section mirrors `PersonDetailView` (ScrollView → `VStack(alignment:.leadi
 | Audio backend selector | radio rows | **HONEST-DISABLED** |
 
 ### `SettingsTranscriptionSection.swift`
-Whole section **HONEST-DISABLED** behind one `MarginaliaBanner(.info)`: provider/model selection + Whisper/Parakeet download managers are Rust-only.
+**LIVE** over `SpeechAssetManager` (AMENDED 2026-07-21 — see §1). The Swift app transcribes on-device with Apple `SpeechTranscriber`; there is no provider/model choice, so the section exposes engine availability + language + the on-device model download for that language.
 | Control | Primitive | Classification |
 |---|---|---|
-| Provider dropdown (parakeet, localWhisper — apple excluded) | `MarginaliaMenuLabel` in disabled `Picker` | **HONEST-DISABLED** |
-| Per-provider model manager (download/select/delete + progress) | `SettingsCard` rows, disabled | **HONEST-DISABLED** |
+| Engine status (On-device — Apple Speech) | `SettingsCard` + `MarginaliaBadge` (Available/Unavailable), `MarginaliaBanner(.error)` when unavailable | **LIVE** — `SpeechAssetManager.isEngineAvailable()` |
+| Transcription language | `MarginaliaMenuLabel` in `Picker(.menu)` (Automatic + `supportedLocales`) | **LIVE persist** — writes `transcriptionLanguage` |
+| Language-model download (status + real progress + Download) | `SettingsCard` rows, `ProgressView`, `MarginaliaBanner(.error)` on failure | **LIVE** — `SpeechAssetManager.install(forLocale:onProgress:)` |
 
 ### `SettingsSummarySection.swift` (largest)
 | Control | Primitive | Classification |

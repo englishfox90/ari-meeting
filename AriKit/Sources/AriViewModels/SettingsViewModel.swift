@@ -18,6 +18,27 @@ public enum Availability: Sendable, Equatable {
     case disabled(reason: String)
 }
 
+/// One selectable transcription language for the on-device SpeechTranscriber picker.
+public struct TranscriptionLanguageOption: Sendable, Identifiable, Equatable {
+    /// A BCP-47 identifier, or the `"auto"` sentinel (system language).
+    public let id: String
+    /// Localized display name (e.g. "English (United States)").
+    public let name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
+/// Live state of an on-device speech-model install. Progress is the framework's OWN
+/// `Progress.fractionCompleted` verbatim — never interpolated (No-Fake-State).
+public enum TranscriptionModelInstall: Sendable, Equatable {
+    case idle
+    case installing(Double)
+    case failed(String)
+}
+
 @MainActor
 @Observable
 public final class SettingsViewModel {
@@ -29,9 +50,10 @@ public final class SettingsViewModel {
         public static let saveAudioRecordings = true
         public static let recordingStartNotification = false
         public static let audioBackend = "coreAudio"
-        /// ← the Rust default transcription provider (product.md: "Parakeet is default").
-        public static let transcriptionProvider = "parakeet"
-        public static let transcriptionModel = "parakeet-tdt-0.6b-v3-int8"
+        /// On-device SpeechTranscriber language. `"auto"` = follow the system language
+        /// (`STTLocale.resolveRequestedLocale`). Provider/model selection is gone — Apple's
+        /// SpeechTranscriber is the Swift app's sole transcription engine.
+        public static let transcriptionLanguage = "auto"
         public static let summaryAutomatic = true
         public static let summaryLanguage = "en"
         /// ← `ProviderKind.mlx` — the on-device successor to Rust's `BuiltInAI`, matching the
@@ -77,15 +99,21 @@ public final class SettingsViewModel {
         reason: "Audio backend selection hasn't been ported to the Swift capture stack yet."
     )
 
-    // MARK: - Transcription (whole section honest-disabled — plan §6)
+    // MARK: - Transcription (on-device Apple SpeechTranscriber — LIVE, plan §6)
 
-    public private(set) var transcriptionProvider: String = Defaults.transcriptionProvider
-    public private(set) var transcriptionModel: String = Defaults.transcriptionModel
-
-    public let transcriptionAvailability: Availability = .disabled(
-        reason: "Transcription provider/model selection and downloads still run in the frozen "
-            + "Rust engine; the Swift port hasn't reached this seam yet."
-    )
+    /// Whether the on-device SpeechTranscriber engine can run on this Mac at all
+    /// (`SpeechAssetManager.isEngineAvailable`). Drives the honest Available/Unavailable state.
+    public private(set) var transcriptionEngineAvailable: Bool = false
+    /// The chosen transcription language — a BCP-47 id, or the `"auto"` sentinel.
+    public private(set) var transcriptionLanguage: String = Defaults.transcriptionLanguage
+    /// Languages the engine supports, for the picker. Empty until `load()` (or when unavailable) —
+    /// honestly empty, never fabricated.
+    public private(set) var transcriptionLanguageOptions: [TranscriptionLanguageOption] = []
+    /// Whether the model assets for the chosen language are installed. `nil` while unknown/checking
+    /// — honestly absent, never a fabricated `false`.
+    public private(set) var transcriptionModelInstalled: Bool?
+    /// Live install progress/failure, driven by real `SpeechAssetManager` progress.
+    public private(set) var transcriptionModelInstall: TranscriptionModelInstall = .idle
 
     // MARK: - Summary
 
@@ -117,11 +145,18 @@ public final class SettingsViewModel {
 
     private let database: AppDatabase
     private let secrets: SecretsStoring
+    private let speechAssets: SpeechAssetProviding
 
-    public init(database: AppDatabase, secrets: SecretsStoring, appearance: AppearanceStore) {
+    public init(
+        database: AppDatabase,
+        secrets: SecretsStoring,
+        appearance: AppearanceStore,
+        speechAssets: SpeechAssetProviding = SpeechAssetManager()
+    ) {
         self.database = database
         self.secrets = secrets
         self.appearance = appearance
+        self.speechAssets = speechAssets
     }
 
     /// One-shot load: every property gets its honest stored value, or its documented default
@@ -145,10 +180,13 @@ public final class SettingsViewModel {
         audioBackend = await (try? settings.string(forKey: .recordingsAudioBackend))
             ?? Defaults.audioBackend
 
-        transcriptionProvider = await (try? settings.string(forKey: .transcriptionProvider))
-            ?? Defaults.transcriptionProvider
-        transcriptionModel = await (try? settings.string(forKey: .transcriptionModel))
-            ?? Defaults.transcriptionModel
+        transcriptionEngineAvailable = speechAssets.isEngineAvailable()
+        transcriptionLanguage = await (try? settings.string(forKey: .transcriptionLanguage))
+            ?? Defaults.transcriptionLanguage
+        transcriptionLanguageOptions = await loadTranscriptionLanguageOptions()
+        transcriptionModelInstalled = transcriptionEngineAvailable
+            ? await speechAssets.areAssetsInstalled(forLocale: transcriptionLanguage)
+            : nil
 
         summaryAutomatic = await (try? settings.bool(forKey: .summaryAutomatic))
             ?? Defaults.summaryAutomatic
@@ -217,16 +255,108 @@ public final class SettingsViewModel {
         audioBackend = value
     }
 
-    // MARK: - Transcription setters
+    // MARK: - Transcription (on-device Apple SpeechTranscriber)
 
-    public func setTranscriptionProvider(_ value: String) async throws {
-        try await database.settings.setString(value, forKey: .transcriptionProvider)
-        transcriptionProvider = value
+    /// Localized, alphabetized language options for the picker, prefixed by an "Automatic" entry
+    /// that follows the system language. Empty when the engine is unavailable (No-Fake-State).
+    private func loadTranscriptionLanguageOptions() async -> [TranscriptionLanguageOption] {
+        guard transcriptionEngineAvailable else { return [] }
+
+        let display = Locale.current
+        let mapped = await speechAssets.supportedLocales()
+            .map { locale -> TranscriptionLanguageOption in
+                let id = locale.identifier(.bcp47)
+                let name = display.localizedString(forIdentifier: locale.identifier) ?? id
+                return TranscriptionLanguageOption(id: id, name: name)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        return [TranscriptionLanguageOption(id: "auto", name: "Automatic (system language)")] + mapped
     }
 
-    public func setTranscriptionModel(_ value: String) async throws {
-        try await database.settings.setString(value, forKey: .transcriptionModel)
-        transcriptionModel = value
+    /// Persist the chosen transcription language and re-check whether its model is installed.
+    /// Resets any prior install progress/error — a language change starts a fresh install story.
+    public func setTranscriptionLanguage(_ id: String) async throws {
+        try await database.settings.setString(id, forKey: .transcriptionLanguage)
+        transcriptionLanguage = id
+        transcriptionModelInstall = .idle
+        if transcriptionEngineAvailable {
+            transcriptionModelInstalled = await speechAssets.areAssetsInstalled(forLocale: id)
+        }
+    }
+
+    /// View-facing language change: persists + re-checks like `setTranscriptionLanguage`, but
+    /// surfaces a persistence failure honestly (into the model card's error banner) instead of
+    /// swallowing it silently. On failure the selection reverts (the stored/in-memory value is
+    /// untouched, since the throwing setter persists before updating state).
+    public func selectTranscriptionLanguage(_ id: String) async {
+        do {
+            try await setTranscriptionLanguage(id)
+        } catch {
+            transcriptionModelInstall = .failed(
+                "Couldn't save the transcription language: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Download + install the on-device speech model for the chosen language, surfacing the
+    /// framework's REAL progress. On failure, reports the honest reason and re-checks the actual
+    /// installed state rather than assuming success or failure.
+    public func installTranscriptionModel() async {
+        guard transcriptionEngineAvailable else { return }
+        // Re-entrancy guard: a second tap before the first render flips `isInstalling` would
+        // otherwise enqueue a duplicate concurrent install.
+        if case .installing = transcriptionModelInstall {
+            return
+        }
+        let language = transcriptionLanguage
+        transcriptionModelInstall = .installing(0)
+
+        // Funnel the @Sendable progress callbacks through an ordered stream consumed on this actor,
+        // so state updates never race the terminal result.
+        let (stream, continuation) = AsyncStream<Double>.makeStream()
+        let installTask = Task { [speechAssets] () -> Result<Void, Error> in
+            defer { continuation.finish() }
+            do {
+                try await speechAssets.install(forLocale: language) { fraction in
+                    continuation.yield(fraction)
+                }
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }
+
+        for await fraction in stream {
+            transcriptionModelInstall = .installing(fraction)
+        }
+
+        // Re-check the CURRENT selection (not the captured `language`): the language picker can
+        // interleave during the `for await` suspension, so trusting a bare `true`/the old locale
+        // would fabricate an "Installed" badge for whatever language is now selected.
+        switch await installTask.value {
+        case .success:
+            transcriptionModelInstall = .idle
+        case let .failure(error):
+            transcriptionModelInstall = .failed(Self.describeInstallError(error))
+        }
+        transcriptionModelInstalled = await speechAssets.areAssetsInstalled(forLocale: transcriptionLanguage)
+    }
+
+    private static func describeInstallError(_ error: Error) -> String {
+        guard let error = error as? TranscriptionError else {
+            return error.localizedDescription
+        }
+        switch error {
+        case let .providerUnavailable(message), let .engineFailed(message):
+            return message
+        case let .unsupportedLanguage(identifier):
+            return "That language isn't supported on this device (\(identifier))."
+        case let .assetsNotInstalled(locale):
+            return "The speech model for \(locale) isn't installed."
+        default:
+            return "The speech model couldn't be installed."
+        }
     }
 
     // MARK: - Summary setters

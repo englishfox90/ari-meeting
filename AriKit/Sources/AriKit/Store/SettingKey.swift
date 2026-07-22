@@ -37,6 +37,10 @@ public enum SettingKey: String, Sendable, CaseIterable {
     // Transcription
     case transcriptionProvider
     case transcriptionModel
+    /// BCP-47 identifier (or the `"auto"` sentinel = system language) for the on-device
+    /// SpeechTranscriber. The one real transcription knob in the Swift app — provider/model
+    /// selection is gone (Apple SpeechTranscriber is the sole engine).
+    case transcriptionLanguage
 
     // NOTE: theme is deliberately NOT here — it lives in `@AppStorage("appAppearance")`
     // (plan §2.4), not this table.
