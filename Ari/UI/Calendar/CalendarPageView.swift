@@ -91,6 +91,11 @@ struct CalendarPageView: View {
     /// `pendingTitle` is set only when blank — never clobbers user input already in the field.
     private func startMeeting(from event: CalendarEvent) {
         guard let recordingSession, !recordingSession.isActive else { return }
+        // A previous session parked in .saved/.failed would render its terminal screen instead
+        // of the idle one — the chip would be invisible and "New recording" would reset() the
+        // intent away. Reset first (a safe no-op in .idle) so the handoff always lands on the
+        // idle screen with the chip showing.
+        recordingSession.reset()
         if recordingSession.pendingTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             recordingSession.pendingTitle = event.title
         }
@@ -170,6 +175,12 @@ struct CalendarPageView: View {
         case .neverSynced:
             neverSyncedState
         case .ready:
+            // A failed background refresh must be disclosed even though the stored events below
+            // are honest — the user is otherwise looking at stale data with no hint (plan §4).
+            if let error = viewModel.refreshError {
+                MarginaliaBanner(kind: .error, message: "Calendar refresh failed: \(error)", scheme: scheme)
+                    .padding(.horizontal, MarginaliaSpacing.md.value)
+            }
             CalendarWeekGrid(
                 weekDays: CalendarWeekLayout.weekDays(containing: viewModel.weekStart, calendar: .current),
                 events: viewModel.events,
