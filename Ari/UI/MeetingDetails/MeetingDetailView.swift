@@ -180,12 +180,18 @@ struct MeetingDetailView: View {
         }
     }
 
+    /// Stock segmented control, per the HIG tab-view guidance and the Liquid Glass v2
+    /// "stock first" rule — connected glass tabs from the system, not three loose buttons.
     private var sectionSwitcher: some View {
-        HStack(spacing: MarginaliaSpacing.sm.value) {
-            ForEach(NarrowSection.allCases) { section in
-                Button(section.title) { narrowSection = section }
-                    .buttonStyle(.marginalia(section == narrowSection ? .secondary : .quiet, .regular, in: scheme))
+        HStack {
+            Picker("Section", selection: $narrowSection) {
+                ForEach(NarrowSection.allCases) { section in
+                    Text(section.title).tag(section)
+                }
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
             Spacer()
         }
         .padding(.horizontal, MarginaliaSpacing.md.value)
