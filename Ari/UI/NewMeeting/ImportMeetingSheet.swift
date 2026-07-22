@@ -24,6 +24,10 @@ struct AudioFileInfo: Equatable {
     let format: String
     let durationSeconds: Double?
     let byteSize: Int64?
+    /// The file's own recording date (creation, falling back to last-modified), used as the smart
+    /// default for the meeting date so an old recording doesn't default to "today". `nil` if the
+    /// filesystem exposes neither.
+    let recordedAt: Date?
 }
 
 /// Reads a picked file's real audio metadata. Returns `nil` when the file cannot be opened as
@@ -36,14 +40,18 @@ enum AudioFileProbe {
         let sampleRate = file.fileFormat.sampleRate
         let duration = sampleRate > 0 ? Double(file.length) / sampleRate : nil
 
-        let byteSize = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let byteSize = attributes?[.size] as? Int64
+        let recordedAt = (attributes?[.creationDate] as? Date)
+            ?? (attributes?[.modificationDate] as? Date)
 
         return AudioFileInfo(
             url: url,
             displayName: url.deletingPathExtension().lastPathComponent,
             format: url.pathExtension.uppercased(),
             durationSeconds: duration,
-            byteSize: byteSize
+            byteSize: byteSize,
+            recordedAt: recordedAt
         )
     }
 }
@@ -247,6 +255,12 @@ struct ImportMeetingSheet: View {
             pickError = nil
             if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 title = info.displayName
+            }
+            // Smart default: the file's own recording date (clamped to now, matching the picker's
+            // range), so an imported old recording doesn't default to "today" — the user can still
+            // adjust it. Falls back to the current default when the file exposes no date.
+            if let recordedAt = info.recordedAt {
+                meetingDate = min(recordedAt, Date())
             }
         case let .failure(error):
             pickError = "Could not open that file: \(error.localizedDescription)"
