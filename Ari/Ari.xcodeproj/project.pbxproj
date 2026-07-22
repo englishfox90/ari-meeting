@@ -10,6 +10,7 @@
 		1A0000000000000000000013 /* AriKit in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000012 /* AriKit */; };
 		1A0000000000000000000015 /* AriViewModels in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000014 /* AriViewModels */; };
 		1A0000000000000000000019 /* AriCapture in Frameworks */ = {isa = PBXBuildFile; productRef = 1A0000000000000000000018 /* AriCapture */; };
+		1A000000000000000000001B /* AriKitDiarizationFluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 1A000000000000000000001A /* AriKitDiarizationFluidAudio */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +32,7 @@
 				1A0000000000000000000013 /* AriKit in Frameworks */,
 				1A0000000000000000000015 /* AriViewModels in Frameworks */,
 				1A0000000000000000000019 /* AriCapture in Frameworks */,
+				1A000000000000000000001B /* AriKitDiarizationFluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -81,6 +83,7 @@
 				1A0000000000000000000012 /* AriKit */,
 				1A0000000000000000000014 /* AriViewModels */,
 				1A0000000000000000000018 /* AriCapture */,
+				1A000000000000000000001A /* AriKitDiarizationFluidAudio */,
 			);
 			productName = Ari;
 			productReference = 1A0000000000000000000005 /* Ari.app */;
@@ -295,6 +298,10 @@
 		1A0000000000000000000018 /* AriCapture */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AriCapture;
+		};
+		1A000000000000000000001A /* AriKitDiarizationFluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AriKitDiarizationFluidAudio;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

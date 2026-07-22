@@ -9,7 +9,9 @@
 //  the frozen Tauri app's data dir (`com.meetily.ai`). The repository-backed screens (S6) then
 //  render real meetings. The legacy dir is only ever read — never written, never deleted.
 //
+import AriCapture
 import AriKit
+import AriKitDiarizationFluidAudio
 import AriViewModels
 import Foundation
 import Observation
@@ -41,6 +43,16 @@ final class AppEnvironment {
     /// once `database` exists (`status == .ready`) so it survives navigation — the recording
     /// page only ever renders it, never owns capture state itself.
     private(set) var recordingSession: RecordingSession?
+
+    /// The single offline diarization orchestrator (docs/plans/arikit-diarization.md §5 D9b) —
+    /// the FluidAudio provider is injected here, at the composition root, so core `AriKit` and
+    /// `AriViewModels` never import FluidAudio directly. Constructed once `database` exists.
+    private(set) var diarizationService: DiarizationService?
+
+    /// The count-hint source for the "Identify speakers" sheet (plan §2.6) — the Phase-3.5
+    /// calendar/participant-derived conformer; live EventKit (S7) slots in later behind the
+    /// same protocol without touching this wiring.
+    private(set) var speakerCountHintProvider: (any SpeakerCountHintProviding)?
 
     /// Bundle identifier decided 2026-07-20 (arikit-native-shell.md §9): the fresh Swift app.
     static let bundleIdentifier = "com.arivo.ari"
@@ -82,6 +94,13 @@ final class AppEnvironment {
                 makeCaptureService: { folder in LiveCaptureService(meetingFolder: folder) },
                 transcription: SpeechLiveTranscriptionService()
             )
+
+            diarizationService = DiarizationService(
+                database: db,
+                provider: FluidAudioDiarizationProvider(),
+                audioLoader: DiarizationAudioLoader()
+            )
+            speakerCountHintProvider = StoredCalendarHintProvider(database: db)
 
             status = .ready
         } catch {

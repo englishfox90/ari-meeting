@@ -303,4 +303,27 @@ public actor DiarizationService {
 
         try await database.persons.addParticipant(meetingId: meetingId, personId: personId, linkSource: "speaker", at: now)
     }
+
+    /// The full assignable-person list for the "Assign person…" picker's fallback list (plan §6
+    /// — shown below the ranked suggestions, plus "New person…" in the UI itself). A read-only
+    /// convenience; writes nothing.
+    public func assignablePeople() async throws -> [Person] {
+        try await database.persons.all()
+    }
+
+    /// Ranked assign-picker suggestions for one (usually provisional) speaker (plan §6 — ←
+    /// `SpeakerMatcher.rankedSuggestions`, parity-M3). Read-only: looks up the speaker's own
+    /// centroid and ranks it against every confirmed/owner voiceprint in the same
+    /// `embeddingModel` space that is linked to a person. Honest empty array when the speaker
+    /// can't be found or has no candidates — never a fabricated suggestion.
+    public func assignmentSuggestions(forSpeaker speakerId: SpeakerID) async throws -> [(personId: PersonID, score: Float)] {
+        guard let speaker = try await database.speakers.find(speakerId) else { return [] }
+        let embedding = CentroidCodec.vector(from: speaker.centroid)
+        let candidateSpeakers = try await database.speakers.matchCandidates(embeddingModel: speaker.embeddingModel)
+        let candidates: [(id: SpeakerID, personId: PersonID, centroid: [Float])] = candidateSpeakers.compactMap { candidate in
+            guard let personId = candidate.personId else { return nil }
+            return (id: candidate.id, personId: personId, centroid: CentroidCodec.vector(from: candidate.centroid))
+        }
+        return SpeakerMatcher.rankedSuggestions(embedding: embedding, candidates: candidates)
+    }
 }

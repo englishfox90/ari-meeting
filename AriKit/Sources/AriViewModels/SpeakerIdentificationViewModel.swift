@@ -48,15 +48,24 @@ public final class SpeakerIdentificationViewModel {
     /// An explicit user entry from either count-hint mode (H2), overriding `prefilledHint` when
     /// present.
     public private(set) var userHint: SpeakerCountHint?
+    /// The full assignable-person list for the sheet's "Assign person…" picker fallback list
+    /// (plan §6). Honest empty array until `loadAssignablePeople()` succeeds — never fabricated.
+    public private(set) var assignablePeople: [Person] = []
 
     /// Test-only synchronization hook (mirrors `RecordingSession.readinessProbeTask`): lets
     /// tests await the progress-consuming task deterministically instead of racing it.
     var progressTask: Task<Void, Never>?
 
     private let hintProvider: any SpeakerCountHintProviding
-    private let isRecording: @Sendable () -> Bool
+    /// Deliberately NOT `@Sendable` (D9b correction): this class is itself `@MainActor`, so
+    /// `isRecording()` is always constructed and invoked on the main actor — dropping the
+    /// unneeded `@Sendable` lets the app wire it straight to `@MainActor`-isolated state
+    /// (`AppEnvironment.recordingSession?.isActive`) without a capture-Sendability error.
+    private let isRecording: () -> Bool
     private let runOperation: RunOperation
     private let confirmOperation: ConfirmOperation
+    private let assignablePeopleOperation: AssignablePeopleOperation
+    private let assignmentSuggestionsOperation: AssignmentSuggestionsOperation
 
     typealias RunOperation = @Sendable (
         _ meetingId: MeetingID,
@@ -71,10 +80,16 @@ public final class SpeakerIdentificationViewModel {
         _ meetingId: MeetingID
     ) async throws -> Void
 
+    typealias AssignablePeopleOperation = @Sendable () async throws -> [Person]
+
+    typealias AssignmentSuggestionsOperation = @Sendable (
+        _ speakerId: SpeakerID
+    ) async throws -> [(personId: PersonID, score: Float)]
+
     public convenience init(
         service: DiarizationService,
         hintProvider: any SpeakerCountHintProviding,
-        isRecording: @escaping @Sendable () -> Bool
+        isRecording: @escaping () -> Bool
     ) {
         self.init(
             hintProvider: hintProvider,
@@ -84,20 +99,30 @@ public final class SpeakerIdentificationViewModel {
             },
             confirmOperation: { speakerId, personId, meetingId in
                 try await service.confirmSpeaker(speakerId, as: personId, inMeeting: meetingId)
+            },
+            assignablePeopleOperation: {
+                try await service.assignablePeople()
+            },
+            assignmentSuggestionsOperation: { speakerId in
+                try await service.assignmentSuggestions(forSpeaker: speakerId)
             }
         )
     }
 
     init(
         hintProvider: any SpeakerCountHintProviding,
-        isRecording: @escaping @Sendable () -> Bool,
+        isRecording: @escaping () -> Bool,
         runOperation: @escaping RunOperation,
-        confirmOperation: @escaping ConfirmOperation
+        confirmOperation: @escaping ConfirmOperation,
+        assignablePeopleOperation: @escaping AssignablePeopleOperation = { [] },
+        assignmentSuggestionsOperation: @escaping AssignmentSuggestionsOperation = { _ in [] }
     ) {
         self.hintProvider = hintProvider
         self.isRecording = isRecording
         self.runOperation = runOperation
         self.confirmOperation = confirmOperation
+        self.assignablePeopleOperation = assignablePeopleOperation
+        self.assignmentSuggestionsOperation = assignmentSuggestionsOperation
     }
 
     /// The hint that will actually drive a run: the user's explicit entry if any, else the
@@ -173,6 +198,18 @@ public final class SpeakerIdentificationViewModel {
             await consumer.value
             runState = .failed(String(describing: error))
         }
+    }
+
+    /// Loads the full assignable-person list for the sheet's "Assign person…" fallback list
+    /// (plan §6). A throwing source leaves `assignablePeople` honestly empty — never fabricated.
+    public func loadAssignablePeople() async {
+        assignablePeople = (try? await assignablePeopleOperation()) ?? []
+    }
+
+    /// Ranked assign-picker suggestions for one speaker (plan §6, parity-M3). A throwing source
+    /// returns an honestly empty array — never a fabricated suggestion.
+    public func assignmentSuggestions(for speakerId: SpeakerID) async -> [(personId: PersonID, score: Float)] {
+        (try? await assignmentSuggestionsOperation(speakerId)) ?? []
     }
 
     /// Confirm-before-enroll (plan §6): the single structural gate into
