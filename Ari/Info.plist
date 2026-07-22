@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ari/Info.plist — partial plist merged with the Xcode-generated one (GENERATE_INFOPLIST_FILE=YES
+  + INFOPLIST_FILE set → generated allowlisted keys merge ON TOP of these).
+
+  Holds ONLY the usage-description keys Xcode's INFOPLIST_KEY_* allowlist does NOT recognize and
+  therefore silently drops. NSMicrophoneUsageDescription + NSCalendarsFullAccessUsageDescription
+  are on the allowlist and stay as INFOPLIST_KEY_* build settings; NSAudioCaptureUsageDescription
+  is NOT, so it must live here or the Core Audio process-tap TCC prompt (system audio) never fires.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Ari captures system audio only during meetings you explicitly record.</string>
+</dict>
+</plist>
