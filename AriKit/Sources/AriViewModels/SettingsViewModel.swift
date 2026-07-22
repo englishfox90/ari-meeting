@@ -73,19 +73,36 @@ public final class SettingsViewModel {
 
     public private(set) var saveAudioRecordings: Bool = Defaults.saveAudioRecordings
     public private(set) var recordingStartNotification: Bool = Defaults.recordingStartNotification
+    /// The persisted microphone device UID (`kAudioDevicePropertyDeviceUID`), or `nil` = system
+    /// default. May be a stable UID that isn't currently attached — see `micDeviceIsPresent`.
     public private(set) var micDevice: String?
-    public private(set) var systemDevice: String?
     public private(set) var audioBackend: String = Defaults.audioBackend
+
+    /// Real enumerated input devices (docs/plans/settings-audio-devices.md §2.4), refreshed by
+    /// `refreshAudioDevices()`. Honestly empty until a refresh runs / on failure — never a
+    /// fabricated device entry.
+    public private(set) var audioInputDevices: [AudioInputDevice] = []
+    /// The current default OUTPUT device's real display name (what `SystemAudioTap` always
+    /// follows), or `nil` when honestly unresolved.
+    public private(set) var defaultOutputDeviceName: String?
 
     public let recordingStartNotificationAvailability: Availability = .disabled(
         reason: "Recording-start notifications haven't been ported to the Swift app yet."
     )
-    public let deviceSelectionAvailability: Availability = .disabled(
-        reason: "Audio device enumeration hasn't been ported to the Swift capture stack yet."
-    )
+    /// LIVE (docs/plans/settings-audio-devices.md) — real CoreAudio HAL enumeration binds into
+    /// the Swift capture stack; system audio is an honest read-only row (single global tap).
+    public let deviceSelectionAvailability: Availability = .live
     public let audioBackendAvailability: Availability = .disabled(
         reason: "Audio backend selection hasn't been ported to the Swift capture stack yet."
     )
+
+    /// Whether the persisted `micDevice` UID currently corresponds to an attached device.
+    /// `nil` (system default) is always "present". A stored-but-absent UID (unplugged, or a
+    /// stale legacy device *name* from before this feature) reads `false` — surfaced honestly by
+    /// the view, never silently cleared (No-Fake-State; also handles R4 for free).
+    public var micDeviceIsPresent: Bool {
+        micDevice == nil || audioInputDevices.contains { $0.uid == micDevice }
+    }
 
     // MARK: - Transcription (on-device Apple SpeechTranscriber — LIVE, plan §6)
 
@@ -114,12 +131,10 @@ public final class SettingsViewModel {
     /// honestly absent, never a fabricated zero-state (No-Fake-State).
     public private(set) var indexSummary: RecallIndexSummary?
 
-    public let rebuildIndexAvailability: Availability = .disabled(
-        reason: "There is no Swift reindex command yet."
-    )
-    public let nomicDownloadAvailability: Availability = .disabled(
-        reason: "The Nomic GGUF embedder download manager hasn't been ported to Swift yet."
-    )
+    public let rebuildIndexAvailability: Availability = .live
+    /// Live while a full backfill is running, driving the button's "Rebuilding…" label + disabled
+    /// state. Guarded re-entrant-safe by `rebuildIndex()` itself.
+    public private(set) var isRebuildingIndex: Bool = false
 
     // MARK: - Appearance (plan §2.4 — not backed by `SettingsRepository`)
 
@@ -130,17 +145,23 @@ public final class SettingsViewModel {
     private let database: AppDatabase
     private let secrets: SecretsStoring
     private let speechAssets: SpeechAssetProviding
+    private let audioDevices: AudioDeviceProviding
+    /// Single shared single-flight guard for `rebuildIndex()` — a fresh `ReindexCoordinator` per
+    /// call would defeat its whole purpose (overlap protection across taps/launches).
+    private let reindexCoordinator = ReindexCoordinator()
 
     public init(
         database: AppDatabase,
         secrets: SecretsStoring,
         appearance: AppearanceStore,
-        speechAssets: SpeechAssetProviding = SpeechAssetManager()
+        speechAssets: SpeechAssetProviding = SpeechAssetManager(),
+        audioDevices: AudioDeviceProviding = CoreAudioDeviceEnumerator()
     ) {
         self.database = database
         self.secrets = secrets
         self.appearance = appearance
         self.speechAssets = speechAssets
+        self.audioDevices = audioDevices
     }
 
     /// One-shot load: every property gets its honest stored value, or its documented default
@@ -160,7 +181,6 @@ public final class SettingsViewModel {
         recordingStartNotification = await (try? settings.bool(forKey: .recordingsStartNotification))
             ?? Defaults.recordingStartNotification
         micDevice = await (try? settings.string(forKey: .recordingsMicDevice)) ?? nil
-        systemDevice = await (try? settings.string(forKey: .recordingsSystemDevice)) ?? nil
         audioBackend = await (try? settings.string(forKey: .recordingsAudioBackend))
             ?? Defaults.audioBackend
 
@@ -184,6 +204,15 @@ public final class SettingsViewModel {
             ?? Defaults.recallEmbedder
 
         indexSummary = try? await database.recallIndex.indexSummary()
+
+        await refreshAudioDevices()
+    }
+
+    /// Re-reads real enumerated input devices + the current default-output name. Called at the
+    /// end of `load()` and from the "Refresh Devices" button.
+    public func refreshAudioDevices() async {
+        audioInputDevices = await audioDevices.inputDevices()
+        defaultOutputDeviceName = await audioDevices.defaultOutputDeviceName()
     }
 
     // MARK: - General setters
@@ -222,15 +251,6 @@ public final class SettingsViewModel {
             try await database.settings.remove(forKey: .recordingsMicDevice)
         }
         micDevice = value
-    }
-
-    public func setSystemDevice(_ value: String?) async throws {
-        if let value {
-            try await database.settings.setString(value, forKey: .recordingsSystemDevice)
-        } else {
-            try await database.settings.remove(forKey: .recordingsSystemDevice)
-        }
-        systemDevice = value
     }
 
     public func setAudioBackend(_ value: String) async throws {
@@ -330,6 +350,27 @@ public final class SettingsViewModel {
     public func setRecallEmbedder(_ value: String) async throws {
         try await database.settings.setString(value, forKey: .recallEmbedder)
         recallEmbedder = value
+    }
+
+    /// Force a full recall-index rebuild via the already-ported `Indexer`. Re-entrancy-guarded
+    /// here (a second tap while one is in flight is a no-op) AND single-flight-guarded inside the
+    /// `Indexer` itself via the shared `ReindexCoordinator`. `force: true` because a change of
+    /// embedder model tag (e.g. moving to `AppleContextualEmbedder`) means every meeting must be
+    /// re-embedded, not just changed ones. Refreshes `indexSummary` from the real repository
+    /// afterward — never a fabricated count.
+    public func rebuildIndex() async {
+        guard !isRebuildingIndex else { return }
+        isRebuildingIndex = true
+        defer { isRebuildingIndex = false }
+        let indexer = Indexer(
+            recallIndex: database.recallIndex,
+            transcripts: database.transcripts,
+            meetings: database.meetings,
+            embedder: AppleContextualEmbedder(),
+            coordinator: reindexCoordinator
+        )
+        _ = try? await indexer.reindexAll(force: true)
+        indexSummary = try? await database.recallIndex.indexSummary()
     }
 
     // MARK: - API keys (presence only — never expose key text)

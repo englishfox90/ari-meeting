@@ -18,6 +18,7 @@
 #if os(macOS)
     import AriKit
     import AVFoundation
+    import CoreAudio
     import Foundation
     import os
 
@@ -33,8 +34,20 @@
         private var emitter: RealtimeWindowEmitter?
         private var configChangeObserver: NSObjectProtocol?
         private var isRunning = false
+        /// The persisted CoreAudio device UID to prefer, if any (settings-audio-devices.md §2.2).
+        /// Set before `start()`; re-applied on every config-change rebuild since
+        /// `installTapAndStart` is the shared path for both. Never cleared on a failed apply —
+        /// an unplugged device falls back to system default this run, but a replug re-selects it
+        /// on the next rebuild/recording (No-Fake-State: we never silently forget the user's choice).
+        private var preferredDeviceUID: String?
 
         public init() {}
+
+        /// Sets the microphone device to prefer at the next `installTapAndStart` (the next
+        /// `start()` or config-change rebuild). `nil` = system default.
+        public func setPreferredDeviceUID(_ uid: String?) {
+            preferredDeviceUID = uid
+        }
 
         /// Starts the engine and installs the input tap. Emitted windows are already resampled
         /// to 48 kHz mono (← `Resampler`, via `RealtimeWindowEmitter`).
@@ -95,9 +108,37 @@
 
         /// Installs the tap at the hardware's own format (never a forced format — forcing
         /// crashes, arikit-native-shell.md §4.2) and starts the engine. Callable again after a
-        /// configuration-change stop to rebuild against the fresh hardware format.
+        /// configuration-change stop to rebuild against the fresh hardware format — which is
+        /// also how a `preferredDeviceUID` set via `setPreferredDeviceUID` gets (re-)applied
+        /// (settings-audio-devices.md §2.2 R2): `start()` and a config-change rebuild share this
+        /// one path, so device binding "survives the rebuild" for free.
+        ///
+        /// Revised ordering (R2): the input/output AU is shared on this engine, so calling
+        /// `setDeviceID` without a `reset()` + `prepare()` afterward leaves
+        /// `outputFormat(forBus:0)` at 0 channels. `setDeviceID` therefore runs BEFORE
+        /// `reset()`/`prepare()`, and the format is read only after both.
         private func installTapAndStart(emitter: RealtimeWindowEmitter) throws {
             let inputNode = engine.inputNode
+
+            if let preferredDeviceUID {
+                if let deviceID = CoreAudioDeviceEnumerator.resolveDeviceID(uid: preferredDeviceUID) {
+                    if (try? inputNode.auAudioUnit.setDeviceID(deviceID)) == nil {
+                        Self.logger
+                            .notice(
+                                "Could not select the preferred microphone device; falling back to the system default."
+                            )
+                    }
+                } else {
+                    // Unplugged (or a stale legacy device name, R4) — honest fallback, never an
+                    // error, and the persisted UID is left untouched so a replug re-selects it.
+                    Self.logger
+                        .notice("Preferred microphone device is not currently attached; using the system default.")
+                }
+            }
+
+            engine.reset()
+            engine.prepare()
+
             let format = inputNode.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else {
                 throw MicrophoneCaptureError.noInputFormat

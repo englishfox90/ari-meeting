@@ -30,8 +30,14 @@ public enum SettingKey: String, Sendable, CaseIterable {
     // Recordings
     case recordingsSaveAudio
     case recordingsStartNotification
+    /// Stores a stable CoreAudio `kAudioDevicePropertyDeviceUID`
+    /// (docs/plans/settings-audio-devices.md §4) — a real value binds into `MicrophoneCapture` at
+    /// recording start; it never encodes a mere display name.
     case recordingsMicDevice
-    case recordingsSystemDevice
+    // NOTE: `.recordingsSystemDevice` was retired (settings-audio-devices.md decision B) — system
+    // audio is a single global Core Audio process tap anchored to the default output device, so a
+    // persisted per-device selection could never take effect. Any orphaned row from an older build
+    // is simply unread.
     case recordingsAudioBackend
 
     // Transcription

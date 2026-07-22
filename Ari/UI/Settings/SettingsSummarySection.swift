@@ -3,16 +3,16 @@
 //  section).
 //
 //  Automatic summary, language, provider/model, and API-key entry all persist for real through
-//  `SettingsViewModel`. Per-provider model downloads and index rebuild stay honest-disabled
-//  (still Rust-only); the embedder choice itself persists live, but the Nomic GGUF download
-//  manager is honest-disabled the same way.
+//  `SettingsViewModel`. Per-provider model downloads stay honest-disabled (still Rust-only); the
+//  recall index rebuild is LIVE, wired to the already-ported `Indexer` via
+//  `SettingsViewModel.rebuildIndex()`.
 //
 //  The summary LLM is deliberately narrowed to two options: the on-device Qwen 4B (`.mlx`, the
 //  evaluated built-in model) and Claude CLI. Ollama is intentionally NOT offered here — not as a
-//  summary provider, not as an endpoint field, and not as a search embedder. The embedder default
-//  is Apple's on-device NLEmbedding (zero download); Nomic (GGUF) is the optional heavier local
-//  model. (This surfaces the Apple embedder that plan §1 had excluded — it is the only zero-download
-//  embedder, so removing Ollama requires it to be visible as the default.)
+//  summary provider, not as an endpoint field, and not as a search embedder. The search embedder
+//  is a single, non-configurable on-device backend: Apple's `NLContextualEmbedding`
+//  (`AppleContextualEmbedder`, zero download) — there is no other option to choose, so the
+//  embedder card is purely informational.
 //
 import AriKit
 import AriViewModels
@@ -261,53 +261,18 @@ struct SettingsSummarySection: View {
 
     private var embedderCard: some View {
         SettingsCard(title: "Meeting search embedder") {
-            VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-                embedderRow(
-                    backend: .apple,
-                    title: "Apple (on-device)",
-                    description: "Built-in on-device embeddings — default, no download."
-                )
-                embedderRow(
-                    backend: .nomicGguf,
-                    title: "Nomic (GGUF)",
-                    description: "A dedicated local GGUF embedding model."
-                )
-
-                if currentEmbedder == .nomicGguf {
-                    SettingsDisabledGroup(availability: viewModel.nomicDownloadAvailability) {
-                        Button("Download Nomic model") {}
-                            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                    }
-                }
-            }
-        }
-    }
-
-    /// The selected embedder, coercing a legacy stored `.ollama` value (no longer offered here) to
-    /// the on-device Apple default so a row is always highlighted.
-    private var currentEmbedder: EmbedBackend {
-        let stored = EmbedBackend.from(setting: viewModel.recallEmbedder)
-        return stored == .ollama ? .apple : stored
-    }
-
-    private func embedderRow(backend: EmbedBackend, title: String, description: String) -> some View {
-        let isSelected = currentEmbedder == backend
-        return Button {
-            Task { try? await viewModel.setRecallEmbedder(backend.id) }
-        } label: {
             HStack(spacing: MarginaliaSpacing.sm.value) {
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(Color.marginalia(isSelected ? .accent : .inkSecondary, in: scheme))
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color.marginalia(.accent, in: scheme))
                 VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-                    Text(title)
+                    Text("Apple (on-device)")
                         .marginaliaTextStyle(.body, in: scheme)
-                    Text(description)
+                    Text("Built-in on-device embeddings — no download.")
                         .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
                 }
                 Spacer(minLength: 0)
             }
         }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Index stats (honest, read-only)
@@ -326,8 +291,11 @@ struct SettingsSummarySection: View {
                 }
 
                 SettingsDisabledGroup(availability: viewModel.rebuildIndexAvailability) {
-                    Button("Rebuild index") {}
-                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                    Button(viewModel.isRebuildingIndex ? "Rebuilding…" : "Rebuild index") {
+                        Task { await viewModel.rebuildIndex() }
+                    }
+                    .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                    .disabled(viewModel.isRebuildingIndex)
                 }
             }
         }

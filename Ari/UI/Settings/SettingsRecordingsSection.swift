@@ -6,9 +6,15 @@
 //  Support layout, same recipe as `SettingsGeneralSection`) and opens it in Finder — never a
 //  fabricated path. The file-format caption is LIVE informational copy matching the real
 //  capture format (`AriCapture/AACRecorder.swift`: AAC-LC `.m4a`, mono). Recording-start
-//  notification, default mic/system device, and audio backend are HONEST-DISABLED — each
-//  surfaces its own real `Availability.disabled(reason:)` from the VM via
-//  `SettingsDisabledGroup`, never a fake-functional control.
+//  notification and audio backend are HONEST-DISABLED — each surfaces its own real
+//  `Availability.disabled(reason:)` from the VM via `SettingsDisabledGroup`, never a
+//  fake-functional control.
+//
+//  Microphone device selection is LIVE (docs/plans/settings-audio-devices.md): real CoreAudio
+//  HAL enumeration via `CoreAudioDeviceEnumerator`, persisting a stable device UID that binds
+//  into `MicrophoneCapture` at recording start. System audio is an honest READ-ONLY row (not a
+//  picker) — `SystemAudioTap` is a single global Core Audio process tap anchored to the default
+//  output device, so a per-device system-audio selection could never take effect.
 //
 import AppKit
 import AriKit
@@ -58,25 +64,34 @@ struct SettingsRecordingsSection: View {
             .padding(.horizontal, MarginaliaSpacing.md.value)
 
             SettingsCard(title: "Default Devices") {
-                SettingsDisabledGroup(availability: viewModel.deviceSelectionAvailability) {
-                    VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
-                        Picker(selection: micDeviceBinding) {
-                            Text(micDeviceDisplayName).tag(viewModel.micDevice)
-                        } label: {
-                            MarginaliaMenuLabel(title: "Microphone", scheme: scheme)
+                VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+                    Picker(selection: micDeviceBinding) {
+                        Text("System Default").tag(String?.none)
+                        ForEach(viewModel.audioInputDevices) { device in
+                            Text(device.name).tag(Optional(device.uid))
                         }
-                        .pickerStyle(.menu)
-
-                        Picker(selection: systemDeviceBinding) {
-                            Text(systemDeviceDisplayName).tag(viewModel.systemDevice)
-                        } label: {
-                            MarginaliaMenuLabel(title: "System Audio", scheme: scheme)
+                        // Honest row for a stored device that isn't currently attached — never
+                        // silently dropped (No-Fake-State); disabled since it can't be re-selected.
+                        if !viewModel.micDeviceIsPresent, let micDevice = viewModel.micDevice {
+                            Text("\(micDevice) (not connected)").tag(Optional(micDevice))
+                                .disabled(true)
                         }
-                        .pickerStyle(.menu)
-
-                        Button("Refresh Devices", action: {})
-                            .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+                    } label: {
+                        MarginaliaMenuLabel(title: "Microphone", scheme: scheme)
                     }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+
+                    VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                        MarginaliaMenuLabel(title: "System Audio", scheme: scheme)
+                        Text(viewModel.defaultOutputDeviceName ?? "Current output device unavailable")
+                            .marginaliaTextStyle(.callout, in: scheme, ink: .inkBody)
+                        Text("System audio always follows your Mac's default output device.")
+                            .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
+                    }
+
+                    Button("Refresh Devices", action: { Task { await viewModel.refreshAudioDevices() } })
+                        .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
                 }
             }
             .padding(.horizontal, MarginaliaSpacing.md.value)
@@ -121,21 +136,6 @@ struct SettingsRecordingsSection: View {
             get: { viewModel.micDevice },
             set: { newValue in Task { try? await viewModel.setMicDevice(newValue) } }
         )
-    }
-
-    private var systemDeviceBinding: Binding<String?> {
-        Binding(
-            get: { viewModel.systemDevice },
-            set: { newValue in Task { try? await viewModel.setSystemDevice(newValue) } }
-        )
-    }
-
-    private var micDeviceDisplayName: String {
-        viewModel.micDevice ?? "System Default"
-    }
-
-    private var systemDeviceDisplayName: String {
-        viewModel.systemDevice ?? "System Default"
     }
 
     /// The only audio backend this app has ever captured through (`architecture.md`: a Core

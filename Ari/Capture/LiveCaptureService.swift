@@ -19,10 +19,19 @@ struct LiveCaptureService: CaptureService {
     /// `.notDetermined` is the only honest static answer before a start attempt.
     private let microphone: MicrophoneCapture
 
-    init(meetingFolder: URL) {
+    /// The persisted microphone device UID to prefer, read once at `start()`
+    /// (docs/plans/settings-audio-devices.md §2.3). Defaults to `{ nil }` for the source-probe
+    /// path (`AppEnvironment`'s eager `sourceStatus()` construction), which never calls `start()`.
+    private let preferredMicDeviceUID: @Sendable () async -> String?
+
+    init(
+        meetingFolder: URL,
+        preferredMicDeviceUID: @escaping @Sendable () async -> String? = { nil }
+    ) {
         let microphone = MicrophoneCapture()
         let systemTap = SystemAudioTap()
         self.microphone = microphone
+        self.preferredMicDeviceUID = preferredMicDeviceUID
         coordinator = CaptureCoordinator(
             config: CaptureCoordinator.Config(meetingFolder: meetingFolder),
             microphone: microphone,
@@ -31,6 +40,9 @@ struct LiveCaptureService: CaptureService {
     }
 
     func start() async throws {
+        // Applied before the coordinator starts the same actor's `installTapAndStart` path, so
+        // the very first tap already binds to the chosen device (settings-audio-devices.md §2.3).
+        await microphone.setPreferredDeviceUID(preferredMicDeviceUID())
         try await coordinator.start()
     }
 

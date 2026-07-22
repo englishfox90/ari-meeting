@@ -12,13 +12,15 @@ struct SettingsViewModelTests {
     private func makeViewModel(
         database: AppDatabase,
         secrets: StubSecretsStoring = StubSecretsStoring(),
-        speechAssets: SpeechAssetProviding = StubSpeechAssetProviding()
+        speechAssets: SpeechAssetProviding = StubSpeechAssetProviding(),
+        audioDevices: AudioDeviceProviding = StubAudioDeviceProviding()
     ) -> SettingsViewModel {
         SettingsViewModel(
             database: database,
             secrets: secrets,
             appearance: AppearanceStore(),
-            speechAssets: speechAssets
+            speechAssets: speechAssets,
+            audioDevices: audioDevices
         )
     }
 
@@ -89,10 +91,7 @@ struct SettingsViewModelTests {
             viewModel.menuBarAvailability,
             viewModel.recordingAlertsAvailability,
             viewModel.recordingStartNotificationAvailability,
-            viewModel.deviceSelectionAvailability,
-            viewModel.audioBackendAvailability,
-            viewModel.rebuildIndexAvailability,
-            viewModel.nomicDownloadAvailability
+            viewModel.audioBackendAvailability
         ]
 
         for group in groups {
@@ -102,6 +101,147 @@ struct SettingsViewModelTests {
             }
             #expect(!reason.isEmpty)
         }
+    }
+
+    // MARK: - Audio devices (docs/plans/settings-audio-devices.md §5 Lane 1)
+
+    @Test("deviceSelectionAvailability is live — real CoreAudio HAL enumeration is wired")
+    func deviceSelectionIsLive() throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(database: database)
+
+        #expect(viewModel.deviceSelectionAvailability == .live)
+    }
+
+    @Test("refreshAudioDevices() + load() populate real devices from the injected provider")
+    func refreshAudioDevicesPopulatesFromProvider() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let devices = [
+            AudioInputDevice(uid: "built-in-mic", name: "MacBook Pro Microphone"),
+            AudioInputDevice(uid: "usb-mic-1", name: "USB Condenser Mic")
+        ]
+        let viewModel = makeViewModel(
+            database: database,
+            audioDevices: StubAudioDeviceProviding(devices: devices, outputName: "MacBook Pro Speakers")
+        )
+
+        // Before any load/refresh, the state is honestly empty — never fabricated.
+        #expect(viewModel.audioInputDevices.isEmpty)
+        #expect(viewModel.defaultOutputDeviceName == nil)
+
+        await viewModel.load()
+        #expect(viewModel.audioInputDevices == devices)
+        #expect(viewModel.defaultOutputDeviceName == "MacBook Pro Speakers")
+
+        // refreshAudioDevices() alone (not just load()) re-reads the same real state.
+        let freshViewModel = makeViewModel(
+            database: database,
+            audioDevices: StubAudioDeviceProviding(devices: devices, outputName: "MacBook Pro Speakers")
+        )
+        await freshViewModel.refreshAudioDevices()
+        #expect(freshViewModel.audioInputDevices == devices)
+        #expect(freshViewModel.defaultOutputDeviceName == "MacBook Pro Speakers")
+    }
+
+    @Test("an empty/failed provider is honest — no fabricated device entry")
+    func emptyProviderIsHonest() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(
+            database: database,
+            audioDevices: StubAudioDeviceProviding(devices: [], outputName: nil)
+        )
+
+        await viewModel.load()
+        #expect(viewModel.audioInputDevices.isEmpty)
+        #expect(viewModel.defaultOutputDeviceName == nil)
+    }
+
+    @Test("setMicDevice persists the UID; setMicDevice(nil) removes it")
+    func setMicDeviceRoundTrips() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(database: database)
+        await viewModel.load()
+
+        try await viewModel.setMicDevice("usb-mic-1")
+        #expect(viewModel.micDevice == "usb-mic-1")
+        var stored = try await database.settings.string(forKey: .recordingsMicDevice)
+        #expect(stored == "usb-mic-1")
+
+        try await viewModel.setMicDevice(nil)
+        #expect(viewModel.micDevice == nil)
+        stored = try await database.settings.string(forKey: .recordingsMicDevice)
+        #expect(stored == nil)
+    }
+
+    @Test("a stored-but-absent device UID is surfaced honestly, never silently cleared")
+    func storedButAbsentDeviceIsHonest() async throws {
+        let database = try AppDatabase.makeInMemory()
+        try await database.settings.setString("unplugged-mic-uid", forKey: .recordingsMicDevice)
+
+        let viewModel = makeViewModel(
+            database: database,
+            audioDevices: StubAudioDeviceProviding(
+                devices: [AudioInputDevice(uid: "built-in-mic", name: "MacBook Pro Microphone")]
+            )
+        )
+        await viewModel.load()
+
+        #expect(viewModel.micDevice == "unplugged-mic-uid")
+        #expect(viewModel.micDeviceIsPresent == false)
+    }
+
+    @Test("AudioInputDevice is Identifiable by uid, Equatable, and Sendable")
+    func audioInputDeviceConformances() async {
+        let device = AudioInputDevice(uid: "usb-mic-1", name: "USB Condenser Mic")
+        #expect(device.id == "usb-mic-1")
+        #expect(device == AudioInputDevice(uid: "usb-mic-1", name: "USB Condenser Mic"))
+
+        // Crosses an actor boundary — proves `Sendable` compiles, not just declares.
+        let echoed = await Task.detached { device }.value
+        #expect(echoed == device)
+    }
+
+    @Test("SettingKey no longer has a recordingsSystemDevice case (decision B)")
+    func recordingsSystemDeviceKeyIsRetired() {
+        let keys = SettingKey.allCases.map(\.rawValue)
+        #expect(!keys.contains("recordingsSystemDevice"))
+    }
+
+    @Test("a persisted mic-device UID is what the recording-start seam reads (end-to-end plumbing)")
+    func persistedMicDeviceUIDFeedsTheCaptureSeam() async throws {
+        let database = try AppDatabase.makeInMemory()
+        try await database.settings.setString("usb-mic-1", forKey: .recordingsMicDevice)
+
+        // Mirrors `AppEnvironment`'s `preferredMicDeviceUID` closure verbatim
+        // (`Ari/App/AppEnvironment.swift`: `{ await db.settings.string(forKey: .recordingsMicDevice) }`)
+        // — proving the DB-side half of the seam without requiring the app target under `swift test`.
+        let preferredMicDeviceUID: @Sendable () async -> String? = {
+            await (try? database.settings.string(forKey: .recordingsMicDevice)) ?? nil
+        }
+
+        let read = await preferredMicDeviceUID()
+        #expect(read == "usb-mic-1")
+    }
+
+    @Test("rebuildIndexAvailability is live — the Indexer is wired for real")
+    func rebuildIndexIsLive() throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(database: database)
+
+        #expect(viewModel.rebuildIndexAvailability == .live)
+    }
+
+    @Test("rebuildIndex() completes and refreshes indexSummary on an empty library")
+    func rebuildIndexCompletesOnEmptyLibrary() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(database: database)
+        await viewModel.load()
+
+        #expect(viewModel.isRebuildingIndex == false)
+        await viewModel.rebuildIndex()
+
+        #expect(viewModel.isRebuildingIndex == false)
+        #expect(viewModel.indexSummary?.indexedMeetings == 0)
     }
 
     @Test("transcription: engine available reports honest not-installed state")

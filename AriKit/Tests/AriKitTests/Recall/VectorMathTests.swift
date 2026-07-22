@@ -6,12 +6,14 @@
 import Testing
 @testable import AriKit
 
-@Suite struct VectorMathTests {
+struct VectorMathTests {
     @Test func backendParsesFromSettingWithAppleDefault() {
         #expect(EmbedBackend.from(setting: nil) == .apple)
         #expect(EmbedBackend.from(setting: "apple") == .apple)
-        #expect(EmbedBackend.from(setting: "nomic-gguf") == .nomicGguf)
-        #expect(EmbedBackend.from(setting: "ollama") == .ollama)
+        // Legacy stored values (from before the single-embedder collapse) still resolve to the
+        // one remaining case.
+        #expect(EmbedBackend.from(setting: "nomic-gguf") == .apple)
+        #expect(EmbedBackend.from(setting: "ollama") == .apple)
         #expect(EmbedBackend.from(setting: "weird") == .apple)
     }
 
@@ -36,10 +38,6 @@ import Testing
 
     @Test func backendIdAndModelTagAreStable() {
         #expect(EmbedBackend.apple.id == "apple")
-        #expect(EmbedBackend.nomicGguf.id == "nomic-gguf")
-        #expect(EmbedBackend.ollama.id == "ollama")
-        #expect(EmbedBackend.apple.modelTag == "apple-nl")
-        #expect(EmbedBackend.nomicGguf.modelTag == "nomic-embed-text-v1.5")
-        #expect(EmbedBackend.ollama.modelTag == "ollama:nomic-embed-text")
+        #expect(EmbedBackend.apple.modelTag == "apple-contextual")
     }
 }
