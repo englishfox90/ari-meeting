@@ -131,6 +131,7 @@ struct MeetingDetailView: View {
                     .labelsHidden()
                 }
             }
+            summaryToolbar
         }
         .navigationTitle(viewModel.meeting.value?.title ?? "Meeting")
         .task(id: meetingId) {
@@ -444,7 +445,19 @@ struct MeetingDetailView: View {
                     message: "A summary hasn't been generated for this meeting."
                 )
             }
-            summaryActionsBar
+            summaryStatusLine
+        }
+    }
+
+    /// The only summary status that belongs in the CONTENT column: an honest `.failed` line
+    /// (No-Fake-State). The generate/regenerate/template/instructions controls now live in the
+    /// window toolbar (`summaryToolbar`); the in-flight indicator is the toolbar's `ProgressView`
+    /// and, for the post-recording pipeline, `processingBanner`.
+    @ViewBuilder
+    private var summaryStatusLine: some View {
+        if let summaryVM = summaryViewModel, case let .failed(message) = summaryVM.state {
+            Text(message)
+                .marginaliaTextStyle(.callout, in: scheme, ink: .error)
         }
     }
 
@@ -507,65 +520,71 @@ struct MeetingDetailView: View {
 
     // MARK: - Summary actions (docs/plans/swift-meeting-generation-flow.md, Track 1)
 
-    /// Generate / Regenerate / change-template / Cancel — rendered only once `summaryViewModel`
-    /// resolves (via `.task`'s lazy build), so this never shows a dead-looking control while
-    /// `AppEnvironment.bootstrap()` is still constructing `summaryRunner` (No-Fake-State). Reads
-    /// `summaryViewModel` directly (never mutates `@State` from inside body construction — the
-    /// lazy build itself only ever runs from `.task` or a button's own action closure, mirroring
-    /// `speakerIdentificationViewModel`'s discipline).
-    @ViewBuilder
-    private var summaryActionsBar: some View {
-        if let summaryVM = summaryViewModel {
-            VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-                HStack(spacing: MarginaliaSpacing.sm.value) {
-                    Picker(selection: templateSelectionBinding(summaryVM)) {
-                        Text("Auto (suggest)").tag(nil as String?)
-                        ForEach(summaryVM.templates) { option in
-                            Text(option.name).tag(option.id as String?)
-                        }
-                    } label: {
-                        MarginaliaMenuLabel(title: "Template", scheme: scheme)
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(minWidth: 160)
-                    .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
-
-                    instructionsControl(summaryVM)
-
-                    if viewModel.summary != nil {
-                        Button("Regenerate") {
-                            generateSummary()
-                        }
-                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                        .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
-                    } else {
-                        Button("Generate summary") {
-                            generateSummary()
-                        }
-                        .buttonStyle(.marginalia(.primary, .regular, in: scheme))
-                        .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
-                    }
-
-                    if isSummaryGenerating(summaryVM) {
-                        Button("Cancel") {
-                            Task { await summaryVM.cancel(meetingId: meetingId) }
-                        }
-                        .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+    /// The summary controls, rendered as native items in the WINDOW TOOLBAR (macOS 26 Liquid
+    /// Glass) rather than an inline content-column bar — the same chrome-layer rule the narrow
+    /// section switcher already follows, and the Preview/Notes-style toolbar the old app used
+    /// ("Regenerate Summary · Instructions · Template"). Native toolbar styling (no Marginalia
+    /// button styles) is deliberate: it lets the system draw the glass grouping.
+    ///
+    /// Rendered only once `summaryViewModel` resolves (via `.task`'s lazy build), so no dead
+    /// control shows while `AppEnvironment.bootstrap()` is still constructing `summaryRunner`
+    /// (No-Fake-State). Reads `summaryViewModel` directly — never mutates `@State` during content
+    /// building (the lazy build runs only from `.task` or a button action).
+    @ToolbarContentBuilder
+    private var summaryToolbar: some ToolbarContent {
+        if let summaryVM = summaryViewModel, !isNarrowLayout || narrowSection == .summary {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Picker("Template", selection: templateSelectionBinding(summaryVM)) {
+                    Text("Auto (suggest)").tag(nil as String?)
+                    ForEach(summaryVM.templates) { option in
+                        Text(option.name).tag(option.id as String?)
                     }
                 }
+                .pickerStyle(.menu)
+                .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
+                .help("Choose the summary template")
+
+                Button {
+                    showingInstructions = true
+                } label: {
+                    Label(
+                        "Instructions",
+                        systemImage: hasCustomInstructions(summaryVM) ? "pencil.circle.fill" : "pencil"
+                    )
+                }
+                .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
+                .help("Add custom instructions to steer the summary")
+                .popover(isPresented: $showingInstructions, arrowEdge: .bottom) {
+                    instructionsPopover(summaryVM)
+                }
+
                 if isSummaryGenerating(summaryVM) {
-                    Text("Generating summary…")
-                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                }
-                // Honest failure line (No-Fake-State): the prior summary above is untouched —
-                // this VM carries no summary state of its own to clobber.
-                if case let .failed(message) = summaryVM.state {
-                    Text(message)
-                        .marginaliaTextStyle(.callout, in: scheme, ink: .error)
+                    ProgressView()
+                        .controlSize(.small)
+                    Button(role: .cancel) {
+                        Task { await summaryVM.cancel(meetingId: meetingId) }
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
+                    }
+                } else {
+                    Button {
+                        generateSummary()
+                    } label: {
+                        Label(
+                            viewModel.summary != nil ? "Regenerate Summary" : "Generate Summary",
+                            systemImage: "sparkles"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isCoordinatorProcessingThisMeeting)
+                    .help(viewModel.summary != nil ? "Regenerate the summary" : "Generate a summary")
                 }
             }
         }
+    }
+
+    private func hasCustomInstructions(_ summaryVM: MeetingSummaryViewModel) -> Bool {
+        !summaryVM.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func isSummaryGenerating(_ summaryVM: MeetingSummaryViewModel) -> Bool {
@@ -580,50 +599,36 @@ struct MeetingDetailView: View {
         )
     }
 
-    /// The "Instructions" control (← the old app's custom-instruction toolbar button): a button
-    /// that opens a popover with a themed multi-line editor bound to
-    /// `summaryVM.customInstructions`. A filled `pencil` glyph honestly signals when steering text
-    /// is actually present (No-Fake-State) — nothing is implied when the field is empty. The text
-    /// is injected into the summary prompt only on the next Generate/Regenerate.
-    @ViewBuilder
-    private func instructionsControl(_ summaryVM: MeetingSummaryViewModel) -> some View {
-        let hasInstructions = !summaryVM.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        Button {
-            showingInstructions = true
-        } label: {
-            Label("Instructions", systemImage: hasInstructions ? "pencil.circle.fill" : "pencil")
-        }
-        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-        .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
-        .help("Add custom instructions to steer the summary")
-        .popover(isPresented: $showingInstructions, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-                Text("Instructions")
-                    .marginaliaTextStyle(.caption, in: scheme)
-                Text("Extra context or steering added to the summary prompt. Applied on the next Generate or Regenerate.")
-                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                MarginaliaTextEditor(
-                    text: instructionsBinding(summaryVM),
-                    prompt: "e.g. Focus on decisions and blockers; keep it concise.",
-                    scheme: scheme,
-                    minHeight: 96
-                )
-                .frame(width: 320)
-                HStack {
-                    Spacer()
-                    Button("Clear") {
-                        summaryVM.customInstructions = ""
-                    }
-                    .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
-                    .disabled(!hasInstructions)
-                    Button("Done") {
-                        showingInstructions = false
-                    }
-                    .buttonStyle(.marginalia(.primary, .regular, in: scheme))
+    /// The popover shown by the toolbar's "Instructions" button: a themed multi-line editor bound
+    /// to `summaryVM.customInstructions`. The text is injected into the summary prompt only on the
+    /// next Generate/Regenerate (No-Fake-State — nothing changes on screen until then).
+    private func instructionsPopover(_ summaryVM: MeetingSummaryViewModel) -> some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+            Text("Instructions")
+                .marginaliaTextStyle(.caption, in: scheme)
+            Text("Extra context or steering added to the summary prompt. Applied on the next Generate or Regenerate.")
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+            MarginaliaTextEditor(
+                text: instructionsBinding(summaryVM),
+                prompt: "e.g. Focus on decisions and blockers; keep it concise.",
+                scheme: scheme,
+                minHeight: 96
+            )
+            .frame(width: 320)
+            HStack {
+                Spacer()
+                Button("Clear") {
+                    summaryVM.customInstructions = ""
                 }
+                .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+                .disabled(!hasCustomInstructions(summaryVM))
+                Button("Done") {
+                    showingInstructions = false
+                }
+                .buttonStyle(.marginalia(.primary, .regular, in: scheme))
             }
-            .padding(MarginaliaSpacing.md.value)
         }
+        .padding(MarginaliaSpacing.md.value)
     }
 
     private func instructionsBinding(_ summaryVM: MeetingSummaryViewModel) -> Binding<String> {
