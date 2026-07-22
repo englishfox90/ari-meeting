@@ -167,6 +167,20 @@ struct MeetingSummaryViewModelTests {
         #expect(viewModel.selectedTemplateID == nil)
     }
 
+    @Test("reset clears a stale .failed/.generating state back to .idle")
+    func resetClearsStaleState() async {
+        // .failed → .idle (the cross-meeting bleed guard: a previous meeting's error must not
+        // survive onto the next meeting the shared view model is reused for).
+        let failing = makeViewModel(generateOperation: { _, _, _ in throw StubError() })
+        _ = await failing.generate(meetingId: meetingId, speakerCount: nil)
+        guard case .failed = failing.state else {
+            Issue.record("precondition: expected .failed, got \(failing.state)")
+            return
+        }
+        failing.reset()
+        #expect(failing.state == .idle)
+    }
+
     @Test("cancel forwards to the injected cancel operation")
     func cancelForwardsToOperation() async {
         let spy = CallSpy()

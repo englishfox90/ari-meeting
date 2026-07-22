@@ -396,12 +396,20 @@ struct MeetingDetailView: View {
     /// resolved yet, never a fabricated `0`.
     private func generateSummary() {
         guard let summaryVM = summaryViewModelIfAvailable() else { return }
+        let targetMeetingId = meetingId
         let speakerCount = viewModel.speakerNames.isEmpty ? nil : viewModel.speakerNames.count
         Task {
-            if await summaryVM.generate(meetingId: meetingId, speakerCount: speakerCount) != nil {
-                await viewModel.load(meetingId)
-                summaryVM.restoreSelection(from: viewModel.summary)
-            }
+            guard await summaryVM.generate(meetingId: targetMeetingId, speakerCount: speakerCount) != nil else { return }
+            // Only fold the result back in if the shared detail view still shows the meeting we
+            // generated for. Generation is long-running and the `viewModel`/`summaryVM` are a
+            // single `@State` pair reused across the split detail column, so if the user has
+            // since selected another meeting, ITS own `.task(id:)` owns the reload — folding this
+            // meeting's summary in here would bleed it under the other meeting's title
+            // (No-Fake-State). The generation itself is never cancelled by the switch; only this
+            // stale reload is skipped.
+            guard viewModel.meeting.value?.id == targetMeetingId else { return }
+            await viewModel.load(targetMeetingId)
+            summaryVM.restoreSelection(from: viewModel.summary)
         }
     }
 
