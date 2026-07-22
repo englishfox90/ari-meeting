@@ -301,7 +301,18 @@ final class AppEnvironment {
     /// returning, so capture begins without a manual consent tap.
     func startRecordingFromReminder(eventId: CalendarEventID) async {
         pendingNavigation = .section(.newMeeting)
-        guard let database, let session = recordingSession, !session.isActive else { return }
+        guard let database, let session = recordingSession else { return }
+
+        // Only prime + auto-start from a clean or terminal phase. If a recording — OR a manual
+        // consent prompt — is already in flight, just surface the recording page and let the user
+        // drive it, rather than silently resolving an in-flight consent decision (`.consentPrompt`
+        // reports `isActive == false`, so a bare `!isActive` guard would clobber it).
+        switch session.phase {
+        case .idle, .saved, .failed:
+            break
+        case .consentPrompt, .starting, .recording, .stopping:
+            return
+        }
 
         let event = try? await database.calendarEvents.find(eventId)
         session.reset()

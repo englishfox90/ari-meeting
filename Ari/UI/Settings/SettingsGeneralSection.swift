@@ -54,13 +54,14 @@ struct SettingsGeneralSection: View {
                 }
 
                 VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-                    if viewModel.notificationAuthorization == .denied {
-                        MarginaliaBanner(
-                            kind: .info,
-                            message: "Notifications are turned off for Ari in System Settings — "
-                                + "reminders and summary alerts won't appear until you allow them.",
-                            scheme: scheme
-                        )
+                    if let message = notificationAuthorizationBannerMessage {
+                        MarginaliaBanner(kind: .info, message: message, scheme: scheme)
+                        if viewModel.notificationAuthorization == .notDetermined {
+                            Button("Allow Notifications") {
+                                Task { await viewModel.requestNotificationAuthorization() }
+                            }
+                            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                        }
                     }
 
                     SettingsGroup(header: "Notifications") {
@@ -169,6 +170,23 @@ struct SettingsGeneralSection: View {
             get: { viewModel.reminderLeadMinutes },
             set: { newValue in Task { try? await viewModel.setReminderLeadMinutes(newValue) } }
         )
+    }
+
+    /// The honest notification-authorization banner copy — `nil` (no banner) when the OS will
+    /// deliver (`.authorized`/`.provisional`) or the state is unknown/unwired. `.notDetermined`
+    /// pairs with an "Allow Notifications" button; `.denied` points to System Settings (the OS
+    /// won't re-prompt once denied).
+    private var notificationAuthorizationBannerMessage: String? {
+        switch viewModel.notificationAuthorization {
+        case .denied:
+            return "Notifications are turned off for Ari in System Settings — reminders and "
+                + "summary alerts won't appear until you allow them."
+        case .notDetermined:
+            return "Ari hasn't been allowed to send notifications yet — allow them so reminders "
+                + "and summary alerts can appear."
+        case .authorized, .provisional, .none:
+            return nil
+        }
     }
 
     // MARK: - Recordings folder

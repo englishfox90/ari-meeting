@@ -303,6 +303,14 @@ public final class SettingsViewModel {
         await requestAuthorizationIfEnabling(value)
     }
 
+    /// Explicit "Allow Notifications" action from the honest `.notDetermined` banner: prompt the OS,
+    /// refresh the surfaced authorization, and reconcile so any now-permitted reminders schedule.
+    public func requestNotificationAuthorization() async {
+        guard let notifications else { return }
+        notificationAuthorization = await notifications.requestAuthorization()
+        await onNotificationSettingsChanged?()
+    }
+
     /// Prompt for notification authorization the first time the user turns a notification on. A
     /// no-op when turning off, when no scheduler is wired, or once a decision (grant/deny) is made —
     /// the honest denied state then surfaces via the Settings banner instead of re-prompting.

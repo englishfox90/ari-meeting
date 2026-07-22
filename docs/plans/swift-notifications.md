@@ -49,8 +49,14 @@ The framework-touching code is isolated in the app target so `AriViewModels` nev
 - **Settings** — 3 new `SettingKey`s (`notificationsMeetingReminders`,
   `notificationsReminderLeadMinutes` (string-encoded int), `notificationsSummaryReady`). New
   `SettingsViewModel` prefs/setters/`Availability`, plus an honest `notificationAuthorization` banner
-  when the OS has denied notifications (No-Fake-State — the preference is real; we honestly say the
-  OS is blocking delivery). Lead-time picker options: 1 / 5 / 10 / 15 min (default 5).
+  (No-Fake-State — the preference is real; we honestly surface the OS permission state): `.denied`
+  points to System Settings, `.notDetermined` pairs with an "Allow Notifications" button. Lead-time
+  picker options: 1 / 5 / 10 / 15 min (default 5).
+- **Authorization** — the toggles default ON, so on first launch `ReminderRefreshScheduler`'s first
+  pass calls `MeetingNotifications.prepareForLaunch()`, which requests OS authorization once when a
+  feature is enabled but permission is still `.notDetermined` (otherwise a shipped-on toggle would
+  read "on" while the feature is silently dead — never prompted, reconcile bails). The periodic
+  reconcile loop itself never prompts (status-only), so it can't nag from the background.
 - **Post-recording pipeline** — `MeetingProcessingCoordinator` gained an optional
   `notifySummaryGenerated(meetingId, elapsed)` hook, fired only after a summary *actually* generated,
   carrying the real generation `Duration` (`ContinuousClock`). The notifier decides "long enough".

@@ -66,6 +66,25 @@ public final class MeetingNotifications: NotificationAuthorizing {
         return status
     }
 
+    // MARK: - Launch preparation
+
+    /// Called once at launch. If any notification feature is enabled (both default ON), ensure the
+    /// OS has been asked for permission at least once — otherwise the default-ON toggles are
+    /// silently dead on a fresh install (never prompted → `.notDetermined` → `reconcileReminders`
+    /// bails at the delivery guard, and nothing explains why). Idempotent: once the user has
+    /// decided, `requestAuthorization` surfaces no second prompt. Always reconciles afterward.
+    public func prepareForLaunch() async {
+        let settings = database.settings
+        let remindersOn = await (try? settings.bool(forKey: .notificationsMeetingReminders))
+            ?? SettingsViewModel.Defaults.meetingReminders
+        let summaryOn = await (try? settings.bool(forKey: .notificationsSummaryReady))
+            ?? SettingsViewModel.Defaults.summaryReadyNotification
+        if remindersOn || summaryOn, await refreshAuthorization() == .notDetermined {
+            await requestAuthorization()
+        }
+        await reconcileReminders()
+    }
+
     // MARK: - Calendar reminders (F5)
 
     /// Reconcile the OS's pending meeting reminders against the calendar + current settings. Safe to

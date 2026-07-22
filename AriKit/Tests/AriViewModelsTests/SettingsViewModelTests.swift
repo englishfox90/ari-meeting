@@ -367,6 +367,27 @@ struct SettingsViewModelTests {
         #expect(await spy.count == 1)
     }
 
+    @Test("requestNotificationAuthorization prompts, surfaces the result, and reconciles")
+    func requestNotificationAuthorizationUpdatesSurface() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let authorizer = FakeAuthorizer(.notDetermined)
+        let spy = ReconcileSpy()
+        let viewModel = SettingsViewModel(
+            database: database,
+            secrets: StubSecretsStoring(),
+            appearance: AppearanceStore(),
+            notifications: authorizer,
+            onNotificationSettingsChanged: { await spy.record() }
+        )
+        await viewModel.load()
+
+        await viewModel.requestNotificationAuthorization()
+
+        #expect(await authorizer.requestCount == 1)
+        #expect(viewModel.notificationAuthorization == .authorized)
+        #expect(await spy.count == 1)
+    }
+
     @Test("changing the lead time persists and reconciles")
     func leadTimePersistsAndReconciles() async throws {
         let database = try AppDatabase.makeInMemory()

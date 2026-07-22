@@ -98,6 +98,43 @@ struct MeetingNotificationsTests {
         }
     }
 
+    // MARK: - Launch preparation
+
+    @Test("prepareForLaunch requests authorization when a feature is on but permission is undetermined")
+    func prepareRequestsAuthorizationWhenNeeded() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let scheduler = FakeNotificationScheduler(authorization: .notDetermined)
+        let notifications = makeNotifications(db: db, scheduler: scheduler)
+
+        await notifications.prepareForLaunch()
+
+        #expect(await scheduler.requestAuthorizationCallCount == 1)
+    }
+
+    @Test("prepareForLaunch does not prompt when all notification features are off")
+    func prepareSkipsWhenAllDisabled() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.settings.setBool(false, forKey: .notificationsMeetingReminders)
+        try await db.settings.setBool(false, forKey: .notificationsSummaryReady)
+        let scheduler = FakeNotificationScheduler(authorization: .notDetermined)
+        let notifications = makeNotifications(db: db, scheduler: scheduler)
+
+        await notifications.prepareForLaunch()
+
+        #expect(await scheduler.requestAuthorizationCallCount == 0)
+    }
+
+    @Test("prepareForLaunch does not re-prompt once authorization is already decided")
+    func prepareSkipsWhenAlreadyDecided() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let scheduler = FakeNotificationScheduler(authorization: .authorized)
+        let notifications = makeNotifications(db: db, scheduler: scheduler)
+
+        await notifications.prepareForLaunch()
+
+        #expect(await scheduler.requestAuthorizationCallCount == 0)
+    }
+
     // MARK: - Summary-ready
 
     @Test("summaryGenerated posts for a long generation when enabled + authorized")

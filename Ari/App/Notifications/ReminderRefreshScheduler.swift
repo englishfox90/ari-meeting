@@ -23,9 +23,12 @@ final class ReminderRefreshScheduler: Sendable {
     init(notifications: MeetingNotifications) {
         task = Task {
             try? await Task.sleep(for: Self.initialDelay)
+            // First pass also requests OS authorization if a default-ON feature was never prompted,
+            // so the shipped-on toggles aren't silently dead on a fresh install.
+            await notifications.prepareForLaunch()
             while !Task.isCancelled {
-                await notifications.reconcileReminders()
                 try? await Task.sleep(for: Self.interval)
+                await notifications.reconcileReminders()
             }
         }
     }
