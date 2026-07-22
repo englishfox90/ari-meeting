@@ -107,7 +107,11 @@ struct RootSplitView: View {
         case .ask:
             placeholder("Ask meetings isn't ready yet.")
         case .calendar:
-            placeholder("Calendar isn't connected yet.")
+            CalendarPageView(
+                database: database,
+                calendarSource: environment.calendarSource,
+                selection: $selectedSection
+            )
         case .settings:
             SettingsView(database: database, calendarSource: environment.calendarSource)
         }
