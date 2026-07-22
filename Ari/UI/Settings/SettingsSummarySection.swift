@@ -2,11 +2,17 @@
 //  SettingsSummarySection.swift — Summary settings (docs/plans/settings-ui.md §6, the largest
 //  section).
 //
-//  Automatic summary, language, provider/model, Ollama endpoint, and API-key entry all persist
-//  for real through `SettingsViewModel`. Per-provider model downloads and index rebuild stay
-//  honest-disabled (still Rust-only); the embedder choice itself persists live, but the Nomic
-//  GGUF download manager is honest-disabled the same way. Apple/apple-foundation/apple embedder
-//  are deliberately excluded from this screen (plan §1) — never add them back here.
+//  Automatic summary, language, provider/model, and API-key entry all persist for real through
+//  `SettingsViewModel`. Per-provider model downloads and index rebuild stay honest-disabled
+//  (still Rust-only); the embedder choice itself persists live, but the Nomic GGUF download
+//  manager is honest-disabled the same way.
+//
+//  The summary LLM is deliberately narrowed to two options: the on-device Qwen 4B (`.mlx`, the
+//  evaluated built-in model) and Claude CLI. Ollama is intentionally NOT offered here — not as a
+//  summary provider, not as an endpoint field, and not as a search embedder. The embedder default
+//  is Apple's on-device NLEmbedding (zero download); Nomic (GGUF) is the optional heavier local
+//  model. (This surfaces the Apple embedder that plan §1 had excluded — it is the only zero-download
+//  embedder, so removing Ollama requires it to be visible as the default.)
 //
 import AriKit
 import AriViewModels
@@ -18,8 +24,6 @@ struct SettingsSummarySection: View {
     @Environment(\.colorScheme) private var scheme
 
     @State private var modelText: String = ""
-    @State private var endpointText: String = ""
-    @State private var endpointValidationMessage: String?
     @State private var customLanguageText: String = ""
     @State private var apiKeyText: String = ""
     @State private var hasStoredAPIKey: Bool = false
@@ -35,7 +39,7 @@ struct SettingsSummarySection: View {
         ("ja", "Japanese")
     ]
 
-    private static let visibleProviders: [ProviderKind] = [.mlx, .ollama, .claudeCLI]
+    private static let visibleProviders: [ProviderKind] = [.mlx, .claudeCLI]
 
     var body: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
@@ -54,14 +58,10 @@ struct SettingsSummarySection: View {
         }
         .task {
             modelText = viewModel.summaryModel
-            endpointText = viewModel.summaryOllamaEndpoint
             hasStoredAPIKey = await viewModel.hasAPIKey(for: viewModel.summaryProvider)
         }
         .onChange(of: viewModel.summaryModel) { _, newValue in
             modelText = newValue
-        }
-        .onChange(of: viewModel.summaryOllamaEndpoint) { _, newValue in
-            endpointText = newValue
         }
         .onChange(of: viewModel.summaryProvider) { _, newProvider in
             Task {
@@ -154,35 +154,23 @@ struct SettingsSummarySection: View {
                     Task { try? await viewModel.setSummaryModel(modelText) }
                 }
 
-                VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-                    MarginaliaTextField(
-                        text: $endpointText,
-                        prompt: "Ollama endpoint (e.g. http://localhost:11434)",
-                        scheme: scheme
-                    )
-                    .onSubmit {
-                        validateEndpoint()
-                        Task {
-                            try? await viewModel.setSummaryOllamaEndpoint(
-                                endpointText.trimmingCharacters(in: .whitespacesAndNewlines)
-                            )
-                        }
-                    }
-
-                    if let endpointValidationMessage {
-                        MarginaliaBanner(kind: .error, message: endpointValidationMessage, scheme: scheme)
-                    }
-
-                    Text("Ollama access stays loopback-only — enforced inside the recall engine, not here.")
-                        .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
-                }
+                Text(
+                    "On-device Qwen 4B runs fully offline. Claude CLI shells out to your local `claude` — no API key needed."
+                )
+                .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
             }
         }
     }
 
     private var providerBinding: Binding<ProviderKind> {
         Binding(
-            get: { ProviderKind.from(viewModel.summaryProvider) ?? .mlx },
+            get: {
+                // Coerce any stored provider that is no longer offered here (e.g. a legacy
+                // `.ollama` selection) to the on-device default, so the picker always has a
+                // valid, visible selection.
+                let stored = ProviderKind.from(viewModel.summaryProvider) ?? .mlx
+                return Self.visibleProviders.contains(stored) ? stored : .mlx
+            },
             set: { newProvider in
                 Task { try? await viewModel.setSummaryProvider(newProvider.rawValue) }
             }
@@ -191,25 +179,10 @@ struct SettingsSummarySection: View {
 
     private func providerLabel(_ provider: ProviderKind) -> String {
         switch provider {
-        case .mlx: "Built-in AI (on-device)"
-        case .ollama: "Ollama (local)"
+        case .mlx: "Qwen 4B (on-device)"
         case .claudeCLI: "Claude CLI"
         default: provider.rawValue
         }
-    }
-
-    private func validateEndpoint() {
-        let trimmed = endpointText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard
-            let url = URL(string: trimmed),
-            let scheme = url.scheme,
-            ["http", "https"].contains(scheme.lowercased()),
-            url.host != nil
-        else {
-            endpointValidationMessage = "Enter a valid http(s) URL, e.g. http://localhost:11434."
-            return
-        }
-        endpointValidationMessage = nil
     }
 
     // MARK: - API key
@@ -296,9 +269,9 @@ struct SettingsSummarySection: View {
         SettingsCard(title: "Meeting search embedder") {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
                 embedderRow(
-                    backend: .ollama,
-                    title: "Ollama",
-                    description: "Local Ollama embedding endpoint — default."
+                    backend: .apple,
+                    title: "Apple (on-device)",
+                    description: "Built-in on-device embeddings — default, no download."
                 )
                 embedderRow(
                     backend: .nomicGguf,
@@ -306,7 +279,7 @@ struct SettingsSummarySection: View {
                     description: "A dedicated local GGUF embedding model."
                 )
 
-                if EmbedBackend.from(setting: viewModel.recallEmbedder) == .nomicGguf {
+                if currentEmbedder == .nomicGguf {
                     SettingsDisabledGroup(availability: viewModel.nomicDownloadAvailability) {
                         Button("Download Nomic model") {}
                             .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
@@ -316,8 +289,15 @@ struct SettingsSummarySection: View {
         }
     }
 
+    /// The selected embedder, coercing a legacy stored `.ollama` value (no longer offered here) to
+    /// the on-device Apple default so a row is always highlighted.
+    private var currentEmbedder: EmbedBackend {
+        let stored = EmbedBackend.from(setting: viewModel.recallEmbedder)
+        return stored == .ollama ? .apple : stored
+    }
+
     private func embedderRow(backend: EmbedBackend, title: String, description: String) -> some View {
-        let isSelected = EmbedBackend.from(setting: viewModel.recallEmbedder) == backend
+        let isSelected = currentEmbedder == backend
         return Button {
             Task { try? await viewModel.setRecallEmbedder(backend.id) }
         } label: {
