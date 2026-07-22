@@ -150,6 +150,13 @@ struct IdentifySpeakersSheet: View {
             }
             .buttonStyle(.marginalia(.primary, .large, in: scheme))
             .disabled(!viewModel.canRun || isRunning)
+            if !viewModel.canRun, !isRunning {
+                // Honest disabled state: the count hint is mandatory (the diarizer collapses
+                // multi-speaker audio without one — plan §1), so say what's needed instead of
+                // leaving a dead-looking button.
+                Text("Enter how many people spoke — a best guess is fine with \u{201C}Not sure\u{201D}.")
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+            }
         }
     }
 

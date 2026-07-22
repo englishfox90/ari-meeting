@@ -109,7 +109,18 @@ public struct MarginaliaButtonStyle: ButtonStyle {
         self.scheme = scheme
     }
 
+    /// Disabled controls MUST read as disabled (No-Fake-State: a vivid button that ignores
+    /// clicks is a lie). 0.4 tracks the system's disabled-control dimming.
+    @Environment(\.isEnabled) private var isEnabled
+
     public func makeBody(configuration: Configuration) -> some View {
+        styledBody(configuration: configuration)
+            .opacity(isEnabled ? 1 : 0.4)
+            .animation(.easeOut(duration: 0.12), value: isEnabled)
+    }
+
+    @ViewBuilder
+    private func styledBody(configuration: Configuration) -> some View {
         let spec = role.spec
         let isPressed = configuration.isPressed
         let shape = RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
