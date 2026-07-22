@@ -31,6 +31,27 @@ struct TemplateRegistryTests {
         #expect(!template.sections.isEmpty)
     }
 
+    /// All seven shipped defaults (the two `defaults.rs` built-ins plus the five Rust served only
+    /// from its bundled-templates directory) must be inlined, parse as valid JSON, and expose the
+    /// display name the old app's picker showed.
+    @Test func allSevenDefaultTemplatesLoadWithExpectedNames() throws {
+        let expected: [(id: String, name: String)] = [
+            ("daily_standup", "Daily Standup"),
+            ("standard_meeting", "Standard Meeting Notes"),
+            ("one_on_one", "1:1 Meeting"),
+            ("project_sync", "Project Sync / Status Update"),
+            ("retrospective", "Retrospective (Agile)"),
+            ("sales_marketing_client_call", "Client / Sales Meeting"),
+            ("team_meeting", "Team Meeting"),
+        ]
+        #expect(Set(TemplateRegistry.builtinTemplateIDs()) == Set(expected.map(\.id)))
+        for entry in expected {
+            let template = try TemplateRegistry.template(id: entry.id)
+            #expect(template.name == entry.name)
+            #expect(!template.sections.isEmpty)
+        }
+    }
+
     @Test func templateThrowsForNonexistentID() {
         #expect(throws: TemplateError.self) { try TemplateRegistry.template(id: "nonexistent_template") }
     }

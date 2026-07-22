@@ -50,6 +50,10 @@ public final class MeetingSummaryViewModel {
     /// `nil` ⇒ "Auto (suggest)". Set from the picker, or restored from an existing summary's
     /// `templateId` via `restoreSelection(from:)`.
     public var selectedTemplateID: String?
+    /// Free-text steering for the summary LLM (← the old app's "Instructions" toolbar control).
+    /// Empty ⇒ no extra context injected (the engine only appends a `<user_context>` block when
+    /// this is non-empty). Bound directly by the summary-actions "Instructions" field.
+    public var customInstructions: String = ""
 
     private let generateOperation: GenerateOperation
     private let cancelOperation: CancelOperation
@@ -58,7 +62,8 @@ public final class MeetingSummaryViewModel {
     typealias GenerateOperation = @Sendable (
         _ meetingId: MeetingID,
         _ templateId: String?,
-        _ speakerCount: Int?
+        _ speakerCount: Int?,
+        _ customInstructions: String
     ) async throws -> Summary
 
     typealias CancelOperation = @Sendable (_ meetingId: MeetingID) async -> Void
@@ -67,8 +72,13 @@ public final class MeetingSummaryViewModel {
 
     public convenience init(runner: SummaryRunner, customTemplateDirectory: URL? = nil) {
         self.init(
-            generateOperation: { meetingId, templateId, speakerCount in
-                try await runner.generate(meetingId: meetingId, templateId: templateId, speakerCount: speakerCount)
+            generateOperation: { meetingId, templateId, speakerCount, customInstructions in
+                try await runner.generate(
+                    meetingId: meetingId,
+                    templateId: templateId,
+                    speakerCount: speakerCount,
+                    customInstructions: customInstructions
+                )
             },
             cancelOperation: { meetingId in
                 _ = await runner.cancel(meetingId)
@@ -122,7 +132,8 @@ public final class MeetingSummaryViewModel {
         }
         state = .generating
         do {
-            let summary = try await generateOperation(meetingId, selectedTemplateID, speakerCount)
+            let instructions = customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary = try await generateOperation(meetingId, selectedTemplateID, speakerCount, instructions)
             state = .idle
             return summary
         } catch is CancellationError {
@@ -151,8 +162,11 @@ public final class MeetingSummaryViewModel {
     /// detail column), so a `.failed` error — or a stale `.generating` indicator — from the
     /// previous meeting never bleeds onto the next one (No-Fake-State). `templates` are
     /// meeting-independent and left intact; `selectedTemplateID` is re-derived by
-    /// `restoreSelection(from:)` at the same call site.
+    /// `restoreSelection(from:)` at the same call site. `customInstructions` is user-entered
+    /// steering for THIS meeting, so it is cleared too — a stale instruction from the previously
+    /// shown meeting must never silently apply to the next one's regenerate (No-Fake-State).
     public func reset() {
         state = .idle
+        customInstructions = ""
     }
 }

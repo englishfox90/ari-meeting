@@ -40,7 +40,7 @@ Engine/
 │                                      (MLXClient lives in the separate AriKitEngineMLX target — §8, SLICE E)
 ├─ Summary/                           ── SLICES F–G
 │  ├─ Template.swift                  Template + TemplateSection + validate/markdown  (SLICE F, pure)
-│  ├─ TemplateRegistry.swift          bundled defaults (daily_standup/standard_meeting) + custom loader (SLICE F)
+│  ├─ TemplateRegistry.swift          all 7 bundled defaults (daily_standup, standard_meeting, one_on_one, project_sync, retrospective, sales_marketing_client_call, team_meeting) + custom loader (SLICE F)
 │  ├─ TemplateSelector.swift          F6 auto-suggest (LLM-backed, fallback standard_meeting) (SLICE G)
 │  ├─ Chunking.swift                  chunkText, roughTokenCount, cleanLLMMarkdownOutput, extractMeetingName (SLICE F, pure)
 │  ├─ SummaryCitations.swift          apply_citations (verify/snap/drop/back-fill) — DISTINCT from recall citations (SLICE F, pure)
@@ -145,7 +145,7 @@ Streaming coverage mirrors `llm_stream.rs:6-14` exactly: OpenAI-compatible + Ant
 ### 2.4 Summary surface (Slices F–G)
 
 - `Template` / `TemplateSection` — 1:1 of `templates/types.rs` (`name`, `description`, `sections:[{title,instruction,format,itemFormat?,exampleItemFormat?}]`), `validate()`, `toMarkdownStructure()`, `toSectionInstructions()`.
-- `TemplateRegistry` — the two bundled defaults (`daily_standup`, `standard_meeting`; `defaults.rs:21`) as bundled JSON resources + a custom-dir loader (`loader.rs`). Path resolution stays app-target's job (never hardcode paths).
+- `TemplateRegistry` — all seven shipped defaults inlined as Swift string constants (`daily_standup`, `standard_meeting` from `defaults.rs`; plus `one_on_one`, `project_sync`, `retrospective`, `sales_marketing_client_call`, `team_meeting`, which Rust shipped only in the bundled-templates directory, `loader.rs`) + a custom-dir loader. Path resolution stays app-target's job (never hardcode paths).
 - `Chunking` — `roughTokenCount` (chars × 0.35, `processor.rs:179`), `chunkText(_:chunkSizeTokens:overlapTokens:)` (char-based, sentence/word-boundary break, `processor.rs:194`), `cleanLLMMarkdownOutput` (strip `<think>` + code fences, `processor.rs:265`), `extractMeetingName` (`processor.rs:294`).
 - `SummaryCitations.applyCitations(_ summaryMarkdown:_ sourceTranscript:) -> (String, CitationStats)` — **the distinct port** (see §2.5).
 - `SummaryGenerator.generateMeetingSummary(...)` — the conditional single-pass vs map-reduce (`processor.rs:327`): single-pass for cloud/short; map-reduce (chunk → per-chunk summarize → combine → final report) for MLX/Ollama/FoundationModels over threshold. Language normalize/translate passes (`processor.rs:553`). Calls `applyCitations` on the English pass (`processor.rs:534`), panic-guarded (Swift: a non-throwing pure function + a `do/catch`-free guarantee — never fails the summary).

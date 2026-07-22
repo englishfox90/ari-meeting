@@ -52,6 +52,9 @@ struct MeetingDetailView: View {
     /// swift-meeting-generation-flow.md, Track 1) isn't available until `AppEnvironment.bootstrap()`
     /// finishes. Mirrors `speakerIdentificationViewModel`'s lazy-build shape immediately above.
     @State private var summaryViewModel: MeetingSummaryViewModel?
+    /// Drives the "Instructions" popover in the summary actions bar (← the old app's custom-
+    /// instruction control). The text itself lives on `summaryViewModel.customInstructions`.
+    @State private var showingInstructions = false
     /// Item-driven sheet context: presenting via `.sheet(item:)` builds the content from THIS
     /// value, so it can never see a stale nil view model. Presenting with `isPresented:` after
     /// writing the VM in the same transaction rendered the sheet against the pre-write state
@@ -399,6 +402,8 @@ struct MeetingDetailView: View {
                     .frame(minWidth: 160)
                     .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
 
+                    instructionsControl(summaryVM)
+
                     if viewModel.summary != nil {
                         Button("Regenerate") {
                             generateSummary()
@@ -443,6 +448,59 @@ struct MeetingDetailView: View {
         Binding(
             get: { summaryVM.selectedTemplateID },
             set: { summaryVM.selectedTemplateID = $0 }
+        )
+    }
+
+    /// The "Instructions" control (← the old app's custom-instruction toolbar button): a button
+    /// that opens a popover with a themed multi-line editor bound to
+    /// `summaryVM.customInstructions`. A filled `pencil` glyph honestly signals when steering text
+    /// is actually present (No-Fake-State) — nothing is implied when the field is empty. The text
+    /// is injected into the summary prompt only on the next Generate/Regenerate.
+    @ViewBuilder
+    private func instructionsControl(_ summaryVM: MeetingSummaryViewModel) -> some View {
+        let hasInstructions = !summaryVM.customInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        Button {
+            showingInstructions = true
+        } label: {
+            Label("Instructions", systemImage: hasInstructions ? "pencil.circle.fill" : "pencil")
+        }
+        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+        .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
+        .help("Add custom instructions to steer the summary")
+        .popover(isPresented: $showingInstructions, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+                Text("Instructions")
+                    .marginaliaTextStyle(.caption, in: scheme)
+                Text("Extra context or steering added to the summary prompt. Applied on the next Generate or Regenerate.")
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                MarginaliaTextEditor(
+                    text: instructionsBinding(summaryVM),
+                    prompt: "e.g. Focus on decisions and blockers; keep it concise.",
+                    scheme: scheme,
+                    minHeight: 96
+                )
+                .frame(width: 320)
+                HStack {
+                    Spacer()
+                    Button("Clear") {
+                        summaryVM.customInstructions = ""
+                    }
+                    .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+                    .disabled(!hasInstructions)
+                    Button("Done") {
+                        showingInstructions = false
+                    }
+                    .buttonStyle(.marginalia(.primary, .regular, in: scheme))
+                }
+            }
+            .padding(MarginaliaSpacing.md.value)
+        }
+    }
+
+    private func instructionsBinding(_ summaryVM: MeetingSummaryViewModel) -> Binding<String> {
+        Binding(
+            get: { summaryVM.customInstructions },
+            set: { summaryVM.customInstructions = $0 }
         )
     }
 
