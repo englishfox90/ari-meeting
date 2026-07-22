@@ -27,6 +27,17 @@ public enum SettingKey: String, Sendable, CaseIterable {
     case generalShowInMenuBar
     case generalRecordingAlerts
 
+    // Notifications (the Swift-native port — calendar reminders + summary-ready alerts).
+    /// Whether a "meeting starts soon" reminder fires ahead of each synced calendar event.
+    case notificationsMeetingReminders
+    /// Minutes-before-start the reminder fires, stored as a plain decimal string ("1"/"5"/"10"/…).
+    /// A string (not a dedicated int column) because `SettingsRepository` is a string/bool KV store;
+    /// callers parse with `Int.init` and fall back to the honest default on an unparseable value.
+    case notificationsReminderLeadMinutes
+    /// Whether a notification is delivered when a summary finishes generating AND that generation
+    /// took longer than the "long summary" threshold (the user has likely tabbed away by then).
+    case notificationsSummaryReady
+
     // Recordings
     case recordingsSaveAudio
     case recordingsStartNotification

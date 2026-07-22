@@ -94,6 +94,19 @@ struct RootSplitView: View {
             guard case let .saved(meetingId) = newPhase else { return }
             Task { await environment.processingCoordinator?.begin(meetingId: meetingId) }
         }
+        // Navigation raised from outside the view tree (a tapped notification): a meeting-reminder
+        // start routes to the recording section (the session is already primed + capturing); a
+        // summary-ready tap pushes that meeting's detail. Cleared immediately so it fires once.
+        .onChange(of: environment.pendingNavigation) { _, nav in
+            guard let nav else { return }
+            switch nav {
+            case let .section(section):
+                selectedSection = section
+            case let .meeting(meetingId):
+                path.append(meetingId)
+            }
+            environment.consumePendingNavigation()
+        }
         // The app-level speaker-count prompt (plan "UI integration" #1): presented whenever the
         // pipeline pauses at `.needsSpeakerCount`, from anywhere in the app. Dismissing the stock
         // sheet without an explicit choice (swipe-down, Esc) routes through
@@ -154,7 +167,11 @@ struct RootSplitView: View {
                 onOpenMeeting: { path.append($0) }
             )
         case .settings:
-            SettingsView(database: database, calendarSource: environment.calendarSource)
+            SettingsView(
+                database: database,
+                calendarSource: environment.calendarSource,
+                notifications: environment.meetingNotifications
+            )
         }
     }
 

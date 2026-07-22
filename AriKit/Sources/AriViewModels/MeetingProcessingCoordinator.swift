@@ -74,6 +74,11 @@ public final class MeetingProcessingCoordinator {
     private let generateSummaryOperation: GenerateSummaryOperation
     private let speakerCountOperation: SpeakerCountOperation
     private let cancelSummaryOperation: CancelSummaryOperation
+    /// Optional post-generation hook (the app wires it to `MeetingNotifications.summaryGenerated`).
+    /// Called only after a summary ACTUALLY generated successfully, with that generation's real
+    /// wall-clock duration — the notifier decides whether it was "long" enough to notify. `nil` in
+    /// tests / when no notification stack is wired.
+    private let notifySummaryGeneratedOperation: NotifySummaryGeneratedOperation?
 
     public typealias ResolveAudioURLOperation = @Sendable (_ meetingId: MeetingID) async -> URL?
     public typealias ResolveHintOperation = @Sendable (_ meetingId: MeetingID) async -> SpeakerCountHint?
@@ -90,6 +95,10 @@ public final class MeetingProcessingCoordinator {
     ) async throws -> Void
     public typealias SpeakerCountOperation = @Sendable (_ meetingId: MeetingID) async -> Int?
     public typealias CancelSummaryOperation = @Sendable (_ meetingId: MeetingID) async -> Void
+    public typealias NotifySummaryGeneratedOperation = @Sendable (
+        _ meetingId: MeetingID,
+        _ elapsed: Duration
+    ) async -> Void
 
     /// The only initializer — the app composition root (`AppEnvironment.bootstrap()`) assembles
     /// these closures directly from `diarizationService`/`speakerCountHintProvider`/`summaryRunner`/
@@ -103,7 +112,8 @@ public final class MeetingProcessingCoordinator {
         isAutoSummaryEnabled: @escaping IsAutoSummaryEnabledOperation,
         generateSummary: @escaping GenerateSummaryOperation,
         speakerCount: @escaping SpeakerCountOperation,
-        cancelSummary: @escaping CancelSummaryOperation
+        cancelSummary: @escaping CancelSummaryOperation,
+        notifySummaryGenerated: NotifySummaryGeneratedOperation? = nil
     ) {
         resolveAudioURLOperation = resolveAudioURL
         resolveHintOperation = resolveHint
@@ -112,6 +122,7 @@ public final class MeetingProcessingCoordinator {
         generateSummaryOperation = generateSummary
         speakerCountOperation = speakerCount
         cancelSummaryOperation = cancelSummary
+        notifySummaryGeneratedOperation = notifySummaryGenerated
     }
 
     // MARK: - Intents
@@ -280,6 +291,8 @@ public final class MeetingProcessingCoordinator {
         }
 
         phase = .summarizing
+        let clock = ContinuousClock()
+        let started = clock.now
         do {
             try await generateSummaryOperation(meetingId, count)
         } catch is CancellationError {
@@ -290,6 +303,11 @@ public final class MeetingProcessingCoordinator {
             phase = .failed(String(describing: error))
             return
         }
+        let elapsed = clock.now - started
         phase = .completed
+        // Fire the post-generation hook AFTER reaching the terminal `.completed` state, so a slow
+        // notifier can never delay the UI's completion signal. The notifier itself decides whether
+        // `elapsed` clears the "long summary" bar worth notifying about.
+        await notifySummaryGeneratedOperation?(meetingId, elapsed)
     }
 }

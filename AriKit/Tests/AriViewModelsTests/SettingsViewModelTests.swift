@@ -295,4 +295,95 @@ struct SettingsViewModelTests {
         #expect(viewModel.indexSummary?.indexedMeetings == 0)
         #expect(viewModel.indexSummary?.chunkCount == 0)
     }
+
+    // MARK: - Notifications
+
+    /// A minimal `NotificationAuthorizing` fake — flips to `.authorized` when asked, counting calls.
+    private actor FakeAuthorizer: NotificationAuthorizing {
+        private var status: NotificationAuthorization
+        private(set) var requestCount = 0
+        init(_ status: NotificationAuthorization = .notDetermined) { self.status = status }
+        func authorizationStatus() -> NotificationAuthorization { status }
+        func requestAuthorization() -> NotificationAuthorization {
+            requestCount += 1
+            status = .authorized
+            return status
+        }
+    }
+
+    private actor ReconcileSpy {
+        private(set) var count = 0
+        func record() { count += 1 }
+    }
+
+    @Test("notification prefs apply honest defaults when nothing is stored")
+    func notificationDefaults() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = makeViewModel(database: database)
+        await viewModel.load()
+
+        #expect(viewModel.meetingReminders == SettingsViewModel.Defaults.meetingReminders)
+        #expect(viewModel.reminderLeadMinutes == SettingsViewModel.Defaults.reminderLeadMinutes)
+        #expect(viewModel.summaryReadyNotification == SettingsViewModel.Defaults.summaryReadyNotification)
+    }
+
+    @Test("notifications group is honestly disabled with no scheduler, live with one")
+    func notificationsAvailability() async throws {
+        let database = try AppDatabase.makeInMemory()
+
+        // `Availability.isDisabled` is an app-target helper; here (AriViewModels) match the case.
+        let disabled = makeViewModel(database: database)
+        #expect(disabled.notificationsAvailability != .live)
+
+        let live = SettingsViewModel(
+            database: database,
+            secrets: StubSecretsStoring(),
+            appearance: AppearanceStore(),
+            notifications: FakeAuthorizer()
+        )
+        #expect(live.notificationsAvailability == .live)
+    }
+
+    @Test("enabling reminders persists, requests authorization, and reconciles")
+    func enableRemindersRequestsAuthAndReconciles() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let authorizer = FakeAuthorizer(.notDetermined)
+        let spy = ReconcileSpy()
+        let viewModel = SettingsViewModel(
+            database: database,
+            secrets: StubSecretsStoring(),
+            appearance: AppearanceStore(),
+            notifications: authorizer,
+            onNotificationSettingsChanged: { await spy.record() }
+        )
+        await viewModel.load()
+
+        try await viewModel.setMeetingReminders(true)
+
+        #expect(viewModel.meetingReminders == true)
+        #expect(try await database.settings.bool(forKey: .notificationsMeetingReminders) == true)
+        #expect(await authorizer.requestCount == 1)
+        #expect(viewModel.notificationAuthorization == .authorized)
+        #expect(await spy.count == 1)
+    }
+
+    @Test("changing the lead time persists and reconciles")
+    func leadTimePersistsAndReconciles() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let spy = ReconcileSpy()
+        let viewModel = SettingsViewModel(
+            database: database,
+            secrets: StubSecretsStoring(),
+            appearance: AppearanceStore(),
+            notifications: FakeAuthorizer(.authorized),
+            onNotificationSettingsChanged: { await spy.record() }
+        )
+        await viewModel.load()
+
+        try await viewModel.setReminderLeadMinutes(10)
+
+        #expect(viewModel.reminderLeadMinutes == 10)
+        #expect(try await database.settings.string(forKey: .notificationsReminderLeadMinutes) == "10")
+        #expect(await spy.count == 1)
+    }
 }

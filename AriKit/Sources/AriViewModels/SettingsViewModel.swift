@@ -34,6 +34,14 @@ public final class SettingsViewModel {
         public static let showNotch = false
         public static let showInMenuBar = false
         public static let recordingAlerts = true
+        /// Calendar meeting reminders (F5) default ON — the ported feature is enabled out of the
+        /// box, though nothing actually fires until the OS grants notification authorization.
+        public static let meetingReminders = true
+        /// Minutes before a meeting's start the reminder fires. 5 is the common calendar default.
+        public static let reminderLeadMinutes = 5
+        /// Summary-ready notifications default ON, gated by the "long generation" threshold so short
+        /// summaries (user still watching) stay silent.
+        public static let summaryReadyNotification = true
         public static let saveAudioRecordings = true
         public static let recordingStartNotification = false
         /// On-device SpeechTranscriber language. `"auto"` = follow the system language
@@ -64,9 +72,30 @@ public final class SettingsViewModel {
     public let menuBarAvailability: Availability = .disabled(
         reason: "There is no menu-bar item in the Swift app yet."
     )
+    /// Recording start/stop alerts are a DISTINCT notification from the two ported here (calendar
+    /// reminders + summary-ready) — they'd hook the recording lifecycle, which isn't wired yet, so
+    /// this stays honestly disabled with a specific reason (No-Fake-State), not the stale
+    /// "notifications aren't ported" blanket.
     public let recordingAlertsAvailability: Availability = .disabled(
-        reason: "Notifications haven't been ported to the Swift app yet."
+        reason: "Recording start/stop alerts aren't ported to the Swift app yet."
     )
+
+    // MARK: - Notifications (calendar reminders + summary-ready — LIVE once a scheduler is injected)
+
+    public private(set) var meetingReminders: Bool = Defaults.meetingReminders
+    public private(set) var reminderLeadMinutes: Int = Defaults.reminderLeadMinutes
+    public private(set) var summaryReadyNotification: Bool = Defaults.summaryReadyNotification
+
+    /// The lead-time choices offered by the picker (minutes-before-start).
+    public static let reminderLeadOptions: [Int] = [1, 5, 10, 15]
+
+    /// The real OS authorization, `nil` until first read (or when no scheduler is wired). Drives the
+    /// honest "notifications are turned off in System Settings" banner — never a fabricated state.
+    public private(set) var notificationAuthorization: NotificationAuthorization?
+
+    /// `.live` once a scheduler is injected (the app), `.disabled` otherwise (previews/tests that
+    /// don't wire one) — same honest pattern the calendar settings use.
+    public let notificationsAvailability: Availability
 
     // MARK: - Recordings
 
@@ -141,6 +170,14 @@ public final class SettingsViewModel {
     private let secrets: SecretsStoring
     private let speechAssets: SpeechAssetProviding
     private let audioDevices: AudioDeviceProviding
+    /// The notification authorization surface (the app injects `MeetingNotifications`), or `nil`
+    /// when no notification stack is wired — in which case the Notifications group is honestly
+    /// disabled. Kept as the narrow `NotificationAuthorizing` protocol so the VM never reaches for
+    /// the whole coordinator.
+    private let notifications: (any NotificationAuthorizing)?
+    /// Called after a change that affects scheduled reminders (toggle or lead-time), so the app can
+    /// reconcile the OS's pending reminders immediately rather than waiting for the periodic loop.
+    private let onNotificationSettingsChanged: (@Sendable () async -> Void)?
     /// Single shared single-flight guard for `rebuildIndex()` — a fresh `ReindexCoordinator` per
     /// call would defeat its whole purpose (overlap protection across taps/launches).
     private let reindexCoordinator = ReindexCoordinator()
@@ -150,13 +187,20 @@ public final class SettingsViewModel {
         secrets: SecretsStoring,
         appearance: AppearanceStore,
         speechAssets: SpeechAssetProviding = SpeechAssetManager(),
-        audioDevices: AudioDeviceProviding = CoreAudioDeviceEnumerator()
+        audioDevices: AudioDeviceProviding = CoreAudioDeviceEnumerator(),
+        notifications: (any NotificationAuthorizing)? = nil,
+        onNotificationSettingsChanged: (@Sendable () async -> Void)? = nil
     ) {
         self.database = database
         self.secrets = secrets
         self.appearance = appearance
         self.speechAssets = speechAssets
         self.audioDevices = audioDevices
+        self.notifications = notifications
+        self.onNotificationSettingsChanged = onNotificationSettingsChanged
+        notificationsAvailability = notifications == nil
+            ? .disabled(reason: "Notifications aren't available in this build yet.")
+            : .live
     }
 
     /// One-shot load: every property gets its honest stored value, or its documented default
@@ -170,6 +214,14 @@ public final class SettingsViewModel {
             ?? Defaults.showInMenuBar
         recordingAlerts = await (try? settings.bool(forKey: .generalRecordingAlerts))
             ?? Defaults.recordingAlerts
+
+        meetingReminders = await (try? settings.bool(forKey: .notificationsMeetingReminders))
+            ?? Defaults.meetingReminders
+        summaryReadyNotification = await (try? settings.bool(forKey: .notificationsSummaryReady))
+            ?? Defaults.summaryReadyNotification
+        let storedLead = await (try? settings.string(forKey: .notificationsReminderLeadMinutes)) ?? nil
+        reminderLeadMinutes = storedLead.flatMap(Int.init) ?? Defaults.reminderLeadMinutes
+        notificationAuthorization = await notifications?.authorizationStatus()
 
         saveAudioRecordings = await (try? settings.bool(forKey: .recordingsSaveAudio))
             ?? Defaults.saveAudioRecordings
@@ -223,6 +275,42 @@ public final class SettingsViewModel {
     public func setRecordingAlerts(_ value: Bool) async throws {
         try await database.settings.setBool(value, forKey: .generalRecordingAlerts)
         recordingAlerts = value
+    }
+
+    // MARK: - Notification setters
+
+    /// Persist the reminders toggle, request OS authorization if we're turning it on and haven't
+    /// asked yet, then reconcile the scheduled reminders.
+    public func setMeetingReminders(_ value: Bool) async throws {
+        try await database.settings.setBool(value, forKey: .notificationsMeetingReminders)
+        meetingReminders = value
+        await requestAuthorizationIfEnabling(value)
+        await onNotificationSettingsChanged?()
+    }
+
+    /// Persist the lead time and reconcile (fire times shift for every future reminder).
+    public func setReminderLeadMinutes(_ value: Int) async throws {
+        try await database.settings.setString(String(value), forKey: .notificationsReminderLeadMinutes)
+        reminderLeadMinutes = value
+        await onNotificationSettingsChanged?()
+    }
+
+    /// Persist the summary-ready toggle. No reconcile needed (these are delivered immediately, never
+    /// pre-scheduled), but enabling still prompts for authorization if undetermined.
+    public func setSummaryReadyNotification(_ value: Bool) async throws {
+        try await database.settings.setBool(value, forKey: .notificationsSummaryReady)
+        summaryReadyNotification = value
+        await requestAuthorizationIfEnabling(value)
+    }
+
+    /// Prompt for notification authorization the first time the user turns a notification on. A
+    /// no-op when turning off, when no scheduler is wired, or once a decision (grant/deny) is made —
+    /// the honest denied state then surfaces via the Settings banner instead of re-prompting.
+    private func requestAuthorizationIfEnabling(_ value: Bool) async {
+        guard value, let notifications else { return }
+        if notificationAuthorization == nil || notificationAuthorization == .notDetermined {
+            notificationAuthorization = await notifications.requestAuthorization()
+        }
     }
 
     // MARK: - Recordings setters

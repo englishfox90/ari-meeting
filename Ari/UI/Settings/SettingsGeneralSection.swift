@@ -53,14 +53,54 @@ struct SettingsGeneralSection: View {
                     .disabled(viewModel.menuBarAvailability.isDisabled)
                 }
 
-                SettingsGroup(header: "Notifications") {
-                    SettingsToggleRow(
-                        "Recording alerts",
-                        description: viewModel.recordingAlertsAvailability.disabledReason
-                            ?? "Notify when a recording starts or stops.",
-                        isOn: recordingAlertsBinding
-                    )
-                    .disabled(viewModel.recordingAlertsAvailability.isDisabled)
+                VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+                    if viewModel.notificationAuthorization == .denied {
+                        MarginaliaBanner(
+                            kind: .info,
+                            message: "Notifications are turned off for Ari in System Settings — "
+                                + "reminders and summary alerts won't appear until you allow them.",
+                            scheme: scheme
+                        )
+                    }
+
+                    SettingsGroup(header: "Notifications") {
+                        SettingsToggleRow(
+                            "Meeting reminders",
+                            description: "A heads-up before a calendar meeting starts, "
+                                + "with a one-tap Start Recording.",
+                            isOn: meetingRemindersBinding
+                        )
+                        .disabled(viewModel.notificationsAvailability.isDisabled)
+
+                        SettingsRow("Remind me before") {
+                            Picker("Lead time", selection: reminderLeadBinding) {
+                                ForEach(SettingsViewModel.reminderLeadOptions, id: \.self) { minutes in
+                                    Text("\(minutes) min").tag(minutes)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .fixedSize()
+                        }
+                        .disabled(
+                            viewModel.notificationsAvailability.isDisabled || !viewModel.meetingReminders
+                        )
+
+                        SettingsToggleRow(
+                            "Summary ready",
+                            description: "Notify when a summary that took a while to generate is ready.",
+                            isOn: summaryReadyBinding
+                        )
+                        .disabled(viewModel.notificationsAvailability.isDisabled)
+
+                        SettingsToggleRow(
+                            "Recording alerts",
+                            description: viewModel.recordingAlertsAvailability.disabledReason
+                                ?? "Notify when a recording starts or stops.",
+                            isOn: recordingAlertsBinding
+                        )
+                        .disabled(viewModel.recordingAlertsAvailability.isDisabled)
+                    }
                 }
 
                 SettingsGroup(header: "Recordings folder") {
@@ -107,6 +147,27 @@ struct SettingsGeneralSection: View {
         Binding(
             get: { viewModel.recordingAlerts },
             set: { newValue in Task { try? await viewModel.setRecordingAlerts(newValue) } }
+        )
+    }
+
+    private var meetingRemindersBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.meetingReminders },
+            set: { newValue in Task { try? await viewModel.setMeetingReminders(newValue) } }
+        )
+    }
+
+    private var summaryReadyBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.summaryReadyNotification },
+            set: { newValue in Task { try? await viewModel.setSummaryReadyNotification(newValue) } }
+        )
+    }
+
+    private var reminderLeadBinding: Binding<Int> {
+        Binding(
+            get: { viewModel.reminderLeadMinutes },
+            set: { newValue in Task { try? await viewModel.setReminderLeadMinutes(newValue) } }
         )
     }
 
