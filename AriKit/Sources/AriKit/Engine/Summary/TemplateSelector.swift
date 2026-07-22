@@ -23,7 +23,10 @@ public enum TemplateSelector {
     static let maxClassifyChars = 4000
 
     /// Safe fallback when nothing else fits or the classifier is unavailable (← `DEFAULT_TEMPLATE_ID`).
-    static let defaultTemplateID = "standard_meeting"
+    /// `public` (docs/plans/swift-meeting-generation-flow.md, Track 1 §0): `SummaryRunner`
+    /// (`AriViewModels`) needs the single source of truth for "no model configured, can't
+    /// classify" rather than a duplicated `"standard_meeting"` string literal.
+    public static let defaultTemplateID = "standard_meeting"
 
     /// The auto-selected template (← `TemplateSuggestion`).
     public struct TemplateSuggestion: Sendable, Equatable {

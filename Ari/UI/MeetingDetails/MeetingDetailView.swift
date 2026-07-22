@@ -47,6 +47,11 @@ struct MeetingDetailView: View {
     /// root's `diarizationService`/`speakerCountHintProvider` (docs/plans/arikit-diarization.md
     /// §5 D9b) aren't available until `AppEnvironment.bootstrap()` finishes.
     @State private var speakerIdentificationViewModel: SpeakerIdentificationViewModel?
+    /// Constructed lazily the first time it's needed (in `.task`, or a manual-action tap as a
+    /// fallback) — the app composition root's `summaryRunner` (docs/plans/
+    /// swift-meeting-generation-flow.md, Track 1) isn't available until `AppEnvironment.bootstrap()`
+    /// finishes. Mirrors `speakerIdentificationViewModel`'s lazy-build shape immediately above.
+    @State private var summaryViewModel: MeetingSummaryViewModel?
     /// Item-driven sheet context: presenting via `.sheet(item:)` builds the content from THIS
     /// value, so it can never see a stale nil view model. Presenting with `isPresented:` after
     /// writing the VM in the same transaction rendered the sheet against the pre-write state
@@ -126,6 +131,17 @@ struct MeetingDetailView: View {
             audioController.reset()
             narrowSection = .summary
             await viewModel.load(meetingId)
+            // Load templates + restore the picker's selection from whatever summary just
+            // resolved (docs/plans/swift-meeting-generation-flow.md, Track 1) — honest: reflects
+            // the summary actually on screen, never a fabricated default selection.
+            if let summaryVM = summaryViewModelIfAvailable() {
+                // Reset first: the detail view is REUSED across meetings in the split detail
+                // column (same `@State` view model), so a `.failed`/`.generating` state from the
+                // previously-shown meeting must be cleared before this one renders (No-Fake-State).
+                summaryVM.reset()
+                summaryVM.loadTemplates()
+                summaryVM.restoreSelection(from: viewModel.summary)
+            }
             if case let .available(url) = viewModel.audio {
                 audioController.load(url: url)
                 // Opened from a cross-meeting citation → position at the cited moment. Positions
@@ -136,6 +152,17 @@ struct MeetingDetailView: View {
             }
         }
         .onDisappear { audioController.reset() }
+        // docs/plans/swift-meeting-generation-flow.md, Track 2: when the post-recording pipeline
+        // finishes THIS meeting, pull in whatever it produced (speaker labels, summary) — the
+        // pipeline itself already persisted via the same repositories this view reads through.
+        .onChange(of: environment.processingCoordinator?.phase) { _, newPhase in
+            guard case .completed = newPhase,
+                  environment.processingCoordinator?.activeMeetingID == meetingId else { return }
+            Task {
+                await viewModel.load(meetingId)
+                summaryViewModelIfAvailable()?.restoreSelection(from: viewModel.summary)
+            }
+        }
     }
 
     // MARK: - Wide: two-pane
@@ -242,6 +269,7 @@ struct MeetingDetailView: View {
     private func summaryColumn(_ meeting: Meeting, showInlineNotes: Bool) -> some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.xl.value) {
             header(meeting)
+            processingBanner
             // The moment chips are a "play" affordance — only offer them when there's actually
             // resolvable audio to seek. The inline `[MM:SS]` markers still read as text otherwise.
             if let seek = seekHandler, !viewModel.referencedMoments.isEmpty {
@@ -275,13 +303,182 @@ struct MeetingDetailView: View {
 
     @ViewBuilder
     private var summaryBody: some View {
-        if let summary = viewModel.summary {
-            MarginaliaMarkdownView(markdown: summary.bodyMarkdown, onSeek: seekHandler)
-        } else {
-            emptyState(
-                title: "No summary yet",
-                message: "A summary hasn't been generated for this meeting."
-            )
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+            if let summary = viewModel.summary {
+                MarginaliaMarkdownView(markdown: summary.bodyMarkdown, onSeek: seekHandler)
+            } else {
+                emptyState(
+                    title: "No summary yet",
+                    message: "A summary hasn't been generated for this meeting."
+                )
+            }
+            summaryActionsBar
+        }
+    }
+
+    // MARK: - Processing banner (docs/plans/swift-meeting-generation-flow.md, Track 2)
+
+    /// The post-recording pipeline's live status for THIS meeting — rendered only while
+    /// `processingCoordinator` is actively tracking it. Every message reflects a real
+    /// `MeetingProcessingCoordinator.Phase`/`diarizationNote` (No-Fake-State): once the pipeline
+    /// reaches `.completed` with no note, the banner disappears entirely — the freshly reloaded
+    /// summary above already speaks for itself, so there is nothing honest left to say.
+    @ViewBuilder
+    private var processingBanner: some View {
+        if let coordinator = environment.processingCoordinator, coordinator.activeMeetingID == meetingId,
+           let message = processingBannerMessage(coordinator) {
+            MarginaliaBanner(kind: processingBannerKind(coordinator.phase), message: message, scheme: scheme)
+        }
+    }
+
+    private func processingBannerMessage(_ coordinator: MeetingProcessingCoordinator) -> String? {
+        switch coordinator.phase {
+        case .identifyingSpeakers:
+            "Identifying speakers…"
+        case .needsSpeakerCount:
+            "Waiting for a speaker count to continue — see the prompt."
+        case .selectingTemplate:
+            "Choosing a template…"
+        case .summarizing:
+            "Generating summary…"
+        case .completed:
+            // The only honest thing left to say once complete: a non-fatal diarization note, if
+            // one was recorded (decision 3) — otherwise nothing (the reloaded summary above is
+            // the real signal that processing finished).
+            coordinator.diarizationNote
+        case let .failed(message):
+            message
+        case .idle:
+            nil
+        }
+    }
+
+    private func processingBannerKind(_ phase: MeetingProcessingCoordinator.Phase) -> MarginaliaBannerKind {
+        if case .failed = phase { return .error }
+        return .info
+    }
+
+    /// Whether the pipeline is actively working on THIS meeting (mirrors Rust's
+    /// `isBackgroundProcessing` gate) — used to disable the Track-1 manual summary actions below
+    /// so a manual generate never races the pipeline's own auto-generate for the same meeting.
+    private var isCoordinatorProcessingThisMeeting: Bool {
+        guard let coordinator = environment.processingCoordinator, coordinator.activeMeetingID == meetingId else {
+            return false
+        }
+        switch coordinator.phase {
+        case .identifyingSpeakers, .selectingTemplate, .summarizing:
+            return true
+        case .idle, .needsSpeakerCount, .completed, .failed:
+            return false
+        }
+    }
+
+    // MARK: - Summary actions (docs/plans/swift-meeting-generation-flow.md, Track 1)
+
+    /// Generate / Regenerate / change-template / Cancel — rendered only once `summaryViewModel`
+    /// resolves (via `.task`'s lazy build), so this never shows a dead-looking control while
+    /// `AppEnvironment.bootstrap()` is still constructing `summaryRunner` (No-Fake-State). Reads
+    /// `summaryViewModel` directly (never mutates `@State` from inside body construction — the
+    /// lazy build itself only ever runs from `.task` or a button's own action closure, mirroring
+    /// `speakerIdentificationViewModel`'s discipline).
+    @ViewBuilder
+    private var summaryActionsBar: some View {
+        if let summaryVM = summaryViewModel {
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                HStack(spacing: MarginaliaSpacing.sm.value) {
+                    Picker(selection: templateSelectionBinding(summaryVM)) {
+                        Text("Auto (suggest)").tag(nil as String?)
+                        ForEach(summaryVM.templates) { option in
+                            Text(option.name).tag(option.id as String?)
+                        }
+                    } label: {
+                        MarginaliaMenuLabel(title: "Template", scheme: scheme)
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(minWidth: 160)
+                    .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
+
+                    if viewModel.summary != nil {
+                        Button("Regenerate") {
+                            generateSummary()
+                        }
+                        .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                        .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
+                    } else {
+                        Button("Generate summary") {
+                            generateSummary()
+                        }
+                        .buttonStyle(.marginalia(.primary, .regular, in: scheme))
+                        .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
+                    }
+
+                    if isSummaryGenerating(summaryVM) {
+                        Button("Cancel") {
+                            Task { await summaryVM.cancel(meetingId: meetingId) }
+                        }
+                        .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+                    }
+                }
+                if isSummaryGenerating(summaryVM) {
+                    Text("Generating summary…")
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                }
+                // Honest failure line (No-Fake-State): the prior summary above is untouched —
+                // this VM carries no summary state of its own to clobber.
+                if case let .failed(message) = summaryVM.state {
+                    Text(message)
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .error)
+                }
+            }
+        }
+    }
+
+    private func isSummaryGenerating(_ summaryVM: MeetingSummaryViewModel) -> Bool {
+        if case .generating = summaryVM.state { return true }
+        return false
+    }
+
+    private func templateSelectionBinding(_ summaryVM: MeetingSummaryViewModel) -> Binding<String?> {
+        Binding(
+            get: { summaryVM.selectedTemplateID },
+            set: { summaryVM.selectedTemplateID = $0 }
+        )
+    }
+
+    /// Lazily builds `MeetingSummaryViewModel` from `environment.summaryRunner`, mirroring
+    /// `openIdentifySpeakers()`'s lazy-build pattern below. Returns `nil` (never a dead-looking
+    /// control) while bootstrap hasn't finished constructing the runner yet.
+    private func summaryViewModelIfAvailable() -> MeetingSummaryViewModel? {
+        if summaryViewModel == nil {
+            guard let runner = environment.summaryRunner else {
+                Self.uiLog.error("summary actions: summaryRunner unavailable; not building view model")
+                return nil
+            }
+            summaryViewModel = MeetingSummaryViewModel(runner: runner)
+        }
+        return summaryViewModel
+    }
+
+    /// Real speaker signal for the auto-template classifier (← plan: "`speakerCount` arg =
+    /// `viewModel.speakerNames.count` (real signal) or nil") — an honest `nil` when nothing has
+    /// resolved yet, never a fabricated `0`.
+    private func generateSummary() {
+        guard let summaryVM = summaryViewModelIfAvailable() else { return }
+        let targetMeetingId = meetingId
+        let speakerCount = viewModel.speakerNames.isEmpty ? nil : viewModel.speakerNames.count
+        Task {
+            guard await summaryVM.generate(meetingId: targetMeetingId, speakerCount: speakerCount) != nil else { return }
+            // Only fold the result back in if the shared detail view still shows the meeting we
+            // generated for. Generation is long-running and the `viewModel`/`summaryVM` are a
+            // single `@State` pair reused across the split detail column, so if the user has
+            // since selected another meeting, ITS own `.task(id:)` owns the reload — folding this
+            // meeting's summary in here would bleed it under the other meeting's title
+            // (No-Fake-State). The generation itself is never cancelled by the switch; only this
+            // stale reload is skipped.
+            guard viewModel.meeting.value?.id == targetMeetingId else { return }
+            await viewModel.load(targetMeetingId)
+            summaryVM.restoreSelection(from: viewModel.summary)
         }
     }
 

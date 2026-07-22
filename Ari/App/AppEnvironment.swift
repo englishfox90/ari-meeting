@@ -58,6 +58,21 @@ final class AppEnvironment {
     /// same protocol without touching this wiring.
     private(set) var speakerCountHintProvider: (any SpeakerCountHintProviding)?
 
+    /// The summary generation service (docs/plans/swift-meeting-generation-flow.md, Track 1 "App
+    /// wiring") — `SummaryRunner`'s persistence delegate. `nil` until `bootstrap()` succeeds,
+    /// exactly like `diarizationService`.
+    private(set) var summaryService: SummaryService?
+    /// The shared "generate a summary" core (same plan) — composes `summaryService` with the
+    /// app's settings/secrets seams. `MeetingSummaryViewModel` (Track 1) and the later
+    /// `MeetingProcessingCoordinator` (Track 2) both build from this ONE instance.
+    private(set) var summaryRunner: SummaryRunner?
+
+    /// The post-recording pipeline (docs/plans/swift-meeting-generation-flow.md, Track 2) —
+    /// speaker identification → template selection → summary, mount-independent like
+    /// `recordingSession` so it survives navigation away from the recording page. `nil` until
+    /// `bootstrap()` succeeds, exactly like `diarizationService`/`summaryRunner`.
+    private(set) var processingCoordinator: MeetingProcessingCoordinator?
+
     /// The S7 EventKit source (the one EventKit toucher, `Ari/Calendar/EventKitCalendarSource.swift`)
     /// — injected into `CalendarSettingsViewModel` by the Settings screen. `nil` until `bootstrap()`
     /// succeeds, exactly like `database`/`recordingSession`.
@@ -121,12 +136,85 @@ final class AppEnvironment {
                 transcription: SpeechLiveTranscriptionService()
             )
 
-            diarizationService = DiarizationService(
+            // Local `let`s (not just the stored properties below) so the Track 2 coordinator
+            // wiring further down can capture them directly — they're Sendable value
+            // types/actors, unlike `self`/`AppEnvironment`, which the coordinator's `@Sendable`
+            // closures must never capture.
+            let diarizationService = DiarizationService(
                 database: db,
                 provider: FluidAudioDiarizationProvider(),
                 audioLoader: DiarizationAudioLoader()
             )
-            speakerCountHintProvider = StoredCalendarHintProvider(database: db)
+            self.diarizationService = diarizationService
+            let hintProvider = StoredCalendarHintProvider(database: db)
+            speakerCountHintProvider = hintProvider
+
+            // docs/plans/swift-meeting-generation-flow.md, Track 1 "App wiring": the summary
+            // generation core, shared by the saved-meeting manual actions (Track 1) and the later
+            // post-recording pipeline (Track 2). `StoreBackedSettingsReading` reads the
+            // `.summaryProvider`/`.summaryModel`/etc. keys this same `db` owns. `secrets` (above)
+            // is statically typed `SecretsStoring` (the Settings screen's read/write seam) — not
+            // `any SecretsReading` — so a fresh `KeychainSecretStore()` is constructed here
+            // instead, same as `SettingsView.init` does for its own narrower seam: it's a
+            // stateless value type (no Keychain session held), so constructing another instance
+            // is equivalent to reusing the one above, without an unrelated-existential cast.
+            let settingsReader = StoreBackedSettingsReading(database: db)
+            let summarySecrets = KeychainSecretStore()
+            let summaryService = SummaryService(
+                db: db,
+                settings: settingsReader,
+                secrets: summarySecrets,
+                cancellation: TaskCancellationCoordinator()
+            )
+            self.summaryService = summaryService
+            let runner = SummaryRunner(
+                database: db,
+                settings: settingsReader,
+                secrets: summarySecrets,
+                summaryService: summaryService,
+                customTemplateDirectory: nil,
+                clientFactory: { try ProviderFactory.make(config: $0) }
+            )
+            summaryRunner = runner
+
+            // docs/plans/swift-meeting-generation-flow.md, Track 2 "App wiring": the
+            // post-recording pipeline. Every closure below captures only Sendable values (`db`,
+            // `hintProvider`, `diarizationService`, `runner`) — never `self`/`AppEnvironment` —
+            // so the coordinator's `@Sendable` operation closures type-check under Swift 6
+            // strict concurrency.
+            let coordinator = MeetingProcessingCoordinator(
+                resolveAudioURL: { mid in
+                    guard let meeting = try? await db.meetings.find(mid) else { return nil }
+                    guard case let .available(url) = AudioAvailabilityResolver.resolve(
+                        audioReference: meeting.audioReference,
+                        fileExists: { FileManager.default.fileExists(atPath: $0.path) }
+                    ) else { return nil }
+                    return url
+                },
+                resolveHint: { mid in
+                    try? await hintProvider.hint(for: mid).map(\.hint)
+                },
+                runDiarization: { mid, url, hint, progress in
+                    _ = try await diarizationService.run(
+                        meetingId: mid, audioURL: url, hint: hint, progress: progress
+                    )
+                },
+                isAutoSummaryEnabled: {
+                    // `try?` over a `Bool?`-returning call flattens (SE-0230), so this is already
+                    // `Bool?`; default an unset/failed read to ON (the product default).
+                    (try? await db.settings.bool(forKey: .summaryAutomatic)) ?? true
+                },
+                generateSummary: { mid, count in
+                    _ = try await runner.generate(meetingId: mid, templateId: nil, speakerCount: count)
+                },
+                speakerCount: { mid in
+                    (try? await db.speakers.forMeeting(mid).count).flatMap { $0 > 0 ? $0 : nil }
+                },
+                cancelSummary: { mid in
+                    _ = await runner.cancel(mid)
+                }
+            )
+            processingCoordinator = coordinator
 
             // S7: construct the EventKit source + sync engine now that `db` exists, inject the
             // source into Settings' calendar VM (via `calendarSource`), and start the background

@@ -13,6 +13,7 @@
 //  previous section's push history.
 //
 import AriKit
+import AriViewModels
 import SwiftUI
 
 struct RootSplitView: View {
@@ -85,6 +86,44 @@ struct RootSplitView: View {
         .onChange(of: selectedSection) { _, _ in
             path = NavigationPath()
         }
+        // Mount-independent pipeline kickoff (docs/plans/swift-meeting-generation-flow.md,
+        // Track 2): fires exactly once per `.saved(meetingId)` transition, regardless of which
+        // section/screen is on screen when a recording finishes — `RecordingView`'s own status
+        // line (when it happens to be visible) reads the SAME coordinator, never triggers it.
+        .onChange(of: environment.recordingSession?.phase) { _, newPhase in
+            guard case let .saved(meetingId) = newPhase else { return }
+            Task { await environment.processingCoordinator?.begin(meetingId: meetingId) }
+        }
+        // The app-level speaker-count prompt (plan "UI integration" #1): presented whenever the
+        // pipeline pauses at `.needsSpeakerCount`, from anywhere in the app. Dismissing the stock
+        // sheet without an explicit choice (swipe-down, Esc) routes through
+        // `skipSpeakerIdentification()`, same as tapping "Skip" — idempotent either way (the
+        // coordinator's guard only proceeds from `.needsSpeakerCount`).
+        .sheet(isPresented: speakerCountPromptPresented) {
+            SpeakerCountPromptSheet(
+                onSubmit: { hint in
+                    Task { await environment.processingCoordinator?.provideSpeakerCount(hint) }
+                },
+                onSkip: {
+                    Task { await environment.processingCoordinator?.skipSpeakerIdentification() }
+                }
+            )
+        }
+    }
+
+    /// `true` only while the coordinator is paused for a speaker-count input. Dismissing without
+    /// an explicit "Identify"/"Skip" choice sets this to `false`, which routes to
+    /// `skipSpeakerIdentification()` — a no-op if the coordinator already moved on (mirrors
+    /// `RecordingView.consentSheetPresented`'s dismiss-idempotency discipline).
+    private var speakerCountPromptPresented: Binding<Bool> {
+        Binding(
+            get: { environment.processingCoordinator?.phase == .needsSpeakerCount },
+            set: { isPresented in
+                if !isPresented {
+                    Task { await environment.processingCoordinator?.skipSpeakerIdentification() }
+                }
+            }
+        )
     }
 
     @ViewBuilder
