@@ -48,7 +48,7 @@ struct SourceRecordPanel: View {
         if let transcription = provenance(meeting.transcriptionProvider, meeting.transcriptionModel) {
             rows.append(Row(label: "Transcription", value: transcription))
         }
-        if let summaryModel = provenance(
+        if let summaryModel = summaryProvenance(
             summary?.provider ?? meeting.summaryProvider,
             summary?.model ?? meeting.summaryModel
         ) {
@@ -58,6 +58,28 @@ struct SourceRecordPanel: View {
             rows.append(Row(label: "Segments", value: "\(segmentCount)"))
         }
         return rows
+    }
+
+    /// The user-facing summary-model name — Settings-aligned and free of internal ids. Known
+    /// providers get their friendly label (the same copy the Settings model picker shows); the
+    /// on-device Qwen repo id is dropped (the label already conveys it, mirroring how transcription
+    /// shows "Apple Speech" not the asset id). A user-set Claude CLI model override is kept visible.
+    /// Everything else falls back to the generic "provider · model" shape.
+    private func summaryProvenance(_ providerRaw: String?, _ modelRaw: String?) -> String? {
+        let provider = providerRaw?.trimmingCharacters(in: .whitespaces)
+        let model = modelRaw?.trimmingCharacters(in: .whitespaces) ?? ""
+
+        if let provider, let kind = ProviderKind.from(provider) {
+            switch kind {
+            case .mlx:
+                return "Qwen 4B (on-device)"
+            case .claudeCLI:
+                return model.isEmpty ? "Claude CLI" : "Claude CLI · \(model)"
+            default:
+                break
+            }
+        }
+        return provenance(providerRaw, modelRaw)
     }
 
     /// "Provider · model", "provider", or "model" — whichever parts exist; `nil` when neither.
