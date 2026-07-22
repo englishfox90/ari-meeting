@@ -18,7 +18,7 @@ This lands on the **target (Swift) side of the cut seam**: the Swift store alrea
 
 ### The S3-mandated design requirement (non-negotiable)
 
-FluidAudio at **auto speaker count collapses multi-speaker mixed audio to one speaker** (stamp_acc 0.33 / 0.14 — disqualifying; `swift-migration-plan.md:102`). Every production run MUST be driven by a **speaker-count hint** into `config.clustering.numSpeakers` / `minSpeakers` / `maxSpeakers`. EventKit (S7) is not live yet, so the hint sources **today** are:
+FluidAudio at **auto speaker count collapses multi-speaker mixed audio to one speaker** (stamp_acc 0.33 / 0.14 — disqualifying; `swift-migration-plan.md:102`). Every production run MUST be driven by a **speaker-count hint** into `config.clustering.numSpeakers` / `minSpeakers` / `maxSpeakers`. (2026-07-22 update: EventKit S7 **is now live** — synced `calendarEvent` rows + auto/manual meeting links feed `StoredCalendarHintProvider` with real data, exactly through the seam below, zero code change needed. The original hint sources remain as fallbacks.) The hint sources are:
 
 1. **User-entered count** in the identify-speakers UI (primary; always available) — see §6 for the two explicit modes (exact vs. uncertain/at-most) this must offer.
 2. **Legacy-imported calendar rows** — `CalendarEventRepository.forMeeting(_:)` → `CalendarEvent.attendees.count` (real persisted data from the Rust app's calendar cache; `AriKit/Sources/AriKit/Models/CalendarEvent.swift:81`), preferred against the meeting's linked-participant count when available (§2.6) — used to **prefill** the UI field, never to silently force K (invitee count ≠ speaker count; `plans/diarization-production-plan.md:37`).

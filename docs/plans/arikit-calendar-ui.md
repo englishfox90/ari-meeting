@@ -1,6 +1,6 @@
 # Plan: Native Calendar Page (`Ari/UI/Calendar/`)
 
-**Status:** approved · **Author:** swift-architect · **Date:** 2026-07-22
+**Status:** ✅ LANDED 2026-07-22 (slices 1–3: `a675372`, `0e65f93`, review fixes `e74c4f2`; plus HTML-notes parsing follow-on `abc6a55` — `RichNotes` in AriViewModels, used by `EventDetailSheet`) · **Author:** swift-architect · **Date:** 2026-07-22
 **Replaces:** the `.calendar` placeholder in `Ari/UI/AppShell/RootSplitView.swift:109-110`
 **Depends on:** S7 EventKit calendar (landed, commit 9b7ad1c) — `CalendarSyncEngine`,
 `CalendarEventRepository`, `EventKitCalendarSource`, `CalendarSyncScheduler`.

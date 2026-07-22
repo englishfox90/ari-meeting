@@ -559,6 +559,12 @@ data.
 
 **S7 — EventKit calendar + notch panel + notifications/menu bar (Phase 2 tail).** *Accept:* Lane-2
 Calendar grant works under the signed bundle (impossible under a bare binary, `build-and-run.md`).
+> **STATUS (2026-07-22): calendar half ✅ — accept met.** EventKit source + sync engine + live
+> Settings landed per `docs/plans/arikit-calendar.md`; the Lane-2 grant/sync/auto-link checklist
+> was run by Paul under the signed bundle. The native Calendar page (week grid, detail sheet with
+> HTML-notes parsing, link/unlink, start-meeting handoff) shipped per
+> `docs/plans/arikit-calendar-ui.md`. **Still open from S7:** notch panel absorption (§2.4),
+> notifications/menu bar, and the F5 record prompt.
 
 **S8 — "import existing library" milestone.** Drive `LegacyDatabaseImporter` from the app + audio-
 file adoption + verification counts + honest key re-prompt. *Accept:* imported meeting counts

@@ -1,6 +1,6 @@
 # Plan: AriKit Calendar — S7 EventKit slice (live calendar source + sync engine)
 
-**Status:** approved · **Author:** swift-architect · **Date:** 2026-07-21
+**Status:** ✅ LANDED 2026-07-21/22 (C1–C4 commit `9b7ad1c` + review fixes; Lane-2 checklist §6 run by Paul under the signed bundle — grant, real sync, auto-link all verified) · **Author:** swift-architect · **Date:** 2026-07-21
 **Slice:** S7 (EventKit part only) of `docs/plans/arikit-native-shell.md` §2.5 / §11.
 **Out of S7 here (later tail):** notch panel, notifications/menu bar, F5 record prompt, Series
 Track I (`docs/plans/arikit-engine-providers.md` Slice I), and any week-grid calendar page
