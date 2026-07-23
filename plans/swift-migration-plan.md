@@ -14,7 +14,7 @@ A staged migration of Ari from its Rust/Tauri + Next.js stack to a **100% Swift,
 
 | | Item | State |
 |---|---|---|
-| 🟡 | **Wire Recall ("Ask my meetings") into the app UI** | Engine is fully built and tested in `AriKit/Sources/AriKit/Recall/` (safety shell, hybrid FTS5⊕vector search, orchestrator, streaming). **Zero UI consumer** — no Ask screen, no view model in `AriViewModels`, no sidebar entry. This is the single largest gap between "AriKit can do it" and "the app can do it." |
+| ✅ | **Wire Recall ("Ask my meetings") into the app UI** | Done 2026-07-22 (`848e8d9`/merge `2864381`, `docs/plans/ari-ask-ui.md`): native Ask chat UI on the already-built RecallEngine — the dedicated `.ask` page plus an app-wide chat-bubble FAB + overlay, context-aware scope (meeting > series > global, auto-derived from navigation, user-overridable), streamed answers, inline `[S1]` citation chips with source popovers, per-scope persisted conversation history. `AskViewModel`/`AskScopeResolver` in `AriViewModels`; RecallEngine wired in `AppEnvironment` with the zero-config on-device MLX default. |
 | ⬜ | **Onboarding flow** | No first-run setup, permission-request sequence, or model-download flow exists anywhere in `Ari/` or `AriKit/`. Zero code hits for "onboarding." |
 | ⬜ | **Block/rich-text editor** | Meeting notes use a plain `MarginaliaTextEditor` (themed `TextEditor` wrapper, no formatting/blocks). No BlockNote equivalent — drag handles, slash menus, `@ref` badge decorations all absent. Scheduled last in Phase 4 by design; still genuinely not started. |
 | 🟡 | **Diarization close-out (D10)** | Core port (D1–D9b) is landed and live. Matcher-threshold calibration and the `docs/plans/arikit-diarization.md` §8 human-verification checklist (one hand-confirmed 3+ speaker recording, TCC-free confirm, sign-off) are **all still unchecked**. Not blocking normal use; blocking a confident "diarization is done" call. |
@@ -53,10 +53,10 @@ Audio capture (mic + system tap), STT, summarization/LLM providers (cloud, MLX, 
 | Meeting list/detail UI | ✅ Done | Native `NavigationSplitView`, `AVPlayer` listen-back, referenced-moments bar, source-record panel, `MarginaliaMarkdownView` with `[MM:SS]` citation chips. |
 | Meeting series (F9) | ✅ Done | Landed 2026-07-22 (`acbc300`) — native ledger, cross-meeting `@mref` citation chips, searchable/sorted list. |
 | Menu bar | ✅ Done | `Ari/UI/MenuBar/MenuBarContentView.swift`, branded 2026-07-22. |
-| Recall / "Ask my meetings" (F7) | 🟡 Library done, UI not wired | `AriKit/Sources/AriKit/Recall/` — safety shell, FTS5⊕vector hybrid search, embedder, indexer, orchestrator (single-shot + streaming), 1:1-ported Rust safety-shell invariant tests. **No Ask screen, no view model, no sidebar entry anywhere in `Ari/`.** A user of the Swift app today cannot ask questions of their meetings; that still only works in the Rust app's `/chat` route. |
+| Recall / "Ask my meetings" (F7) | ✅ Done | Engine: `AriKit/Sources/AriKit/Recall/` (safety shell, FTS5⊕vector hybrid, orchestrator, 1:1-ported invariant tests). UI landed 2026-07-22 (`848e8d9`): `.ask` page + global FAB overlay, scope resolution (meeting/series/global), streaming, citation chips, per-scope history. |
 | Onboarding | ⬜ Not started | No code anywhere in `Ari/` or `AriKit/`. |
 | Block/rich-text editor | ⬜ Not started | Plain `TextEditor`-based `MarginaliaTextEditor` only; no block editing. |
-| Notch panel | ⬜ Not started | Explicitly disabled in Settings pending a port. |
+| Notch panel | ✅ Done | Absorbed in-process 2026-07-22 (`dcdec9a`..`91487e0`, `docs/plans/notch-panel-absorption.md`): `Ari/UI/Notch/` panel host + chrome + HUD, pure layer in `AriViewModels/Notch/`, scheduler brain pulled forward (`NotchUpcomingPlanner`/`NotchUpcomingScheduler`), Marginalia re-theme, `showNotchOverlay` toggle (default off). Live-pass fixes: shared `PeakLevelMeter` level gain, notch-width overhang, flush-top/no-bounce/pixel-snap animation hardening. Human visual re-check of the top seam still pending. |
 | MCP server (F8) | ⬜ Not started | Zero code. |
 | Settings | 🟡 Broad but unaudited | See checklist. |
 | Design system | ✅ Done | Marginalia tokens (`AriKit/Sources/AriKit/DesignSystem/`) + `MarginaliaTokenParityTests` keeping Swift↔`brand/tokens.json` in sync; button system (4 roles × 2 sizes); macOS 26 Liquid Glass on chrome. |
@@ -90,7 +90,7 @@ Principles still governing remaining work:
 AriKit  (shared Swift package)
 ├── Models        meetings, transcripts, summaries, persons, series, profile facts
 ├── Store         GRDB (local source of truth)  +  CloudKit sync (Phase 5.5, off today)
-├── Recall        hybrid retrieval (FTS5 ⊕ vector RRF), safety shell — built, not yet wired to UI
+├── Recall        hybrid retrieval (FTS5 ⊕ vector RRF), safety shell — wired to the Ask UI
 ├── Context       SummaryContext assembly (owner + attendees + call type)
 └── Engine        capture-agnostic STT / summary / persons / series / recall
                   (shared by both targets; diarization is macOS-only)
@@ -102,7 +102,7 @@ Ari (macOS app — DONE except the checklist above)   Ari Lite (iOS/iPadOS — P
 ├── Diarize   FluidAudio (CoreML, offline)            ├── Diarize   ✗ none (no proven mobile model)
 ├── Summary   MLX / cloud / Claude CLI / FM floor     ├── Summary   MLX Gemma-E2B/E4B / cloud
 ├── Calendar  EventKit                                ├── Calendar  EventKit
-├── SwiftUI UI (native, Recall not yet wired)         ├── Recall/persons/series (shared)
+├── SwiftUI UI (native, incl. Ask + notch island)     ├── Recall/persons/series (shared)
 └── —                                                 └── SwiftUI UI, minus speaker labels
 ```
 
@@ -118,12 +118,12 @@ Phases 0 (de-risk spikes), 1 (collapsed into 3), 1.5 (engine carve), 2 (native s
 D10 calibration sweep + `docs/plans/arikit-diarization.md` §8 human-verification checklist. See top checklist.
 
 ### Phase 4 — remaining UI nativization
-- **Wire Recall into the app** (the actual next priority — the engine is done, the UI isn't).
+- ~~**Wire Recall into the app**~~ ✅ Done 2026-07-22 — the Ask page + FAB overlay (`docs/plans/ari-ask-ui.md`).
 - **Onboarding flow** — first-run setup, permission sequencing, model-download UX.
 - **Block editor** — native rebuild on `TextEditor`/`AttributedString`, or accept a scoped WebView for this one panel (decision still open, was deferred to "decide on evidence").
 - ~~**Notch panel absorption.**~~ ✅ Done 2026-07-22, including the scheduler brain pulled forward (`docs/plans/notch-panel-absorption.md`).
 - **MCP server (F8)** — build once against `AriKit.Store`/`Recall`.
-- **Settings parity audit** — diarization tuning UI, notch setting reactivation, full side-by-side vs. the Rust settings surface.
+- **Settings parity audit** — diarization tuning UI, full side-by-side vs. the Rust settings surface (notch toggle now live; legacy inert row removed).
 
 ### Phase 5 — convergence & cleanup
 Once the Phase 4 items above land: delete the Rust tree (`frontend/src-tauri`, `llama-helper`, `diarize-helper` — already functionally dead), delete `frontend/` (Next.js/React), delete the root Arivo `DESIGN.md`/`DESIGN.json` (superseded by `brand/`), update `.claude/` docs and the PRD. Not started — correctly gated on Phase 4.
@@ -150,7 +150,7 @@ Starts only after Phase 5.5 is proven. Full engine reuse via `AriKit`, minus spe
 | Persons extraction/reconciliation | Swift, LLM-backed | ✅ Done |
 | Series detection + ledgers | Swift | ✅ Done (F9, 2026-07-22) |
 | `sqlx` + repositories | GRDB | ✅ Done |
-| Hybrid recall + safety shell | Swift library | 🟡 Built, not wired to UI |
+| Hybrid recall + safety shell | Swift library + Ask UI | ✅ Done (UI wired 2026-07-22) |
 | `sherpa-onnx` (`diarize-helper`) | FluidAudio (CoreML pyannote) | 🟡 Core done, D10 open |
 | EventKit calendar sync | Native (was already objc2-native) | ✅ Done |
 | Notifications + F5 record prompt | UserNotifications | ✅ Done |
@@ -159,7 +159,7 @@ Starts only after Phase 5.5 is proven. Full engine reuse via `AriKit`, minus spe
 | Onboarding | — | ⬜ Not started |
 | Block editor | — | ⬜ Not started |
 | MCP server (F8) | — | ⬜ Not started |
-| Next.js/React/BlockNote UI (11 routes) | SwiftUI | ✅ Done except Ask + block editor |
+| Next.js/React/BlockNote UI (11 routes) | SwiftUI | ✅ Done except block editor |
 | CloudKit sync layer | — | ⬜ Not started (Phase 5.5) |
 | Ari Lite iOS app | — | ⬜ Not started (Phase 6) |
 
@@ -180,7 +180,7 @@ Fuller historical reasoning for each of these (spike numbers, bake-off tables, t
 ## Per-subsystem detail plans
 
 - `docs/plans/arikit-store.md` — Store/GRDB
-- `docs/plans/arikit-recall.md` — Recall engine (library; UI wiring not yet planned as its own doc — do that next)
+- `docs/plans/arikit-recall.md` — Recall engine (library); `docs/plans/ari-ask-ui.md` — the Ask UI wiring (shipped 2026-07-22)
 - `docs/plans/arikit-stt.md` — STT
 - `docs/plans/arikit-diarization.md` — Diarization (§8 has the open D10 checklist)
 - `docs/plans/arikit-engine-providers.md`, `docs/plans/arikit-engine-extras.md` — Providers/summary, MLX/persons/series
