@@ -881,6 +881,89 @@ struct RecallEngineTests {
         #expect(prompt.contains("verified ground truth"))
         #expect(prompt.lowercased().contains("trust it over"))
     }
+
+    @Test(
+        "Regression (caught live 2026-07-23): a large attendee roster never buries or truncates the queried person's presence out of the prompt"
+    )
+    func calendarFactNeverLosesQueriedPersonInALargeRoster() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = Date()
+        // 16 attendees, matching the real live-caught fixture — the queried person (Landon Starr)
+        // sits 7th, exactly where the OLD full-roster-dump implementation got truncated by
+        // `RecallBounds.maxCardContextChars` (240) mid-word, right before his name.
+        let attendees = [
+            "charles.king@arivo.com", "amy.teuscher@arivo.com", "andrew.hall@arivo.com",
+            "shaun.tilley@arivo.com", "wes.curtis@arivo.com", "pieter.vanispelen@arivo.com",
+            "landon.starr@arivo.com", "jj.garff@arivo.com", "joonas.tahvanainen@arivo.com",
+            "james.nance@arivo.com", "lindsey.tsuya@arivo.com", "paul.foxreeks@arivo.com",
+            "matthew.thomas@arivo.com", "rachelg@arivo.com", "mike.gustafson@arivo.com",
+            "another.attendee@arivo.com"
+        ].map { Attendee(name: $0, email: $0) }
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-exec"),
+            calendarId: "cal-1",
+            title: "Arivo Executive Meeting",
+            startTime: now,
+            endTime: now.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: attendees
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Yes.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(
+            question: "Do I have a meeting with Landon today?"
+        )
+
+        #expect(response.card != nil)
+        let prompt = try #require(await client.lastUserPrompt)
+        // The full email, unbroken and un-truncated — never a mid-word cut like "landon.star".
+        #expect(prompt.contains("landon.starr@arivo.com"))
+        #expect(prompt.contains("16 attendee"))
+    }
+
+    @Test(
+        "Reviewer-caught gap (2026-07-23): a calendar event already linked to a recorded meeting states that fact directly, even with no Person record"
+    )
+    func calendarEventLinkedToRecordedMeetingStatesSoInThePrompt() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = try await seedMeetingWithTranscripts(
+            db,
+            id: "meeting-linked",
+            title: "Linked sync",
+            segments: [(timestamp: "00:00", text: "Discussed the roadmap.", start: 0)]
+        )
+        let now = Date()
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-linked"),
+            calendarId: "cal-1",
+            title: "Linked sync",
+            startTime: now,
+            endTime: now.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "Nia Ward", email: "nia@example.com")],
+            meetingId: meeting.id,
+            linkSource: .calendar
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Yes.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(
+            question: "Do I have a meeting with Nia today?"
+        )
+
+        let card = try #require(response.card)
+        guard case let .calendarEvent(payload) = card else {
+            Issue.record("expected a .calendarEvent card")
+            return
+        }
+        #expect(payload.isLinkedToRecordedMeeting == true)
+
+        let prompt = try #require(await client.lastUserPrompt)
+        #expect(prompt.contains("recorded meeting"))
+    }
 }
 
 // MARK: - Test double

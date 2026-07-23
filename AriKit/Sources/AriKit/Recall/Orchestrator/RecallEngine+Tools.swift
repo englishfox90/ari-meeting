@@ -53,7 +53,9 @@ extension RecallEngine {
         let person = try await tools.findPerson(nameContaining: nameQuery)
 
         if let event = todaysEvents.first {
-            return try await resolveCalendarEventToday(event: event, person: person, tools: tools)
+            return try await resolveCalendarEventToday(
+                event: event, person: person, tools: tools, nameQuery: nameQuery
+            )
         }
 
         guard let person else { return nil }
@@ -68,7 +70,8 @@ extension RecallEngine {
     private static func resolveCalendarEventToday(
         event: CalendarEvent,
         person: Person?,
-        tools: RecallTools
+        tools: RecallTools,
+        nameQuery: String
     ) async throws -> ResolvedEntity {
         let attendeeNames = event.attendees.compactMap(\.name)
         let startTimeRFC3339 = RFC3339.string(from: event.startTime)
@@ -80,10 +83,25 @@ extension RecallEngine {
             isLinkedToRecordedMeeting: event.meetingId != nil
         )
 
+        // State the MATCHED person's presence explicitly and FIRST — never a full attendee-roster
+        // dump. Real bug, caught live 2026-07-23: a 16-attendee event's full comma-joined roster
+        // overflowed `RecallBounds.maxCardContextChars` (240) and got truncated mid-word exactly at
+        // the queried person's name ("...pieter.vanispelen@arivo.com, landon.star" — cut before
+        // "r@arivo.com"), so the model never reliably saw that the person it was asked about was
+        // actually on the invite. The full roster is already shown untruncated in the card UI
+        // (Slice C) — the LLM-facing fact only needs to confirm presence, not enumerate everyone.
+        let needle = nameQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let matchedAttendee = attendeeNames.first { $0.lowercased().contains(needle) } ?? nameQuery
         let localTime = RecallCardDisplay.friendlyDate(startTimeRFC3339)
-        let withLabel = attendeeNames.isEmpty ? "" : " with \(attendeeNames.joined(separator: ", "))"
-        let calendarFact = "Calendar: an event \"\(event.title)\" today"
-            + (localTime.map { " at \($0)" } ?? "") + "\(withLabel)."
+        // Reviewer-caught gap (2026-07-23): `isLinkedToRecordedMeeting` was computed on the card
+        // payload but never actually stated to the model — only the SwiftUI card used it. A calendar
+        // event that already has a real recorded Meeting attached (event.meetingId != nil) must say
+        // so directly here, independent of whether a `Person` row also resolves (person and
+        // event-linkage are separate facts).
+        let linkedNote = event.meetingId != nil ? " This event has a recorded meeting." : ""
+        let calendarFact = "Calendar: \(matchedAttendee) is an attendee on \"\(event.title)\" today"
+            + (localTime.map { " at \($0)" } ?? "") + ", among \(attendeeNames.count) attendee(s) total."
+            + linkedNote
 
         var recordedFact = ""
         if let person {

@@ -662,7 +662,7 @@ struct AskViewModelTests {
         }
         #expect(
             message ==
-                "Ask Meetings can answer only from saved local Ari Meeting transcripts, plus real calendar scheduling facts (event times and attendees) when supplied — a calendar entry means something is scheduled, never that it was recorded or discussed. It cannot access email, accounts, internet search, or files outside Ari Meeting."
+                "Ask Meetings can answer only from saved local Ari Meeting transcripts, plus real calendar scheduling facts for today's events (event times and attendees) when supplied — a calendar entry means something is scheduled, never that it was recorded or discussed. It cannot access email, accounts, internet search, files outside Ari Meeting, or calendar dates other than today."
         )
         #expect(!showSettings)
     }
