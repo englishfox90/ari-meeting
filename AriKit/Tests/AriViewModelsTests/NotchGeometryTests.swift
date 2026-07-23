@@ -16,7 +16,7 @@ import Testing
 struct NotchGeometryTests {
     // MARK: - islandFrame: centering + top-flush
 
-    @Test("islandFrame centers on the primary screen and hugs its top edge")
+    @Test("islandFrame centers on the primary screen; content's own top hugs the screen top")
     func islandFrameCentersOnPrimaryScreen() {
         // 1512×982 built-in display at origin (0,0).
         let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
@@ -26,12 +26,15 @@ struct NotchGeometryTests {
 
         // Horizontally centered: midX 756 → x = 756 - 100 = 656.
         #expect(abs(frame.origin.x - 656) < 0.001)
-        // Top edge flush to screen top (maxY 982): y = 982 - 32 = 950.
+        // Bottom (where content ends) is unaffected by the bleed: y = 982 - 32 = 950.
         #expect(abs(frame.origin.y - 950) < 0.001)
         #expect(abs(frame.width - 200) < 0.001)
-        #expect(abs(frame.height - 32) < 0.001)
-        // The island's TOP edge must sit exactly at the screen top.
-        #expect(abs(frame.maxY - screen.maxY) < 0.001)
+        // The panel is `topBleed` taller than the content it reports.
+        #expect(abs(frame.height - (32 + IslandGeometry.topBleed)) < 0.001)
+        // The panel's OWN top edge extends `topBleed` past the screen top (safety margin) — the
+        // visible island's top (maxY - topBleed, painted flush by the SwiftUI chrome) is what
+        // actually hugs the screen edge; see `IslandContainerView`.
+        #expect(abs(frame.maxY - (screen.maxY + IslandGeometry.topBleed)) < 0.001)
     }
 
     @Test("islandFrame centers on an offset secondary screen, not the global origin")
@@ -48,7 +51,7 @@ struct NotchGeometryTests {
         #expect(abs(frame.origin.y - (1440 - 180)) < 0.001)
         // Center of the island == center of the screen, horizontally.
         #expect(abs(frame.midX - screen.midX) < 0.001)
-        #expect(abs(frame.maxY - screen.maxY) < 0.001)
+        #expect(abs(frame.maxY - (screen.maxY + IslandGeometry.topBleed)) < 0.001)
     }
 
     @Test("islandFrame handles a negative-origin screen")
@@ -60,7 +63,20 @@ struct NotchGeometryTests {
         let frame = IslandGeometry.islandFrame(inScreen: screen, contentSize: content)
 
         #expect(abs(frame.midX - screen.midX) < 0.001)
-        #expect(abs(frame.maxY - screen.maxY) < 0.001)
+        #expect(abs(frame.maxY - (screen.maxY + IslandGeometry.topBleed)) < 0.001)
+    }
+
+    @Test("islandFrame's bottom edge (where content ends) is bleed-independent")
+    func islandFrameBottomUnaffectedByBleed() {
+        // The bottom anchor (content's own end) must be identical to the pre-bleed formula
+        // (`screenFrame.maxY - contentSize.height`) — only the top grows. This is what keeps the
+        // island's visible position on screen unchanged from before the bleed fix.
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let content = CGSize(width: 200, height: 32)
+
+        let frame = IslandGeometry.islandFrame(inScreen: screen, contentSize: content)
+
+        #expect(abs(frame.origin.y - (screen.maxY - content.height)) < 0.001)
     }
 
     // MARK: - notchWidth

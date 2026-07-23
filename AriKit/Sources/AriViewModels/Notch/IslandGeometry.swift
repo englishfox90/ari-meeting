@@ -59,6 +59,19 @@ public enum IslandGeometry {
     /// (`expandedMinWidth` / SwiftUI's own `.frame(minWidth:)` never shrinks content).
     public static let expandedOverhang: CGFloat = 28
 
+    /// Extra chrome height the AppKit panel keeps ABOVE the visible island's own top edge — an
+    /// animation-timing safety margin (docs/plans/notch-panel-absorption.md, "top-gap during
+    /// bounce" fix). The panel's frame is driven by discrete SwiftUI geometry reports
+    /// (`NotchPanelController.islandDidResize`/`reanchor`) while the on-screen expand/collapse
+    /// morph is a continuous spring; the two can drift by a frame. `islandFrame` keeps the
+    /// panel's BOTTOM anchored exactly where content ends (unchanged) but grows the panel
+    /// `topBleed` points TALLER at the top, past the screen's physical top edge. The SwiftUI
+    /// chrome (`IslandContainerView`) paints that extra strip solid black and keeps the visible
+    /// island's own top pinned at `screenFrame.maxY` exactly as before, so the steady-state look
+    /// is unchanged — but a stray out-of-sync animation frame now reveals more black chrome,
+    /// never bare desktop, at the seam with the physical notch.
+    public static let topBleed: CGFloat = 6
+
     /// The expanded island's width floor: the active screen's physical notch width plus
     /// `expandedOverhang` on each side, or `nil` on a non-notched screen (nothing to hug/overhang
     /// past — the collapsed pill already falls back to a plain centered pill there, and the
@@ -68,9 +81,12 @@ public enum IslandGeometry {
         return notchWidth + 2 * expandedOverhang
     }
 
-    /// Frame for the island panel: centered horizontally on `screenFrame`, its TOP edge flush to
-    /// the screen's top (`screenFrame.maxY`) so it hugs the very top edge over the menu bar /
-    /// notch.
+    /// Frame for the island panel: centered horizontally on `screenFrame`. The visible island's
+    /// own top edge sits flush to the screen's top (`screenFrame.maxY`), exactly as before — but
+    /// the PANEL's actual frame is `topBleed` points taller, extending that far ABOVE
+    /// `screenFrame.maxY` as an animation-timing safety margin (see `topBleed`). The panel's
+    /// bottom edge (`y`, i.e. where content ends) is unaffected: `y = screenFrame.maxY -
+    /// contentSize.height`, unchanged from the pre-bleed formula.
     ///
     /// Uses the passed `screenFrame` directly, so multi-monitor math is correct: a screen whose
     /// origin is offset (e.g. `x = 1512`) centers on THAT screen, not the global (0,0) origin.
@@ -79,7 +95,8 @@ public enum IslandGeometry {
     public static func islandFrame(inScreen screenFrame: CGRect, contentSize: CGSize) -> CGRect {
         let x = screenFrame.midX - contentSize.width / 2.0
         let y = screenFrame.maxY - contentSize.height
-        return CGRect(x: x, y: y, width: contentSize.width, height: contentSize.height)
+        let height = contentSize.height + topBleed
+        return CGRect(x: x, y: y, width: contentSize.width, height: height)
     }
 
     /// Physical-notch width derived from a screen's full width minus the two auxiliary top areas

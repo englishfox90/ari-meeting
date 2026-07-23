@@ -190,13 +190,35 @@ struct IslandContainerView: View {
 
     var body: some View {
         content
+            // The island's overall SIZE transition drives the AppKit panel's frame
+            // (`onResize` -> `NotchPanelController.reanchor`), a DISCRETE resize following a
+            // CONTINUOUS on-screen spring — the two can drift by a frame. Deliberately no
+            // overshoot here: an overshooting height would report (and briefly position the
+            // panel at) a size past the final target, widening the window for any transient
+            // mismatch to show through as a sliver at the physical top edge during the bounce
+            // (docs/plans/notch-panel-absorption.md). This inner `.animation` is more deeply
+            // nested than the bouncy one below, so it wins for content's own geometry; the
+            // corner-radius spring below still gets its bounce.
+            .animation(.spring(response: 0.34, dampingFraction: 1.0), value: presentation)
             .background(IslandShape(topRadius: topRadius, bottomRadius: bottomRadius).fill(chrome))
             .clipShape(IslandShape(topRadius: topRadius, bottomRadius: bottomRadius))
-            // Spring the morph on the state change; the host follows the size.
+            // Spring the corner-radius morph on the state change. Purely a clip effect — it
+            // doesn't feed `sizeReporter`/the panel's geometry — so its overshoot is cosmetic
+            // only and can never reveal the physical top edge.
             .animation(.snappy(duration: 0.34, extraBounce: 0.12), value: presentation)
             .animation(.snappy(duration: 0.34, extraBounce: 0.12), value: environment.notchSize)
             .background(sizeReporter)
+            .padding(.top, IslandGeometry.topBleed)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Top bleed: paints the extra headroom the host panel now reserves ABOVE the
+            // visible island (`IslandGeometry.topBleed`) solid black. Invisible in steady state
+            // (it sits past the screen's physical top edge, `.padding` above keeps the visible
+            // shape's own top exactly where it was before this fix) — it exists purely so a
+            // stray out-of-sync animation frame during the expand/collapse bounce still shows
+            // chrome, never bare desktop, at the seam with the physical notch.
+            .background(alignment: .top) {
+                chrome.frame(height: IslandGeometry.topBleed)
+            }
             // Belt-and-suspenders with the host's `safeAreaRegions = []`: whichever macOS
             // honors, the island must extend into the menu-bar/notch safe area so its square
             // top sits FLUSH against the physical top edge rather than floating a notch-height
