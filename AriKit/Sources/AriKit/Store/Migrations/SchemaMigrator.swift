@@ -13,6 +13,8 @@
 //  (`series`+`seriesLedger`+`seriesMember`) and §4.8 (`calendarEvent`+`calendarSyncSetting`).
 //  Recall Slice 2 (docs/plans/arikit-recall-slice2.md §4) appends `recallChunk`,
 //  `recallIndexState`, `recallFts` (FTS5), and the schema-only `askConversation`/`askMessage`.
+//  `docs/plans/ari-ask-ui.md` Phase 0 later adds `askConversation.seriesId` in place (same
+//  extend-in-place policy, table still unshipped).
 //
 //  ⚠️ Table order is now parent-before-child throughout, per the slice-1 finding: `person` is
 //  declared BEFORE `speaker` so `speaker.personId REFERENCES person(id)` can be inline from the
@@ -389,12 +391,23 @@ enum SchemaMigrator {
                 t.column("meetingId").notIndexed()
             }
 
-            // `askConversation` (§4.4) — schema only in Slice 2; no repository yet (Slice 6).
+            // `askConversation` (§4.4) — schema only in Slice 2; repository landed in Slice 6
+            // (`AskConversationStore`). `seriesId` (docs/plans/ari-ask-ui.md Phase 0) is folded in
+            // here — same "extend `v1_baseline` in place while it remains unshipped" policy this
+            // file's header already documents for `recallChunk`/`askConversation`/`askMessage`/
+            // `setting` — rather than opening a `v2_...` migration for a table with no shipped
+            // rows anywhere. `series` is declared above, so the FK is inline from the start.
+            // Invariant (enforced in `AskConversationStore`, not a DB constraint SQLite can
+            // express cleanly here): at most one of `meetingId`/`seriesId` is non-null; both null
+            // is a global (cross-meeting, cross-series) conversation.
             try db.create(table: "askConversation") { t in
                 t.primaryKey("id", .text)
                 t.column("meetingId", .text)
                     .indexed()
                     .references("meeting", onDelete: .setNull)
+                t.column("seriesId", .text)
+                    .indexed()
+                    .references("series", onDelete: .setNull)
                 t.column("title", .text)
                 t.column("createdAt", .text).notNull()
                 t.column("updatedAt", .text).notNull().indexed()

@@ -15,6 +15,7 @@ struct AskConversationRecord: Codable, FetchableRecord, PersistableRecord, Senda
 
     var id: String
     var meetingId: String?
+    var seriesId: String?
     var title: String?
     var createdAt: String
     var updatedAt: String
@@ -24,6 +25,7 @@ extension AskConversationRecord {
     init(_ conversation: AskConversation) {
         id = conversation.id.rawValue
         meetingId = conversation.meetingId?.rawValue
+        seriesId = conversation.seriesId?.rawValue
         title = conversation.title
         createdAt = conversation.createdAt
         updatedAt = conversation.updatedAt
@@ -33,6 +35,7 @@ extension AskConversationRecord {
         AskConversation(
             id: AskConversationID(id),
             meetingId: meetingId.map { MeetingID($0) },
+            seriesId: seriesId.map { SeriesID($0) },
             title: title,
             createdAt: createdAt,
             updatedAt: updatedAt

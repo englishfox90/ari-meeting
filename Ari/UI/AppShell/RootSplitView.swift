@@ -25,6 +25,14 @@ struct RootSplitView: View {
     @State private var path = NavigationPath()
     /// Drives the "import a recording" sheet (docs/plans/audio-import.md).
     @State private var showImportSheet = false
+    /// Tracks "the meeting/series currently in view" alongside `path` (docs/plans/ari-ask-ui.md
+    /// §7) — `NavigationPath` has no public way to peek at its own top element's concrete type,
+    /// so we keep a parallel STACK of nav keys: every `path.append` site pushes one entry, and
+    /// `.onChange(of: path.count)` truncates it whenever the path pops (system back button,
+    /// swipe). The top of the stack is therefore always the node actually on screen — so the Ask
+    /// FAB never stays scoped to a meeting the user has navigated away from. Reset with `path`.
+    @State private var askNavStack: [AskNavKey] = []
+    private var askNavKey: AskNavKey { askNavStack.last ?? .none }
 
     var body: some View {
         Group {
@@ -48,9 +56,9 @@ struct RootSplitView: View {
             SidebarView(
                 selection: $selectedSection,
                 database: database,
-                onSelectMeeting: { path.append($0) },
-                onSelectPerson: { path.append($0) },
-                onSelectSeries: { path.append($0) },
+                onSelectMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
+                onSelectPerson: { path.append($0); askNavStack.append(.none) },
+                onSelectSeries: { path.append($0); askNavStack.append(.series($0)) },
                 onImportAudio: { showImportSheet = true }
             )
             .navigationSplitViewColumnWidth(min: 236, ideal: 252, max: 300)
@@ -89,14 +97,40 @@ struct RootSplitView: View {
                                 database: database,
                                 seriesId: seriesId,
                                 ledgerReducer: ledgerReducer,
-                                onOpenMeetingMoment: { path.append(MeetingMoment(meetingId: $0, seconds: $1)) }
+                                onOpenMeetingMoment: { meetingId, seconds in
+                                    path.append(MeetingMoment(meetingId: meetingId, seconds: seconds))
+                                    askNavStack.append(.meeting(meetingId))
+                                }
                             )
                         }
                     }
             }
+            // The app-wide "Ask" FAB + floating panel (docs/plans/ari-ask-ui.md §7) — confined to
+            // the detail column only, so it never covers the sidebar rail.
+            .overlay(alignment: .bottomTrailing) {
+                AskOverlayHost(
+                    database: database,
+                    recallEngine: environment.recallEngine,
+                    selectedSection: selectedSection,
+                    navKey: askNavKey,
+                    isRecordingActive: environment.recordingSession?.isActive ?? false,
+                    onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
+                    onOpenSettings: { selectedSection = .settings }
+                )
+            }
         }
         .onChange(of: selectedSection) { _, _ in
             path = NavigationPath()
+            askNavStack = []
+        }
+        // Keep the nav-key stack in lockstep with `path` when it POPS (back button / swipe): each
+        // push already appended its key, so on a push `path.count == askNavStack.count` and this is
+        // a no-op; on a pop `path.count` drops below the stack and we truncate to match, so the top
+        // key always reflects the visible node (fixes stale Ask scope after back-navigation).
+        .onChange(of: path.count) { _, newCount in
+            if askNavStack.count > newCount {
+                askNavStack.removeLast(askNavStack.count - newCount)
+            }
         }
         // Mount-independent pipeline kickoff (docs/plans/swift-meeting-generation-flow.md,
         // Track 2): fires exactly once per `.saved(meetingId)` transition, regardless of which
@@ -114,6 +148,7 @@ struct RootSplitView: View {
             showImportSheet = false
             Task { await environment.processingCoordinator?.begin(meetingId: meetingId) }
             path.append(meetingId)
+            askNavStack.append(.meeting(meetingId))
             environment.importSession?.reset()
         }
         // Navigation raised from outside the view tree (a tapped notification): a meeting-reminder
@@ -126,6 +161,7 @@ struct RootSplitView: View {
                 selectedSection = section
             case let .meeting(meetingId):
                 path.append(meetingId)
+                askNavStack.append(.meeting(meetingId))
             }
             environment.consumePendingNavigation()
         }
@@ -185,24 +221,27 @@ struct RootSplitView: View {
         case .savedMeetings:
             MeetingsListView(database: database)
         case .series:
-            SeriesListView(database: database, onCreated: { path.append($0) })
+            SeriesListView(database: database, onCreated: { path.append($0); askNavStack.append(.series($0)) })
         case .people:
             PeopleListView(database: database)
         case .newMeeting:
             if let session = environment.recordingSession {
-                RecordingView(session: session, onOpenMeeting: { path.append($0) })
+                RecordingView(session: session, onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) })
             } else {
                 placeholder("Recording isn't built yet.")
             }
         case .ask:
-            placeholder("Ask meetings isn't ready yet.")
+            AskPageView(
+                onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
+                onOpenSettings: { selectedSection = .settings }
+            )
         case .calendar:
             CalendarPageView(
                 database: database,
                 calendarSource: environment.calendarSource,
                 recordingSession: environment.recordingSession,
                 selection: $selectedSection,
-                onOpenMeeting: { path.append($0) }
+                onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) }
             )
         case .settings:
             SettingsView(
