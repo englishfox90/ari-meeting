@@ -55,10 +55,12 @@ public struct SummaryRunner: Sendable {
     /// has no transcript text — and `generate` treats it as "nothing to summarize" rather than
     /// fabricating content.
     public func transcriptText(for meetingId: MeetingID) async throws -> String {
-        if let labeled = try await LabeledTranscript.buildLabeledTranscriptText(db: database, meetingId: meetingId) {
-            return labeled
-        }
-        return try await LabeledTranscript.loadTranscriptText(db: database, meetingId: meetingId)
+        // Summary path: always `[MM:SS] Name: text` (or `[MM:SS] text` when the speaker is
+        // unknown). The `[MM:SS]` prefix is load-bearing — the summary prompt promises it and
+        // `SummaryCitations` verifies/back-fills `@ref(MM:SS)` against it. The persons-oriented
+        // `buildLabeledTranscriptText` deliberately omits timestamps, so it must NOT be reused
+        // here (doing so silently disabled reference-badge citations).
+        try await LabeledTranscript.buildSummaryTranscriptText(db: database, meetingId: meetingId)
     }
 
     /// The auto-suggested template id for `text`. Never throws: with no configured summary model
@@ -110,21 +112,20 @@ public struct SummaryRunner: Sendable {
             throw LLMError.notConfigured("No summarization model is configured. Choose one in Settings.")
         }
 
-        let resolvedTemplateId: String
-        if let templateId {
-            resolvedTemplateId = templateId
+        let resolvedTemplateId: String = if let templateId {
+            templateId
         } else {
-            resolvedTemplateId = await suggestTemplateID(text: text, speakerCount: speakerCount)
+            await suggestTemplateID(text: text, speakerCount: speakerCount)
         }
 
-        let request = SummaryProcessRequest(
+        let request = await SummaryProcessRequest(
             meetingId: meetingId,
             text: text,
             modelProviderKey: modelConfig.providerKey,
             modelName: modelConfig.model,
             customPrompt: customInstructions,
             templateId: resolvedTemplateId,
-            summaryLanguage: try? await database.settings.string(forKey: .summaryLanguage),
+            summaryLanguage: try? database.settings.string(forKey: .summaryLanguage),
             detectedTranscriptLanguage: nil,
             customTemplateDirectory: customTemplateDirectory
         )
