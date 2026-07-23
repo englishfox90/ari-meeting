@@ -15,18 +15,21 @@ public struct MarginaliaTextEditor: View {
     private let prompt: String
     private let scheme: ColorScheme
     private let minHeight: CGFloat
+    private let maxHeight: CGFloat?
     @FocusState private var isFocused: Bool
 
     public init(
         text: Binding<String>,
         prompt: String,
         scheme: ColorScheme,
-        minHeight: CGFloat = 64
+        minHeight: CGFloat = 64,
+        maxHeight: CGFloat? = nil
     ) {
         self.text = text
         self.prompt = prompt
         self.scheme = scheme
         self.minHeight = minHeight
+        self.maxHeight = maxHeight
     }
 
     public var body: some View {
@@ -45,7 +48,7 @@ public struct MarginaliaTextEditor: View {
                 .padding(.horizontal, MarginaliaSpacing.sm.value)
                 .padding(.vertical, MarginaliaSpacing.xs.value)
         }
-        .frame(minHeight: minHeight)
+        .frame(minHeight: minHeight, maxHeight: maxHeight)
         .background {
             RoundedRectangle(cornerRadius: MarginaliaFieldSpec.standard.radius.value, style: .continuous)
                 .fill(Color.marginalia(MarginaliaFieldSpec.standard.fill, in: scheme))

@@ -78,6 +78,12 @@ final class AppEnvironment {
     /// `clientFactory`. `nil` until `bootstrap()` succeeds, exactly like `summaryRunner`.
     private(set) var seriesLedgerReducer: SeriesLedgerReducer?
 
+    /// The "Ask" recall engine (docs/plans/ari-ask-ui.md §6) — wraps `HybridSearch` +
+    /// `PeopleContext` + the same MLX-aware `clientFactory` the summary stack uses. `nil` until
+    /// `bootstrap()` succeeds, exactly like `summaryRunner`. `AskConversationStore` needs no
+    /// separate property — it's already `db.askConversations`.
+    private(set) var recallEngine: RecallEngine?
+
     /// The post-recording pipeline (docs/plans/swift-meeting-generation-flow.md, Track 2) —
     /// speaker identification → template selection → summary, mount-independent like
     /// `recordingSession` so it survives navigation away from the recording page. `nil` until
@@ -227,6 +233,33 @@ final class AppEnvironment {
                 clientFactory: clientFactory
             )
             seriesLedgerReducer = ledgerReducer
+
+            // docs/plans/ari-ask-ui.md §6: the "Ask" recall engine. Reuses the SAME MLX-aware
+            // `clientFactory` above — the default `RecallEngine.init` factory omits MLX and a
+            // `.mlx` config would throw "MLX client not registered", exactly like the summary
+            // stack's own note above.
+            let embedder = AppleContextualEmbedder()
+            let hybridSearch = HybridSearch(
+                recallIndex: db.recallIndex,
+                meetings: db.meetings,
+                summaries: db.summaries,
+                transcripts: db.transcripts,
+                embedder: embedder
+            )
+            let peopleContext = PeopleContext(
+                persons: db.persons,
+                profileFacts: db.profileFacts,
+                calendarEvents: db.calendarEvents
+            )
+            recallEngine = RecallEngine(
+                db: db,
+                hybridSearch: hybridSearch,
+                peopleContext: peopleContext,
+                settings: StoreBackedRecallSettingsReading(database: db),
+                secrets: KeychainSecretStore(),
+                clientFactory: clientFactory
+            )
+
             let runner = SummaryRunner(
                 database: db,
                 settings: settingsReader,

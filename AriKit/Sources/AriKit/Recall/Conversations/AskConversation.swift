@@ -14,11 +14,14 @@ import Foundation
 public typealias AskConversationID = Identifier<AskConversation>
 public typealias AskMessageID = Identifier<AskMessage>
 
-/// A conversation's header row (← Rust `AskConversationDto`, conversations.rs:24-30). `meetingId
-/// == nil` is a global (cross-meeting) chat; non-nil scopes it to one meeting.
+/// A conversation's header row (← Rust `AskConversationDto`, conversations.rs:24-30, extended by
+/// `docs/plans/ari-ask-ui.md` Phase 0). Scope invariant: **at most one of `meetingId`/`seriesId`
+/// is non-nil**; both nil is a global (cross-meeting, cross-series) chat. `AskConversationStore`
+/// enforces this on `create`/`list`, not a DB constraint.
 public struct AskConversation: Codable, Hashable, Sendable, Identifiable {
     public var id: AskConversationID
     public var meetingId: MeetingID?
+    public var seriesId: SeriesID?
     public var title: String?
     public var createdAt: String
     public var updatedAt: String
@@ -26,12 +29,14 @@ public struct AskConversation: Codable, Hashable, Sendable, Identifiable {
     public init(
         id: AskConversationID,
         meetingId: MeetingID? = nil,
+        seriesId: SeriesID? = nil,
         title: String? = nil,
         createdAt: String,
         updatedAt: String
     ) {
         self.id = id
         self.meetingId = meetingId
+        self.seriesId = seriesId
         self.title = title
         self.createdAt = createdAt
         self.updatedAt = updatedAt

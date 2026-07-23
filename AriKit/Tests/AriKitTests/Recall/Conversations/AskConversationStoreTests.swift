@@ -212,6 +212,110 @@ struct AskConversationStoreTests {
         #expect(remaining == 0)
     }
 
+    // MARK: - Test 5 (Phase 0, ari-ask-ui.md): series-scoped create -> list -> get round trip
+
+    private func makeSeries(id: String = "series-1") -> Series {
+        Series(
+            id: SeriesID(id),
+            title: "Ask conversation fixture series",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+    }
+
+    @Test("series create -> list -> get round-trips; series threads don't leak into meeting/global lists")
+    func seriesScopedCreateListGetRoundTrip() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let series = makeSeries()
+        try await db.series.upsert(series)
+        let meeting = makeMeeting()
+        try await db.meetings.upsert(meeting)
+
+        let seriesConvo = try await db.askConversations.create(seriesId: series.id, title: "Series chat")
+        let meetingConvo = try await db.askConversations.create(meetingId: meeting.id, title: "Meeting chat")
+        let globalConvo = try await db.askConversations.create(title: "Global chat")
+
+        #expect(seriesConvo.seriesId == series.id)
+        #expect(seriesConvo.meetingId == nil)
+
+        let seriesList = try await db.askConversations.list(seriesId: series.id)
+        #expect(seriesList.map(\.id) == [seriesConvo.id])
+
+        let meetingList = try await db.askConversations.list(meetingId: meeting.id)
+        #expect(meetingList.map(\.id) == [meetingConvo.id])
+
+        let globalList = try await db.askConversations.list()
+        #expect(globalList.map(\.id) == [globalConvo.id])
+
+        let fetchedSeries = try #require(await db.askConversations.get(seriesConvo.id))
+        #expect(fetchedSeries.conversation.seriesId == series.id)
+        #expect(fetchedSeries.conversation.meetingId == nil)
+
+        // Sources round-trip fine on a series thread too.
+        let appended = try await db.askConversations.appendMessage(
+            conversationId: seriesConvo.id,
+            role: "assistant",
+            content: "Here is the series answer.",
+            sources: [makeSource()]
+        )
+        let reread = try #require(await db.askConversations.get(seriesConvo.id))
+        #expect(reread.messages.first { $0.id == appended.id }?.sources == [makeSource()])
+    }
+
+    @Test("create throws invalidScope when both meetingId and seriesId are supplied")
+    func createRejectsBothScopeKeys() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let series = makeSeries()
+        try await db.series.upsert(series)
+        let meeting = makeMeeting()
+        try await db.meetings.upsert(meeting)
+
+        await #expect(throws: AskConversationStore.StoreError.invalidScope) {
+            try await db.askConversations.create(meetingId: meeting.id, seriesId: series.id, title: nil)
+        }
+    }
+
+    @Test("list throws invalidScope when both meetingId and seriesId are supplied")
+    func listRejectsBothScopeKeys() async throws {
+        let db = try AppDatabase.makeInMemory()
+        await #expect(throws: AskConversationStore.StoreError.invalidScope) {
+            try await db.askConversations.list(meetingId: MeetingID("m"), seriesId: SeriesID("s"))
+        }
+    }
+
+    // MARK: - Test 6 (Phase 0): delete removes the conversation and its messages
+
+    @Test("delete removes the conversation and all its messages")
+    func deleteRemovesConversationAndMessages() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let conversation = try await db.askConversations.create(title: "To delete")
+        try await db.askConversations.appendMessage(
+            conversationId: conversation.id, role: "user", content: "hello", sources: []
+        )
+        try await db.askConversations.appendMessage(
+            conversationId: conversation.id, role: "assistant", content: "hi", sources: []
+        )
+
+        try await db.askConversations.delete(conversation.id)
+
+        let detail = try await db.askConversations.get(conversation.id)
+        #expect(detail == nil)
+        let remainingMessages = try await db.dbWriter.read { rawDb in
+            try Int.fetchOne(
+                rawDb,
+                sql: "SELECT COUNT(*) FROM askMessage WHERE conversationId = ?",
+                arguments: [conversation.id.rawValue]
+            )
+        }
+        #expect(remainingMessages == 0)
+    }
+
+    @Test("delete is a no-op for an unknown conversation id")
+    func deleteUnknownConversationIsNoOp() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.askConversations.delete(AskConversationID("does-not-exist"))
+    }
+
     // MARK: - Test 4: sources round-trip as app-authored JSON
 
     @Test("sources round-trip through sourcesJson with full equality")

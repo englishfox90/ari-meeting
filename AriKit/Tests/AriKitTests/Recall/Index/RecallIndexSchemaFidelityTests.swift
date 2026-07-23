@@ -145,22 +145,28 @@ struct RecallIndexSchemaFidelityTests {
         #expect(ddl.contains("porter"))
     }
 
-    @Test("askConversation table matches §4.4, meetingId SET NULL FK to meeting")
+    @Test("askConversation table matches §4.4 + ari-ask-ui.md Phase 0, meetingId/seriesId SET NULL FKs")
     func askConversationSchema() throws {
         let queue = try migratedQueue()
         let actual = try columns(of: "askConversation", in: queue)
         assertColumns(actual, match: [
             ExpectedColumn(name: "id", type: "TEXT", notNull: true),
             ExpectedColumn(name: "meetingId", type: "TEXT", notNull: false),
+            ExpectedColumn(name: "seriesId", type: "TEXT", notNull: false),
             ExpectedColumn(name: "title", type: "TEXT", notNull: false),
             ExpectedColumn(name: "createdAt", type: "TEXT", notNull: true),
             ExpectedColumn(name: "updatedAt", type: "TEXT", notNull: true)
         ], table: "askConversation")
 
-        let actions = try onDeleteActions(
+        let meetingActions = try onDeleteActions(
             forTable: "askConversation", referencing: "meeting", in: queue
         )
-        #expect(actions == ["SET NULL"])
+        #expect(meetingActions == ["SET NULL"])
+
+        let seriesActions = try onDeleteActions(
+            forTable: "askConversation", referencing: "series", in: queue
+        )
+        #expect(seriesActions == ["SET NULL"])
     }
 
     @Test("askMessage table matches §4.5, conversationId CASCADE FK to askConversation")

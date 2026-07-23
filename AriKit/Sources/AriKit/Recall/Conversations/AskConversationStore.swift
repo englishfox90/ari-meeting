@@ -26,8 +26,11 @@ public struct AskConversationStore: Sendable {
 
     /// ← `ask_message_append_impl`'s role gate (conversations.rs:140-142). Only `user`/
     /// `assistant` are ever trusted as message authors; anything else (e.g. `system`) is refused.
+    /// `invalidScope` (`docs/plans/ari-ask-ui.md` Phase 0) enforces the scope-key invariant:
+    /// `meetingId` and `seriesId` may never BOTH be non-nil on the same conversation.
     public enum StoreError: Error, Sendable, Equatable {
         case unsupportedRole(String)
+        case invalidScope
     }
 
     /// ← `retention_cutoff` (conversations.rs:18-20). `now` is injectable for deterministic
@@ -52,19 +55,30 @@ public struct AskConversationStore: Sendable {
         )
     }
 
-    /// ← `ask_conversation_list_impl` (conversations.rs:80-92). Prunes on read, then lists
-    /// most-recently-updated first for the given scope (`nil` = global chats, matching the Rust
-    /// `meeting_id IS NULL` branch, `ask_conversation.rs:67-74`).
-    public func list(meetingId: MeetingID?) async throws -> [AskConversation] {
-        try await dbWriter.write { db in
+    /// ← `ask_conversation_list_impl` (conversations.rs:80-92), extended by
+    /// `docs/plans/ari-ask-ui.md` Phase 0 to also key on `seriesId`. Prunes on read, then lists
+    /// most-recently-updated first for the given scope: `meetingId` set → that meeting's threads;
+    /// `seriesId` set → that series' threads; both `nil` → global chats (matching the Rust
+    /// `meeting_id IS NULL` branch, `ask_conversation.rs:67-74`, now also requiring
+    /// `seriesId IS NULL`). Passing both non-nil throws `StoreError.invalidScope`.
+    public func list(meetingId: MeetingID? = nil, seriesId: SeriesID? = nil) async throws -> [AskConversation] {
+        guard meetingId == nil || seriesId == nil else {
+            throw StoreError.invalidScope
+        }
+        return try await dbWriter.write { db in
             try Self.pruneOlderThan(Self.retentionCutoff(), db: db)
             let request: QueryInterfaceRequest<AskConversationRecord> = if let meetingId {
                 AskConversationRecord.filter(Column("meetingId") == meetingId.rawValue)
+            } else if let seriesId {
+                AskConversationRecord.filter(Column("seriesId") == seriesId.rawValue)
             } else {
-                AskConversationRecord.filter(Column("meetingId") == nil)
+                AskConversationRecord.filter(Column("meetingId") == nil && Column("seriesId") == nil)
             }
             return try request
-                .order(Column("updatedAt").desc)
+                // `createdAt` then `id` are deterministic tiebreaks: `updatedAt` is millisecond
+                // RFC3339, so sibling rows created/appended within the same millisecond would
+                // otherwise order nondeterministically (a real test flake under parallel load).
+                .order(Column("updatedAt").desc, Column("createdAt").desc, Column("id").desc)
                 .fetchAll(db)
                 .map { $0.asModel() }
         }
@@ -88,14 +102,24 @@ public struct AskConversationStore: Sendable {
         }
     }
 
-    /// ← `ask_conversation_create_impl` (conversations.rs:113-131). Mints a fresh UUID id
+    /// ← `ask_conversation_create_impl` (conversations.rs:113-131), extended by
+    /// `docs/plans/ari-ask-ui.md` Phase 0 to also accept `seriesId`. Mints a fresh UUID id
     /// (matching `Uuid::new_v4()`) and stamps `createdAt == updatedAt` for a new conversation.
-    public func create(meetingId: MeetingID?, title: String?) async throws -> AskConversation {
+    /// Throws `StoreError.invalidScope` if both `meetingId` and `seriesId` are non-nil.
+    public func create(
+        meetingId: MeetingID? = nil,
+        seriesId: SeriesID? = nil,
+        title: String?
+    ) async throws -> AskConversation {
+        guard meetingId == nil || seriesId == nil else {
+            throw StoreError.invalidScope
+        }
         let now = RFC3339.string(from: Date())
         let record = AskConversationRecord(
             AskConversation(
                 id: AskConversationID(UUID().uuidString),
                 meetingId: meetingId,
+                seriesId: seriesId,
                 title: title,
                 createdAt: now,
                 updatedAt: now
@@ -140,5 +164,24 @@ public struct AskConversationStore: Sendable {
             try Self.pruneOlderThan(Self.retentionCutoff(), db: db)
         }
         return message
+    }
+
+    /// Deletes a conversation AND its messages in a single write transaction (`docs/plans/
+    /// ari-ask-ui.md` Phase 0, resolved decision #2). Explicit two-statement delete (message rows
+    /// first, then the parent row) rather than relying solely on the schema's
+    /// `ON DELETE CASCADE` — same defense-in-depth style as `pruneOlderThan` above. A missing id
+    /// is a silent no-op (idempotent delete), matching `pruneOlderThan`'s own "delete whatever
+    /// matches, zero rows is fine" shape.
+    public func delete(_ id: AskConversationID) async throws {
+        try await dbWriter.write { db in
+            try db.execute(
+                sql: "DELETE FROM askMessage WHERE conversationId = ?",
+                arguments: [id.rawValue]
+            )
+            try db.execute(
+                sql: "DELETE FROM askConversation WHERE id = ?",
+                arguments: [id.rawValue]
+            )
+        }
     }
 }
