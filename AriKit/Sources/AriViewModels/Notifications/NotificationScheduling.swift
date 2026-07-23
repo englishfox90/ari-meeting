@@ -34,6 +34,7 @@ public enum NotificationAuthorization: Sendable, Equatable {
 public enum NotificationCategory: String, Sendable, CaseIterable {
     case meetingReminder = "MEETING_REMINDER"
     case summaryReady = "SUMMARY_READY"
+    case recordingStarted = "RECORDING_STARTED"
 }
 
 /// Stable action identifiers used by both the concrete scheduler (to register the button) and the
@@ -123,14 +124,13 @@ public extension NotificationRequest {
         let title = event.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "Upcoming meeting"
             : event.title
-        let body: String
-        switch leadMinutes {
+        let body = switch leadMinutes {
         case 0:
-            body = "Starting now — tap Start Recording to capture it."
+            "Starting now — tap Start Recording to capture it."
         case 1:
-            body = "Starts in 1 minute — tap Start Recording to capture it."
+            "Starts in 1 minute — tap Start Recording to capture it."
         default:
-            body = "Starts in \(leadMinutes) minutes — tap Start Recording to capture it."
+            "Starts in \(leadMinutes) minutes — tap Start Recording to capture it."
         }
         return NotificationRequest(
             id: id,
@@ -151,11 +151,10 @@ public extension NotificationRequest {
     /// tap opens that meeting.
     static func summaryReady(meetingId: MeetingID, meetingTitle: String?) -> NotificationRequest {
         let trimmed = meetingTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let body: String
-        if let trimmed, !trimmed.isEmpty {
-            body = "Your summary for “\(trimmed)” is ready."
+        let body = if let trimmed, !trimmed.isEmpty {
+            "Your summary for “\(trimmed)” is ready."
         } else {
-            body = "Your meeting summary is ready."
+            "Your meeting summary is ready."
         }
         return NotificationRequest(
             id: summaryReadyIdentifier(meetingId: meetingId),
@@ -163,6 +162,32 @@ public extension NotificationRequest {
             body: body,
             category: .summaryReady,
             userInfo: [NotificationUserInfoKey.meetingId: meetingId.rawValue],
+            trigger: .immediate
+        )
+    }
+
+    /// The stable identifier for the recording-started alert. A single fixed id (one live recording
+    /// at a time, mirroring the session's re-entrancy guard) so a re-post can only replace, never
+    /// stack.
+    static let recordingStartedIdentifier = "\(NotificationCategory.recordingStarted.rawValue).active"
+
+    /// A "recording started" courtesy alert, delivered immediately. Especially relevant with the
+    /// consent prompt off by default: the non-blocking reminder to let participants know they're
+    /// being recorded. Carries no meeting id — it fires at capture start, before the meeting row is
+    /// necessarily openable — so a tap just foregrounds the app (default routing).
+    static func recordingStarted(meetingTitle: String?) -> NotificationRequest {
+        let trimmed = meetingTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = if let trimmed, !trimmed.isEmpty {
+            "Recording “\(trimmed)” — let everyone on the call know."
+        } else {
+            "Recording started — let everyone on the call know."
+        }
+        return NotificationRequest(
+            id: recordingStartedIdentifier,
+            title: "Recording",
+            body: body,
+            category: .recordingStarted,
+            userInfo: [:],
             trigger: .immediate
         )
     }

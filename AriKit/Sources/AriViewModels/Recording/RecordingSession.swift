@@ -6,10 +6,13 @@
 //  running across navigation: the session's tasks are owned by this object, not by any view's
 //  `.task` lifetime.
 //
-//  Consent-before-record (structural invariant, §7): `confirmConsent()` is the ONLY edge into
-//  `starting`/capture. Constructing the session, rendering a view over it, or calling
-//  `requestStart()` alone never touches `CaptureService` (`RecordingSessionTests`, consent-
-//  invariant case).
+//  Explicit-intent-before-record (structural invariant, §7): capture is only ever reached through
+//  an explicit user action. Constructing the session or rendering a view over it never touches
+//  `CaptureService` — only `requestStart()` (the Record tap) does. When `requireConsent` is ON, an
+//  extra confirmation gate sits in between (`requestStart` → `.consentPrompt` → `confirmConsent()`);
+//  when OFF (default — private single-user tool, one-party jurisdiction) the Record tap is itself
+//  the consent and goes straight to capture. Either way the sole trigger is a user-initiated tap,
+//  never an automatic/silent start (`RecordingSessionTests`, consent-invariant cases).
 //
 //  No-Fake-State (§7): every failure path lands in `.failed(<real error string>)` — never a green
 //  `.recording` phase over a graph that didn't actually start. The Meeting row is created only
@@ -46,6 +49,14 @@ public final class RecordingSession {
     /// falls back to the honest "Untitled meeting" default at `confirmConsent()` — never a
     /// fabricated name. The view binds directly to this; it is not itself a `Phase`.
     public var pendingTitle: String = ""
+
+    /// Whether `requestStart()` routes through the consent-before-record prompt (`.consentPrompt`)
+    /// or straight to capture. Defaults OFF — the Record action is itself the explicit edge into
+    /// capture for this private, single-user tool (see `SettingKey.recordingsRequireConsent`). The
+    /// app sets this from the persisted setting at bootstrap and keeps it live via the Settings
+    /// toggle's `onRecordingRequireConsentChanged` callback. When ON, the classic two-step gate
+    /// (`requestStart` → `confirmConsent`) is restored intact.
+    public var requireConsent: Bool = false
 
     /// Set by the Calendar page's "Start meeting" action before handoff (S7 Slice 3,
     /// `docs/plans/arikit-calendar-ui.md` §5), mirroring `pendingTitle`: consumed at meeting
@@ -139,11 +150,20 @@ public final class RecordingSession {
 
     // MARK: - Intents
 
-    /// `idle -> consentPrompt`. A no-op from any other phase (re-entrancy guard — one live
-    /// session at a time, mirrors the Rust single `RECORDING_FLAG`).
+    /// The explicit user edge into a recording (re-entrancy guarded — one live session at a time,
+    /// mirrors the Rust single `RECORDING_FLAG`). With `requireConsent` OFF (default), tapping
+    /// Record IS the consent, so this goes straight to capture (`idle -> starting`), mirroring the
+    /// synchronous `.starting` flip of `confirmConsentRequested()`. With it ON, this only opens the
+    /// consent gate (`idle -> consentPrompt`) and capture waits for `confirmConsent()`. A no-op
+    /// from any non-`idle` phase.
     public func requestStart() {
         guard case .idle = phase else { return }
-        phase = .consentPrompt
+        if requireConsent {
+            phase = .consentPrompt
+        } else {
+            phase = .starting
+            startTask = Task { await performStart() }
+        }
     }
 
     /// `consentPrompt -> idle`. A no-op from any other phase.

@@ -28,7 +28,8 @@ struct SettingsView: View {
     init(
         database: AppDatabase,
         calendarSource: (any CalendarSourcing)? = nil,
-        notifications: MeetingNotifications? = nil
+        notifications: MeetingNotifications? = nil,
+        recordingSession: RecordingSession? = nil
     ) {
         self.database = database
         // `KeychainSecretStore`/`AppearanceStore` are both stateless value types (no Keychain
@@ -39,18 +40,26 @@ struct SettingsView: View {
         // `notifications` (the app's `MeetingNotifications`, or `nil` in previews/tests) is the
         // authorization surface AND the reconcile trigger: toggling a notification pref reconciles
         // the OS's scheduled reminders immediately rather than waiting for the periodic loop.
-        let onNotificationSettingsChanged: (@Sendable () async -> Void)?
-        if let notifications {
-            onNotificationSettingsChanged = { await notifications.reconcileReminders() }
+        let onNotificationSettingsChanged: (@Sendable () async -> Void)? = if let notifications {
+            { await notifications.reconcileReminders() }
         } else {
-            onNotificationSettingsChanged = nil
+            nil
+        }
+        // Mirror the consent toggle onto the live session so it takes effect without a restart.
+        // `RecordingSession` is `@MainActor`; this closure only runs on the main actor (invoked from
+        // the `@MainActor` view model's setter), so the isolation assumption holds.
+        let onRecordingRequireConsentChanged: (@Sendable (Bool) -> Void)? = if let recordingSession {
+            { value in MainActor.assumeIsolated { recordingSession.requireConsent = value } }
+        } else {
+            nil
         }
         _viewModel = State(initialValue: SettingsViewModel(
             database: database,
             secrets: KeychainSecretStore(),
             appearance: AppearanceStore(),
             notifications: notifications,
-            onNotificationSettingsChanged: onNotificationSettingsChanged
+            onNotificationSettingsChanged: onNotificationSettingsChanged,
+            onRecordingRequireConsentChanged: onRecordingRequireConsentChanged
         ))
         _calendarViewModel = State(initialValue: CalendarSettingsViewModel(
             database: database, source: calendarSource

@@ -100,7 +100,8 @@ struct SettingsGeneralSection: View {
                         SettingsToggleRow(
                             "Recording alerts",
                             description: viewModel.recordingAlertsAvailability.disabledReason
-                                ?? "Notify when a recording starts or stops.",
+                                ?? "A notification when a recording starts — a cue to let "
+                                + "participants know.",
                             isOn: recordingAlertsBinding
                         )
                         .disabled(viewModel.recordingAlertsAvailability.isDisabled)
@@ -190,13 +191,13 @@ struct SettingsGeneralSection: View {
     private var notificationAuthorizationBannerMessage: String? {
         switch viewModel.notificationAuthorization {
         case .denied:
-            return "Notifications are turned off for Ari in System Settings — reminders and "
+            "Notifications are turned off for Ari in System Settings — reminders and "
                 + "summary alerts won't appear until you allow them."
         case .notDetermined:
-            return "Ari hasn't been allowed to send notifications yet — allow them so reminders "
+            "Ari hasn't been allowed to send notifications yet — allow them so reminders "
                 + "and summary alerts can appear."
         case .authorized, .provisional, .none:
-            return nil
+            nil
         }
     }
 

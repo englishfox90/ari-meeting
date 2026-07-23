@@ -5,9 +5,10 @@
 //  it resolves the real on-disk recordings folder (mirroring `AppEnvironment`'s own Application
 //  Support layout, same recipe as `SettingsGeneralSection`) and opens it in Finder — never a
 //  fabricated path. The file-format caption is LIVE informational copy matching the real
-//  capture format (`AriCapture/AACRecorder.swift`: AAC-LC `.m4a`, mono). The recording-start
-//  notification is HONEST-DISABLED — it surfaces its own real `Availability.disabled(reason:)`
-//  from the VM via `SettingsDisabledGroup`, never a fake-functional control.
+//  capture format (`AriCapture/AACRecorder.swift`: AAC-LC `.m4a`, mono). The "Ask for consent
+//  before recording" toggle is LIVE (default OFF): it persists via the VM and is mirrored onto the
+//  live `RecordingSession.requireConsent`. Recording-start alerts live in General ▸ Notifications
+//  ("Recording alerts"), the single control for that notification — not duplicated here.
 //
 //  Microphone device selection is LIVE (docs/plans/settings-audio-devices.md): real CoreAudio
 //  HAL enumeration via `CoreAudioDeviceEnumerator`, persisting a stable device UID that binds
@@ -39,12 +40,12 @@ struct SettingsRecordingsSection: View {
                         isOn: saveAudioRecordingsBinding
                     )
                     SettingsToggleRow(
-                        "Notify when recording starts",
-                        description: viewModel.recordingStartNotificationAvailability.disabledReason
-                            ?? "A system notification the moment capture begins.",
-                        isOn: recordingStartNotificationBinding
+                        "Ask for consent before recording",
+                        description: "Show a quick confirmation before capture begins. Off by "
+                            + "default — the Record button is itself the go-ahead. Turn on for "
+                            + "two-party-consent situations.",
+                        isOn: requireConsentBinding
                     )
-                    .disabled(viewModel.recordingStartNotificationAvailability.isDisabled)
                 }
 
                 SettingsGroup(header: "Save location", footnote: fileFormatCaption) {
@@ -108,12 +109,12 @@ struct SettingsRecordingsSection: View {
         )
     }
 
-    // MARK: - Honest-disabled bindings
-
-    private var recordingStartNotificationBinding: Binding<Bool> {
+    /// The consent-before-record preference (default OFF). Persisted via the VM, which also mirrors
+    /// it onto the live `RecordingSession` so it takes effect immediately.
+    private var requireConsentBinding: Binding<Bool> {
         Binding(
-            get: { viewModel.recordingStartNotification },
-            set: { newValue in Task { try? await viewModel.setRecordingStartNotification(newValue) } }
+            get: { viewModel.recordingRequireConsent },
+            set: { newValue in Task { try? await viewModel.setRecordingRequireConsent(newValue) } }
         )
     }
 

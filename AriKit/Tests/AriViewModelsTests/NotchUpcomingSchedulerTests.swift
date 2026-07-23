@@ -21,12 +21,16 @@ struct NotchUpcomingSchedulerTests {
 
     private func makeSession(database: AppDatabase) throws -> RecordingSession {
         let root = try makeRecordingsRoot()
-        return RecordingSession(
+        let session = RecordingSession(
             database: database,
             recordingsRoot: root,
             makeCaptureService: { _ in SpyCaptureService() },
             transcription: StubLiveTranscriptionService(cannedSegments: [])
         )
+        // Keep the documented `.idle -> .consentPrompt` transition below exact — production
+        // defaults consent OFF (`RecordingSession.requireConsent`), where Record starts directly.
+        session.requireConsent = true
+        return session
     }
 
     private func makeEvent(
@@ -43,7 +47,7 @@ struct NotchUpcomingSchedulerTests {
             startTime: start,
             endTime: start.addingTimeInterval(3600),
             isAllDay: false,
-            attendees: (0..<attendeeCount).map { Attendee(name: "Attendee \($0)") },
+            attendees: (0 ..< attendeeCount).map { Attendee(name: "Attendee \($0)") },
             meetingId: hasMeeting ? MeetingID("meeting-\(id)") : nil
         )
     }
@@ -62,12 +66,16 @@ struct NotchUpcomingSchedulerTests {
     private final class ClockBox: @unchecked Sendable {
         private let lock = NSLock()
         private var current: Date
-        init(_ now: Date) { current = now }
+        init(_ now: Date) {
+            current = now
+        }
+
         var now: Date {
             lock.lock()
             defer { lock.unlock() }
             return current
         }
+
         func advance(to date: Date) {
             lock.lock()
             defer { lock.unlock() }

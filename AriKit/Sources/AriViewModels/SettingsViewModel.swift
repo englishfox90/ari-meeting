@@ -42,6 +42,9 @@ public final class SettingsViewModel {
         public static let summaryReadyNotification = true
         public static let saveAudioRecordings = true
         public static let recordingStartNotification = false
+        /// The consent-before-record prompt defaults OFF (see `SettingKey.recordingsRequireConsent`):
+        /// tapping Record starts capture directly, since Record is itself the explicit action.
+        public static let recordingRequireConsent = false
         /// On-device SpeechTranscriber language. `"auto"` = follow the system language
         /// (`STTLocale.resolveRequestedLocale`). Provider/model selection is gone — Apple's
         /// SpeechTranscriber is the Swift app's sole transcription engine.
@@ -62,6 +65,10 @@ public final class SettingsViewModel {
 
     public private(set) var recordingAlerts: Bool = Defaults.recordingAlerts
 
+    /// Whether the consent-before-record prompt is shown before capture starts. Defaults OFF; the
+    /// live `RecordingSession` mirrors this via `onRecordingRequireConsentChanged` on every write.
+    public private(set) var recordingRequireConsent: Bool = Defaults.recordingRequireConsent
+
     /// Menu-bar visibility is a device-local UI preference read at app-scene scope (it gates the
     /// `MenuBarExtra`), so — like theme (`appearance`) — it lives in `UserDefaults`, NOT the
     /// `setting` table. The Settings toggle binds through this store; `AriApp` reads the same key
@@ -81,13 +88,11 @@ public final class SettingsViewModel {
     /// LIVE — the Swift `MenuBarExtra` is wired (docs/plans/menu-bar-item.md). Visibility is the
     /// `menuBar` store above; there is no honest-disabled reason to surface anymore.
     public let menuBarAvailability: Availability = .live
-    /// Recording start/stop alerts are a DISTINCT notification from the two ported here (calendar
-    /// reminders + summary-ready) — they'd hook the recording lifecycle, which isn't wired yet, so
-    /// this stays honestly disabled with a specific reason (No-Fake-State), not the stale
-    /// "notifications aren't ported" blanket.
-    public let recordingAlertsAvailability: Availability = .disabled(
-        reason: "Recording start/stop alerts aren't ported to the Swift app yet."
-    )
+    /// Recording alerts are LIVE once a notification scheduler is injected: `MeetingNotifications`
+    /// posts a "recording started" alert (gated by the `recordingAlerts` toggle) when the app-layer
+    /// phase observer sees a session go `.recording`. `.disabled` only in previews/tests that wire
+    /// no scheduler — same honest pattern as `notificationsAvailability`.
+    public let recordingAlertsAvailability: Availability
 
     // MARK: - Notifications (calendar reminders + summary-ready — LIVE once a scheduler is injected)
 
@@ -187,6 +192,9 @@ public final class SettingsViewModel {
     /// Called after a change that affects scheduled reminders (toggle or lead-time), so the app can
     /// reconcile the OS's pending reminders immediately rather than waiting for the periodic loop.
     private let onNotificationSettingsChanged: (@Sendable () async -> Void)?
+    /// Called after the consent-before-record toggle changes, so the app can mirror the new value
+    /// onto the live `RecordingSession.requireConsent` immediately (no restart needed).
+    private let onRecordingRequireConsentChanged: (@Sendable (Bool) -> Void)?
     /// Single shared single-flight guard for `rebuildIndex()` — a fresh `ReindexCoordinator` per
     /// call would defeat its whole purpose (overlap protection across taps/launches).
     private let reindexCoordinator = ReindexCoordinator()
@@ -200,7 +208,8 @@ public final class SettingsViewModel {
         speechAssets: SpeechAssetProviding = SpeechAssetManager(),
         audioDevices: AudioDeviceProviding = CoreAudioDeviceEnumerator(),
         notifications: (any NotificationAuthorizing)? = nil,
-        onNotificationSettingsChanged: (@Sendable () async -> Void)? = nil
+        onNotificationSettingsChanged: (@Sendable () async -> Void)? = nil,
+        onRecordingRequireConsentChanged: (@Sendable (Bool) -> Void)? = nil
     ) {
         self.database = database
         self.secrets = secrets
@@ -211,8 +220,12 @@ public final class SettingsViewModel {
         self.audioDevices = audioDevices
         self.notifications = notifications
         self.onNotificationSettingsChanged = onNotificationSettingsChanged
+        self.onRecordingRequireConsentChanged = onRecordingRequireConsentChanged
         notificationsAvailability = notifications == nil
             ? .disabled(reason: "Notifications aren't available in this build yet.")
+            : .live
+        recordingAlertsAvailability = notifications == nil
+            ? .disabled(reason: "Recording alerts aren't available in this build yet.")
             : .live
     }
 
@@ -238,6 +251,8 @@ public final class SettingsViewModel {
             ?? Defaults.saveAudioRecordings
         recordingStartNotification = await (try? settings.bool(forKey: .recordingsStartNotification))
             ?? Defaults.recordingStartNotification
+        recordingRequireConsent = await (try? settings.bool(forKey: .recordingsRequireConsent))
+            ?? Defaults.recordingRequireConsent
         micDevice = await (try? settings.string(forKey: .recordingsMicDevice)) ?? nil
 
         transcriptionEngineAvailable = speechAssets.isEngineAvailable()
@@ -276,6 +291,15 @@ public final class SettingsViewModel {
     public func setRecordingAlerts(_ value: Bool) async throws {
         try await database.settings.setBool(value, forKey: .generalRecordingAlerts)
         recordingAlerts = value
+    }
+
+    /// Persist the consent-before-record toggle, then mirror it onto the live `RecordingSession`
+    /// so the change takes effect without a restart (No-Fake-State: the toggle reflects real
+    /// behavior immediately).
+    public func setRecordingRequireConsent(_ value: Bool) async throws {
+        try await database.settings.setBool(value, forKey: .recordingsRequireConsent)
+        recordingRequireConsent = value
+        onRecordingRequireConsentChanged?(value)
     }
 
     // MARK: - Notification setters

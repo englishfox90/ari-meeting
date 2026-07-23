@@ -212,6 +212,13 @@ final class AppEnvironment {
                 transcription: SpeechLiveTranscriptionService()
             )
 
+            // Consent-before-record is a persisted preference (default OFF — the Record tap is
+            // itself the explicit action). Seed it onto the session before the UI can start a
+            // recording; the Settings toggle keeps it live thereafter via
+            // `onRecordingRequireConsentChanged` (SettingsView → SettingsViewModel).
+            recordingSession?.requireConsent = await (try? db.settings.bool(forKey: .recordingsRequireConsent))
+                ?? SettingsViewModel.Defaults.recordingRequireConsent
+
             // The in-process notch overlay (docs/plans/notch-panel-absorption.md §2, Amendment A)
             // — built now that `recordingSession` exists, since the model reads it directly via
             // Observation. `onRecordEvent` reuses the SAME prime-and-start path a meeting reminder
@@ -552,7 +559,10 @@ final class AppEnvironment {
                 try StoreBackup.meetingCount(at: sourceURL)
             }.value
         } catch {
-            logger.error("pre-migration backup: could not read meetingCount, skipping: \(String(describing: error), privacy: .public)")
+            logger
+                .error(
+                    "pre-migration backup: could not read meetingCount, skipping: \(String(describing: error), privacy: .public)"
+                )
             return
         }
         guard meetingCount > 0 else {
@@ -585,7 +595,10 @@ final class AppEnvironment {
 
             try pruneOldBackups(in: dir)
         } catch {
-            logger.error("pre-migration backup failed (non-fatal, continuing to open the store): \(String(describing: error), privacy: .public)")
+            logger
+                .error(
+                    "pre-migration backup failed (non-fatal, continuing to open the store): \(String(describing: error), privacy: .public)"
+                )
         }
     }
 

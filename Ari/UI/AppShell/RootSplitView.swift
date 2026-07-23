@@ -32,7 +32,9 @@ struct RootSplitView: View {
     /// swipe). The top of the stack is therefore always the node actually on screen — so the Ask
     /// FAB never stays scoped to a meeting the user has navigated away from. Reset with `path`.
     @State private var askNavStack: [AskNavKey] = []
-    private var askNavKey: AskNavKey { askNavStack.last ?? .none }
+    private var askNavKey: AskNavKey {
+        askNavStack.last ?? .none
+    }
 
     var body: some View {
         Group {
@@ -140,8 +142,18 @@ struct RootSplitView: View {
         // section/screen is on screen when a recording finishes — `RecordingView`'s own status
         // line (when it happens to be visible) reads the SAME coordinator, never triggers it.
         .onChange(of: environment.recordingSession?.phase) { _, newPhase in
-            guard case let .saved(meetingId) = newPhase else { return }
-            Task { await environment.processingCoordinator?.begin(meetingId: meetingId) }
+            switch newPhase {
+            case let .saved(meetingId):
+                Task { await environment.processingCoordinator?.begin(meetingId: meetingId) }
+            case .recording:
+                // Courtesy "recording started" alert (gated by the Recording-alerts setting inside
+                // `recordingStarted`). Fired here, mount-independently, so it posts regardless of
+                // which screen is visible — the non-blocking successor to the consent prompt.
+                let title = environment.recordingSession?.pendingTitle
+                Task { await environment.meetingNotifications?.recordingStarted(meetingTitle: title) }
+            default:
+                break
+            }
         }
         // The import equivalent (docs/plans/audio-import.md): when an import saves, dismiss the
         // sheet, kick the SAME post-recording pipeline, open the new meeting, and reset the session
@@ -250,7 +262,8 @@ struct RootSplitView: View {
             SettingsView(
                 database: database,
                 calendarSource: environment.calendarSource,
-                notifications: environment.meetingNotifications
+                notifications: environment.meetingNotifications,
+                recordingSession: environment.recordingSession
             )
         }
     }

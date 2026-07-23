@@ -29,13 +29,18 @@ struct NotchOverlayModelTests {
         clock: @escaping @Sendable () -> Date = { Date(timeIntervalSince1970: 1_700_000_000) }
     ) throws -> RecordingSession {
         let root = try makeRecordingsRoot()
-        return RecordingSession(
+        let session = RecordingSession(
             database: database,
             recordingsRoot: root,
             makeCaptureService: { _ in capture },
             transcription: transcription,
             clock: clock
         )
+        // These cases drive the recording lifecycle via the consent flow
+        // (`requestStart` → `confirmConsent`), so opt into the gate — production defaults it OFF
+        // (`RecordingSession.requireConsent`), where the Record tap starts capture directly.
+        session.requireConsent = true
+        return session
     }
 
     private func makeModel(
@@ -144,7 +149,9 @@ struct NotchOverlayModelTests {
         model.stopTapped()
         // stopTapped() wraps session.stop() in a detached Task — poll until it lands (bounded).
         for _ in 0 ..< 200 {
-            if case .saved = session.phase { break }
+            if case .saved = session.phase {
+                break
+            }
             try await Task.sleep(nanoseconds: 5_000_000)
         }
         guard case .saved = session.phase else {
@@ -210,7 +217,9 @@ struct NotchOverlayModelTests {
 
     // MARK: - Consent invariant (plan §7 suite 5 / principle 6)
 
-    @Test("constructing the model, reading presentation, and every non-record action never touches CaptureService.start()")
+    @Test(
+        "constructing the model, reading presentation, and every non-record action never touches CaptureService.start()"
+    )
     func consentInvariant() async throws {
         let database = try AppDatabase.makeInMemory()
         let capture = SpyCaptureService()
