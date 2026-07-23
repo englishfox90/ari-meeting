@@ -155,29 +155,39 @@ public struct CalendarEventRepository: Sendable {
         }
     }
 
-    /// The auto-match candidate set: non-tombstoned events in `range` whose link is not manual
-    /// (`linkSource IS NULL OR != 'manual'`, parity: `calendar.rs:254-271`).
+    /// The auto-match candidate set: non-tombstoned events in `range` whose link is neither
+    /// manual nor an explicit user unlink. A `.manual` link is user-owned; an `.unlinked`
+    /// sentinel means the user detached the meeting on purpose — auto-match must not silently
+    /// re-link either (the `.unlinked` guard diverges from frozen `calendar.rs:254-271`, which
+    /// only protected `.manual` and so re-linked on the next sync — the reported bug).
     public func autoLinkableEvents(startingIn range: ClosedRange<Date>) async throws -> [CalendarEvent] {
         try await dbWriter.read { db in
             try CalendarEventRecord
                 .filter(Column("startTime") >= range.lowerBound && Column("startTime") <= range.upperBound)
                 .filter(Column("isDeleted") == false)
-                .filter(Column("linkSource") == nil || Column("linkSource") != CalendarLinkSource.manual.rawValue)
+                .filter(
+                    Column("linkSource") == nil
+                        || (Column("linkSource") != CalendarLinkSource.manual.rawValue
+                            && Column("linkSource") != CalendarLinkSource.unlinked.rawValue)
+                )
                 .order(Column("startTime"))
                 .fetchAll(db)
                 .map { $0.asModel() }
         }
     }
 
-    /// Set an auto-match link. Re-guards against manual at the write site (parity:
-    /// `calendar.rs:324-341`) — never overwrites an existing manual link, even if the caller's
-    /// candidate set is stale.
+    /// Set an auto-match link. Re-guards at the write site — never overwrites a user-owned link
+    /// (`.manual`) or an explicit user unlink (`.unlinked`), even if the caller's candidate set
+    /// is stale (parity base: `calendar.rs:324-341`, extended with the `.unlinked` guard).
     public func setAutoLink(eventId: CalendarEventID, meetingId: MeetingID) async throws {
         try await dbWriter.write { db in
             guard var record = try CalendarEventRecord.fetchOne(db, key: eventId.rawValue) else {
                 return
             }
-            guard record.linkSource == nil || record.linkSource != CalendarLinkSource.manual.rawValue else {
+            let source = record.linkSource
+            guard source != CalendarLinkSource.manual.rawValue,
+                  source != CalendarLinkSource.unlinked.rawValue
+            else {
                 return
             }
             record.meetingId = meetingId.rawValue
@@ -199,14 +209,17 @@ public struct CalendarEventRepository: Sendable {
         }
     }
 
-    /// Clear a link, manual or auto alike (parity: `calendar.rs:356-362`).
+    /// Clear a link, manual or auto alike, and record a durable `.unlinked` sentinel so the next
+    /// auto-match pass does not silently re-link a meeting whose time window still overlaps this
+    /// event (base: `calendar.rs:356-362`, which cleared `linkSource` to `nil` and so re-linked
+    /// on the next sync — the reported bug). A later manual link overrides the sentinel.
     public func unlinkMeeting(eventId: CalendarEventID) async throws {
         try await dbWriter.write { db in
             guard var record = try CalendarEventRecord.fetchOne(db, key: eventId.rawValue) else {
                 return
             }
             record.meetingId = nil
-            record.linkSource = nil
+            record.linkSource = CalendarLinkSource.unlinked.rawValue
             try record.update(db)
         }
     }

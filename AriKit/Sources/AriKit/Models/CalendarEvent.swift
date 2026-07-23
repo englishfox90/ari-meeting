@@ -31,6 +31,11 @@ public enum CalendarLinkSource: UnknownTolerantEnum {
     case manual
     case calendar
     case auto
+    /// The user explicitly unlinked this event's meeting. A durable sentinel (`meetingId` is
+    /// `nil`, but the source is recorded) that keeps auto-match from silently re-linking the
+    /// event to a meeting whose time window still overlaps it. Survives re-sync because
+    /// `syncUpsert` never touches `linkSource`. A subsequent manual link overrides it.
+    case unlinked
     case unknown(String)
 
     public init?(rawValue: String) {
@@ -38,6 +43,7 @@ public enum CalendarLinkSource: UnknownTolerantEnum {
         case "manual": self = .manual
         case "calendar": self = .calendar
         case "auto": self = .auto
+        case "unlinked": self = .unlinked
         default: return nil
         }
     }
@@ -47,6 +53,7 @@ public enum CalendarLinkSource: UnknownTolerantEnum {
         case .manual: "manual"
         case .calendar: "calendar"
         case .auto: "auto"
+        case .unlinked: "unlinked"
         case let .unknown(raw): raw
         }
     }
