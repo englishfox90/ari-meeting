@@ -85,6 +85,25 @@ public final class MLXClient: LLMClient {
     public func generate(_ request: LLMRequest) async throws -> String {
         try Task.checkCancellation()
 
+        // Registered for the whole GPU-touching span (container resolve → session.respond) — a
+        // crash (2026-07-22) came from the app quitting while this work was still in flight on a
+        // background task; the app's termination handler awaits `MLXActivityTracker.shared.
+        // waitUntilIdle()` before letting `exit()` run, so it never races a live generation the
+        // way the crash did. `begin()`/`end()` bracket the `do`/`catch` directly (not a `defer`,
+        // which cannot `await`) so every exit path — success or throw — decrements exactly once
+        // before this call returns. See MLXActivityTracker.swift for the full root-cause writeup.
+        await MLXActivityTracker.shared.begin()
+        do {
+            let result = try await generateBody(request)
+            await MLXActivityTracker.shared.end()
+            return result
+        } catch {
+            await MLXActivityTracker.shared.end()
+            throw error
+        }
+    }
+
+    private func generateBody(_ request: LLMRequest) async throws -> String {
         let clock = ContinuousClock()
         let containerStart = clock.now
         let container = try await resolveContainer()
@@ -125,21 +144,29 @@ public final class MLXClient: LLMClient {
     public func stream(_ request: LLMRequest) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
+                // Same `MLXActivityTracker` bracket as `generate` (see there for the full
+                // root-cause writeup) — bracket the whole GPU-touching span, decrement on every
+                // exit path (normal finish, cancellation, or error) before this `Task` completes.
+                await MLXActivityTracker.shared.begin()
                 do {
                     try Task.checkCancellation()
                     let container = try await self.resolveContainer()
                     let session = self.makeSession(container: container, request: request)
                     for try await chunk in session.streamResponse(to: request.user) {
                         if Task.isCancelled {
+                            await MLXActivityTracker.shared.end()
                             continuation.finish(throwing: LLMError.cancelled)
                             return
                         }
                         continuation.yield(chunk)
                     }
+                    await MLXActivityTracker.shared.end()
                     continuation.finish()
                 } catch let error as LLMError {
+                    await MLXActivityTracker.shared.end()
                     continuation.finish(throwing: error)
                 } catch {
+                    await MLXActivityTracker.shared.end()
                     continuation.finish(throwing: LLMError.requestFailed("MLX streaming failed: \(error)"))
                 }
             }
