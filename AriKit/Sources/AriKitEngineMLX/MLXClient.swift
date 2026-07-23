@@ -20,6 +20,7 @@ import Foundation
 import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
+import os
 
 /// The on-device MLX conformer for `.mlx` (`ProviderKind.mlx`, `LLMClient.swift:85`). Constructed
 /// via `AriKitEngineMLX.mlxClientProvider` and injected into `ProviderFactory.make(config:
@@ -31,6 +32,8 @@ import MLXLMCommon
 /// value (`String`/`Int?`/`Double?`/the `ModelHost` actor reference), so this type satisfies
 /// `LLMClient: Sendable` structurally without `@unchecked Sendable`.
 public final class MLXClient: LLMClient {
+    private static let log = Logger(subsystem: "com.arivo.ari.AriKitEngineMLX", category: "mlx.client")
+
     public let kind: ProviderKind = .mlx
 
     /// Fallback generation budget when neither the request nor the resolved config supplies one.
@@ -75,15 +78,31 @@ public final class MLXClient: LLMClient {
     public func generate(_ request: LLMRequest) async throws -> String {
         try Task.checkCancellation()
 
+        let clock = ContinuousClock()
+        let containerStart = clock.now
         let container = try await resolveContainer()
+        // `container(forRepoId:)` is warm-cached process-wide (ModelHost.shared) — a large elapsed
+        // here means a cold first load/download; a near-zero one confirms the warm path (the reason
+        // the 2nd+ summary is fast and the model stays resident in RAM, never unloaded per-summary).
+        let loadElapsed = clock.now - containerStart
         let session = makeSession(container: container, request: request)
+        let maxTokens = request.maxTokens ?? configMaxTokens ?? Self.defaultMaxTokens
+        let repo = repoId // local copy — os.Logger interpolation is an autoclosure (no implicit self capture)
+        Self.log.info(
+            "MLX generate start: repo=\(repo, privacy: .public) maxTokens=\(maxTokens, privacy: .public) promptChars=\(request.user.count, privacy: .public) containerLoad=\(loadElapsed.formatted(), privacy: .public)"
+        )
 
+        let genStart = clock.now
         let raw: String
         do {
             raw = try await session.respond(to: request.user)
         } catch {
             throw LLMError.requestFailed("MLX generation failed: \(error)")
         }
+        let genElapsed = clock.now - genStart
+        Self.log.info(
+            "MLX generate done: repo=\(repo, privacy: .public) decode=\(genElapsed.formatted(), privacy: .public) outputChars=\(raw.count, privacy: .public)"
+        )
 
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {

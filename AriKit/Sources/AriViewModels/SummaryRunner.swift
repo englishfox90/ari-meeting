@@ -21,8 +21,11 @@
 //
 import AriKit
 import Foundation
+import os
 
 public struct SummaryRunner: Sendable {
+    private static let log = Logger(subsystem: "com.arivo.ari.AriViewModels", category: "summary.runner")
+
     let database: AppDatabase
     let settings: any SettingsReading
     let secrets: any SecretsReading
@@ -118,18 +121,69 @@ public struct SummaryRunner: Sendable {
             await suggestTemplateID(text: text, speakerCount: speakerCount)
         }
 
+        // F3 context injection (← the Rust `summary_context_for_meeting` block the first Swift
+        // migration dropped): owner + participants + linked calendar event (title/date/description/
+        // attendees) + speakers present + series ledger, prepended to any user-supplied custom
+        // instructions. Best-effort — an empty block just means the bare transcript, as before.
+        let contextBlock = await SummaryContextAssembler(database: database).contextBlock(for: meetingId)
+        let customPrompt = Self.mergeCustomPrompt(contextBlock: contextBlock, userInstructions: customInstructions)
+
+        Self.log.info(
+            """
+            Generating summary for meeting \(meetingId.rawValue, privacy: .public): \
+            provider=\(modelConfig.providerKey, privacy: .public) model=\(modelConfig.model, privacy: .public) \
+            template=\(resolvedTemplateId, privacy: .public) transcriptChars=\(text.count, privacy: .public) \
+            contextChars=\(contextBlock.count, privacy: .public) speakerCount=\(speakerCount ?? -1, privacy: .public)
+            """
+        )
+        if contextBlock.isEmpty {
+            Self.log.notice(
+                "No meeting context assembled for \(meetingId.rawValue, privacy: .public) — summarizing bare transcript (no owner/participants/calendar event linked)."
+            )
+        }
+
         let request = await SummaryProcessRequest(
             meetingId: meetingId,
             text: text,
             modelProviderKey: modelConfig.providerKey,
             modelName: modelConfig.model,
-            customPrompt: customInstructions,
+            customPrompt: customPrompt,
             templateId: resolvedTemplateId,
             summaryLanguage: try? database.settings.string(forKey: .summaryLanguage),
             detectedTranscriptLanguage: nil,
             customTemplateDirectory: customTemplateDirectory
         )
-        return try await summaryService.processTranscript(request)
+
+        let clock = ContinuousClock()
+        let started = clock.now
+        do {
+            let summary = try await summaryService.processTranscript(request)
+            let elapsed = clock.now - started
+            Self.log.info(
+                "Summary generated for meeting \(meetingId.rawValue, privacy: .public) in \(elapsed.formatted(), privacy: .public) (\(summary.bodyMarkdown.count, privacy: .public) chars)."
+            )
+            return summary
+        } catch {
+            let elapsed = clock.now - started
+            Self.log.error(
+                "Summary generation FAILED for meeting \(meetingId.rawValue, privacy: .public) after \(elapsed.formatted(), privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+            throw error
+        }
+    }
+
+    /// Combines the assembled meeting-context block with any user-supplied custom instructions.
+    /// Either may be empty; when both are present the context leads and the user's instructions
+    /// follow under their own heading, so the model sees the reference context first.
+    static func mergeCustomPrompt(contextBlock: String, userInstructions: String) -> String {
+        let context = contextBlock.trimmingCharacters(in: .whitespacesAndNewlines)
+        let user = userInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch (context.isEmpty, user.isEmpty) {
+        case (true, true): return ""
+        case (false, true): return context
+        case (true, false): return user
+        case (false, false): return context + "\n\n### Additional instructions\n" + user
+        }
     }
 
     /// Cancels an in-flight generation for `meetingId`, if any (← `SummaryService.cancelSummary`).

@@ -18,6 +18,7 @@
 //  `SummaryGenerator` itself) unwinds through `runGeneration` without touching the Store.
 //
 import Foundation
+import os
 
 /// ← the explicit arguments to `process_transcript_background` (`service.rs:323-333`) — the
 /// caller (app/UI layer) has already resolved `modelProviderKey`/`modelName` (e.g. from its own
@@ -61,6 +62,8 @@ public struct SummaryProcessRequest: Sendable {
 }
 
 public struct SummaryService: Sendable {
+    private static let log = Logger(subsystem: "com.arivo.ari.AriKit", category: "summary.service")
+
     private let db: AppDatabase
     private let settings: any SettingsReading
     private let secrets: any SecretsReading
@@ -145,6 +148,24 @@ public struct SummaryService: Sendable {
         let client = try clientFactory(config)
 
         try Task.checkCancellation()
+
+        // Estimated transcript tokens (the same estimate `SummaryGenerator` uses to decide
+        // chunking). A local/on-device provider over `tokenThreshold` map-reduces (chunk →
+        // per-chunk summarize → combine → final), which multiplies latency because each chunk
+        // re-pays prompt prefill — so surfacing it explains a slow run and confirms the
+        // token-threshold config is doing its job. Cloud providers never chunk regardless.
+        let estTokens = Chunking.roughTokenCount(request.text)
+        Self.log.info(
+            """
+            Summary generation start: meeting=\(request.meetingId.rawValue, privacy: .public) \
+            provider=\(String(describing: providerKind), privacy: .public) model=\(
+                request.modelName,
+                privacy: .public
+            ) \
+            template=\(request.templateId, privacy: .public) tokenThreshold=\(tokenThreshold, privacy: .public) \
+            estTokens=\(estTokens, privacy: .public) overThreshold=\(estTokens >= tokenThreshold, privacy: .public)
+            """
+        )
 
         let result = try await SummaryGenerator.generateMeetingSummary(
             client: client,

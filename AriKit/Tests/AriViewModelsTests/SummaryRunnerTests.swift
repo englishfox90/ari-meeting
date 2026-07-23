@@ -39,7 +39,9 @@ struct SummaryRunnerTests {
 
     private actor CallSpy {
         private(set) var callCount = 0
-        func record() { callCount += 1 }
+        func record() {
+            callCount += 1
+        }
     }
 
     private func makeRunner(
@@ -99,7 +101,10 @@ struct SummaryRunnerTests {
         let runner = makeRunner(db: db, settings: StubSettingsReading())
 
         let text = try await runner.transcriptText(for: meetingId)
-        #expect(text == "Ada Lovelace: Hello team.")
+        // The summary path emits the load-bearing `[MM:SS]` prefix (← buildSummaryTranscriptText):
+        // the timestamp is derived from audioStartTime (1.0s → 00:01) so `SummaryCitations` can
+        // verify/back-fill `@ref(MM:SS)` reference badges against it.
+        #expect(text == "[00:01] Ada Lovelace: Hello team.")
     }
 
     @Test("transcriptText: plain concatenation when no speaker resolves")
@@ -116,7 +121,9 @@ struct SummaryRunnerTests {
         let runner = makeRunner(db: db, settings: StubSettingsReading())
 
         let text = try await runner.transcriptText(for: meetingId)
-        #expect(text == "Hello team.")
+        // No resolved speaker → `[MM:SS] text` (still timestamp-prefixed, no name). With no
+        // audioStartTime, the `timestamp` string ("00:00:01") is used verbatim as the marker.
+        #expect(text == "[00:00:01] Hello team.")
     }
 
     // MARK: - generate: honest failures
@@ -207,5 +214,21 @@ struct SummaryRunnerTests {
 
         let didCancel = await runner.cancel(meetingId)
         #expect(!didCancel)
+    }
+
+    // MARK: - mergeCustomPrompt
+
+    @Test("mergeCustomPrompt combines the assembled context block with user instructions honestly")
+    func mergeCustomPromptCombinations() {
+        #expect(SummaryRunner.mergeCustomPrompt(contextBlock: "", userInstructions: "") == "")
+        #expect(SummaryRunner.mergeCustomPrompt(contextBlock: "CTX", userInstructions: "") == "CTX")
+        #expect(SummaryRunner.mergeCustomPrompt(contextBlock: "", userInstructions: "USER") == "USER")
+        // Whitespace-only inputs collapse to empty (No-Fake-State — never a bare heading).
+        #expect(SummaryRunner.mergeCustomPrompt(contextBlock: "   \n", userInstructions: "  ") == "")
+
+        let both = SummaryRunner.mergeCustomPrompt(contextBlock: "CTX", userInstructions: "USER")
+        #expect(both.hasPrefix("CTX"))
+        #expect(both.contains("### Additional instructions"))
+        #expect(both.contains("USER"))
     }
 }
