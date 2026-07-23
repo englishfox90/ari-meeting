@@ -334,4 +334,15 @@ public struct PersonRepository: Sendable {
             .filter(Column("email").collating(.nocase) == email)
             .fetchOne(db)
     }
+
+    /// Case-insensitive, non-deleted email lookup (speaker-retag-and-calendar-candidates.md
+    /// §2/decision 2). Read-only public wrapper over the existing store-internal static
+    /// `findByEmail` above — never writes; never creates a stub (that is
+    /// `upsertStubFromAttendee`'s job). Shared by both this plan's calendar-candidate resolution
+    /// and live-speaker-id §5.
+    public func findByEmail(_ email: String) async throws -> Person? {
+        try await dbWriter.read { db in
+            try Self.findByEmail(email, db: db)?.asModel()
+        }
+    }
 }

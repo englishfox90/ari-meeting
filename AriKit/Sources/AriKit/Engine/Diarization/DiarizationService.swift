@@ -162,7 +162,11 @@ public actor DiarizationService {
         // cluster duration — reversing this changes which cluster wins a collision.
         decisions = SpeakerMatcher.assignMeetingClusters(decisions, config: matchConfig)
         decisions = zip(decisions, postProcessed.clusters).map { decision, cluster in
-            SpeakerMatcher.gateAutoConfirmByDuration(decision, clusterSpeechSecs: cluster.speechSecs, config: matchConfig)
+            SpeakerMatcher.gateAutoConfirmByDuration(
+                decision,
+                clusterSpeechSecs: cluster.speechSecs,
+                config: matchConfig
+            )
         }
         progress?(.matching, 1.0)
 
@@ -269,7 +273,11 @@ public actor DiarizationService {
     ///
     /// The retroactive cross-meeting relabel scan (Rust `list_provisional_for_relabel`) stays a
     /// deferred non-goal (plan §1) — this only touches `meetingId`.
-    public func confirmSpeaker(_ speakerId: SpeakerID, as personId: PersonID, inMeeting meetingId: MeetingID) async throws {
+    public func confirmSpeaker(
+        _ speakerId: SpeakerID,
+        as personId: PersonID,
+        inMeeting meetingId: MeetingID
+    ) async throws {
         guard let subject = try await database.speakers.find(speakerId) else {
             throw DiarizationError.providerFailed("speaker \(speakerId.rawValue) not found")
         }
@@ -304,12 +312,21 @@ public actor DiarizationService {
                     at: now
                 )
             }
-            _ = try await database.speakers.repointSpeakerReferences(from: speakerId, to: canonical.id, inMeeting: meetingId)
+            _ = try await database.speakers.repointSpeakerReferences(
+                from: speakerId,
+                to: canonical.id,
+                inMeeting: meetingId
+            )
         } else {
             try await database.speakers.assignToPerson(speakerId, personId: personId, at: now)
         }
 
-        try await database.persons.addParticipant(meetingId: meetingId, personId: personId, linkSource: "speaker", at: now)
+        try await database.persons.addParticipant(
+            meetingId: meetingId,
+            personId: personId,
+            linkSource: "speaker",
+            at: now
+        )
     }
 
     /// The full assignable-person list for the "Assign person…" picker's fallback list (plan §6
@@ -324,14 +341,119 @@ public actor DiarizationService {
     /// centroid and ranks it against every confirmed/owner voiceprint in the same
     /// `embeddingModel` space that is linked to a person. Honest empty array when the speaker
     /// can't be found or has no candidates — never a fabricated suggestion.
-    public func assignmentSuggestions(forSpeaker speakerId: SpeakerID) async throws -> [(personId: PersonID, score: Float)] {
+    public func assignmentSuggestions(forSpeaker speakerId: SpeakerID) async throws -> [(
+        personId: PersonID,
+        score: Float
+    )] {
         guard let speaker = try await database.speakers.find(speakerId) else { return [] }
         let embedding = CentroidCodec.vector(from: speaker.centroid)
         let candidateSpeakers = try await database.speakers.matchCandidates(embeddingModel: speaker.embeddingModel)
-        let candidates: [(id: SpeakerID, personId: PersonID, centroid: [Float])] = candidateSpeakers.compactMap { candidate in
-            guard let personId = candidate.personId else { return nil }
-            return (id: candidate.id, personId: personId, centroid: CentroidCodec.vector(from: candidate.centroid))
-        }
+        let candidates: [(id: SpeakerID, personId: PersonID, centroid: [Float])] = candidateSpeakers
+            .compactMap { candidate in
+                guard let personId = candidate.personId else { return nil }
+                return (id: candidate.id, personId: personId, centroid: CentroidCodec.vector(from: candidate.centroid))
+            }
         return SpeakerMatcher.rankedSuggestions(embedding: embedding, candidates: candidates)
+    }
+
+    // MARK: - Reconstruction & calendar candidates (docs/plans/speaker-retag-and-calendar-candidates.md §2)
+
+    /// One speaker rebuilt from persisted diarization rows for a meeting. Carries ONLY fields
+    /// that genuinely exist in the store — no fabricated match score/tier (No-Fake-State).
+    public struct PersistedSpeaker: Sendable, Equatable {
+        public var speakerId: SpeakerID
+        public var isAssigned: Bool
+        public var speechSecs: Double
+
+        public init(speakerId: SpeakerID, isAssigned: Bool, speechSecs: Double) {
+            self.speakerId = speakerId
+            self.isAssigned = isAssigned
+            self.speechSecs = speechSecs
+        }
+    }
+
+    public struct PersistedDiarizationResult: Sendable, Equatable {
+        public var speakers: [PersistedSpeaker]
+        public var stampedRows: Int
+        public var unresolvedRows: Int
+
+        public init(speakers: [PersistedSpeaker], stampedRows: Int, unresolvedRows: Int) {
+            self.speakers = speakers
+            self.stampedRows = stampedRows
+            self.unresolvedRows = unresolvedRows
+        }
+    }
+
+    /// Read-only rebuild of a completed run's assignable view from persisted rows (plan §2 #2).
+    /// Returns `nil` when the meeting has never been diarized (no `speakerSegment` rows) — the
+    /// caller then keeps `.idle` and requires an explicit run. Writes nothing (I1/I5/idempotency
+    /// preserved trivially — this method never touches `database.speakers`/`.speakerSegments`/
+    /// `.transcripts` write paths).
+    public func loadPersisted(meetingId: MeetingID) async throws -> PersistedDiarizationResult? {
+        let segments = try await database.speakerSegments.forMeeting(meetingId)
+        guard !segments.isEmpty else { return nil }
+
+        // R2 (plan §7): segments can exist while every speaker is soft-deleted/tombstoned or no
+        // segment carries a `speakerId`. An empty speaker list is not an honest "reconstructed"
+        // state — it would render a "Speakers" header over zero rows. Fall back to `nil` so the
+        // caller stays `.idle` and offers a fresh run instead.
+        let speakers = try await database.speakers.forMeeting(meetingId)
+        guard !speakers.isEmpty else { return nil }
+
+        var speechSecsBySpeaker: [SpeakerID: Double] = [:]
+        for segment in segments {
+            guard let speakerId = segment.speakerId else { continue }
+            speechSecsBySpeaker[speakerId, default: 0] += max(segment.endTime - segment.startTime, 0.0)
+        }
+
+        let persistedSpeakers = speakers.map { speaker in
+            PersistedSpeaker(
+                speakerId: speaker.id,
+                isAssigned: speaker.personId != nil
+                    && (speaker.enrollmentState == .confirmed || speaker.enrollmentState == .owner),
+                speechSecs: speechSecsBySpeaker[speaker.id] ?? 0.0
+            )
+        }
+
+        let transcripts = try await database.transcripts.forMeeting(meetingId)
+        var stampedRows = 0
+        var unresolvedRows = 0
+        for transcript in transcripts {
+            guard transcript.audioStartTime != nil, transcript.audioEndTime != nil else { continue }
+            if transcript.speakerId != nil {
+                stampedRows += 1
+            } else {
+                unresolvedRows += 1
+            }
+        }
+
+        return PersistedDiarizationResult(
+            speakers: persistedSpeakers, stampedRows: stampedRows, unresolvedRows: unresolvedRows
+        )
+    }
+
+    /// The people likely in this meeting, resolved READ-ONLY from the linked calendar event's
+    /// attendees (by email) UNIONed with already-linked participants (plan §2 #3). Never creates
+    /// person stubs (that is the calendar-sync job). Honest empty when there is no calendar link
+    /// and no participants. Deduped by `PersonID`, sorted by `displayName`.
+    public func likelyAttendees(inMeeting meetingId: MeetingID) async throws -> [Person] {
+        let events = try await database.calendarEvents.forMeeting(meetingId)
+        var byId: [PersonID: Person] = [:]
+
+        for event in events {
+            for attendee in event.attendees {
+                guard let email = attendee.email, let person = try await database.persons.findByEmail(email) else {
+                    continue
+                }
+                byId[person.id] = person
+            }
+        }
+
+        let participants = try await database.persons.participants(inMeeting: meetingId)
+        for person in participants {
+            byId[person.id] = person
+        }
+
+        return byId.values.sorted { $0.displayName < $1.displayName }
     }
 }
