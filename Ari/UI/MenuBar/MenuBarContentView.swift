@@ -44,7 +44,7 @@ struct MenuBarContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             header
             hairline
 
@@ -65,8 +65,8 @@ struct MenuBarContentView: View {
             hairline
             footer
         }
-        .padding(MarginaliaSpacing.md.value)
-        .frame(width: 300)
+        .padding(MarginaliaSpacing.sm.value)
+        .frame(width: 260)
         // Bootstrap even when no main window is open (menu-bar-only state) — idempotent-guarded, so
         // a no-op when the window already ran it at launch.
         .task { await environment.bootstrap() }
@@ -86,17 +86,17 @@ struct MenuBarContentView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: MarginaliaSpacing.sm.value) {
+        HStack(spacing: MarginaliaSpacing.xs.value) {
             // The Ari brand mark, tinted accent — the same treatment as the sidebar wordmark
             // (`SidebarView.wordmark`), so the panel reads as our app rather than plain text.
             Image("DictationMark")
                 .renderingMode(.template)
                 .resizable()
                 .aspectRatio(96.0 / 64.0, contentMode: .fit)
-                .frame(width: 24)
+                .frame(width: 16)
                 .foregroundStyle(Color.marginalia(.accent, in: scheme))
             Text("Ari")
-                .marginaliaTextStyle(.headline, in: scheme)
+                .marginaliaTextStyle(.subheadline, in: scheme)
             Spacer(minLength: MarginaliaSpacing.sm.value)
             if recordingSession?.isActive == true {
                 // Amber = the one thing that matters right now (the Signal Rule): a live recording.
@@ -111,30 +111,20 @@ struct MenuBarContentView: View {
     private var recordingControls: some View {
         switch phase {
         case .recording:
-            Button {
+            // Amber = the one thing that matters (Signal Rule): a live recording is stoppable here.
+            MenuBarRow(title: "Stop Recording", systemImage: "stop.circle.fill", scheme: scheme, emphasis: .recording) {
                 stop()
-            } label: {
-                Label("Stop Recording", systemImage: "stop.circle.fill")
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
         case .starting, .consentPrompt:
             statusRow("Starting…")
         case .stopping:
             statusRow("Stopping…")
         case .idle, .saved, .failed:
-            Button {
+            // The one prominent (amber) row — the panel's primary action, sized as a menu row so it
+            // reads native rather than as an in-app CTA button.
+            MenuBarRow(title: "Start Recording", systemImage: "record.circle", scheme: scheme, emphasis: .accent) {
                 start()
-            } label: {
-                Label("Start Recording", systemImage: "record.circle")
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.marginalia(.primary, .regular, in: scheme))
-            // In a `.window` MenuBarExtra the primary glass button is the window's prominent/default
-            // control, so macOS paints it with the SYSTEM accent (blue) over our amber glass tint.
-            // Pinning `.tint` to the brand accent makes that default-button glow render amber, so the
-            // control reads as Ari's Signal rather than a stock blue button.
-            .tint(Color.marginalia(.accent, in: scheme))
             .disabled(recordingSession == nil)
         }
     }
@@ -152,26 +142,14 @@ struct MenuBarContentView: View {
     // MARK: - Footer
 
     private var footer: some View {
-        VStack(spacing: MarginaliaSpacing.xs.value) {
-            menuButton("Open Ari", systemImage: "macwindow") { activateApp() }
-            menuButton("Settings", systemImage: "gearshape") {
+        VStack(spacing: 2) {
+            MenuBarRow(title: "Open Ari", systemImage: "macwindow", scheme: scheme) { activateApp() }
+            MenuBarRow(title: "Settings", systemImage: "gearshape", scheme: scheme) {
                 activateApp()
                 environment.navigate(to: .settings)
             }
-            menuButton("Quit Ari", systemImage: "power") { NSApp.terminate(nil) }
+            MenuBarRow(title: "Quit Ari", systemImage: "power", scheme: scheme) { NSApp.terminate(nil) }
         }
-    }
-
-    private func menuButton(
-        _ title: String,
-        systemImage: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
     }
 
     // MARK: - Actions
@@ -211,5 +189,67 @@ struct MenuBarContentView: View {
             brief = CalendarBriefViewModel(database: database, source: environment.calendarSource)
         }
         await brief?.load()
+    }
+}
+
+/// A compact, native-feeling menu-bar row — the popover analog of the in-app Marginalia button
+/// system, sized for a menu (13pt label, 24pt height) rather than a window CTA. `.standard` rows
+/// are flat text with a subtle hover wash; the single `.accent`/`.recording` row is the Signal
+/// (solid amber / recording-red), keeping brand accent to one element per the ≤8% Signal Rule.
+private struct MenuBarRow: View {
+    enum Emphasis { case standard, accent, recording }
+
+    let title: String
+    let systemImage: String
+    let scheme: ColorScheme
+    var emphasis: Emphasis = .standard
+    let action: () -> Void
+
+    @State private var hovering = false
+    /// A disabled row must read as disabled (No-Fake-State) — mirror the Marginalia button's 0.4 dim.
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 13, weight: emphasis == .standard ? .regular : .semibold))
+                .labelStyle(.titleAndIcon)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, MarginaliaSpacing.sm.value)
+                .frame(height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(foreground)
+        .background {
+            RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
+                .fill(background)
+        }
+        .opacity(isEnabled ? 1 : 0.4)
+        .onHover { hovering = $0 }
+    }
+
+    private var fill: Color? {
+        switch emphasis {
+        case .standard: nil
+        case .accent: Color.marginalia(.accent, in: scheme)
+        case .recording: Color.marginalia(.recordingRed, in: scheme)
+        }
+    }
+
+    private var background: Color {
+        if let fill {
+            return fill
+        }
+        return hovering ? Color.marginalia(.selectionWash, in: scheme) : .clear
+    }
+
+    private var foreground: Color {
+        switch emphasis {
+        case .standard: Color.marginalia(.inkBody, in: scheme)
+        // `.canvas` (near-white light / near-black dark) stays high-contrast on the solid accent
+        // fill in both schemes — the same reasoning as the Marginalia primary button's label role.
+        case .accent, .recording: Color.marginalia(.canvas, in: scheme)
+        }
     }
 }
