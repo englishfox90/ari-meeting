@@ -41,8 +41,29 @@ public actor MLXActivityTracker {
 
     /// Call when a generation completes (success, throw, or cancellation) — on every exit path,
     /// exactly once per `begin()`.
-    func end() {
+    ///
+    /// If this call is the one that drains `activeCount` to zero, `reclaim` runs FIRST — while the
+    /// slot is still counted, so `isIdle` stays `false` and any `waitUntilIdle()` waiter (the app's
+    /// termination gate, `AppDelegate.awaitMLXIdle()`) remains parked — and only *then* are waiters
+    /// resumed. This ordering is load-bearing: `reclaim` is an mlx-core call (`MLX.Memory.
+    /// clearCache()`), and resuming the termination waiter lets `exit()` proceed on the main thread,
+    /// which tears down mlx-core static globals. Running `reclaim` after the waiters resumed (an
+    /// earlier form of this code) would let `clearCache()` race that teardown — the same
+    /// two-threads-in-mlx-core-during-exit data race this whole tracker exists to prevent (see file
+    /// header, `Ari-2026-07-22-222811.ips`). Because the whole method is one actor-isolated critical
+    /// section, no `begin()`/`end()` can interleave between the reclaim and the waiter resume.
+    ///
+    /// `reclaim` is synchronous by design (it must complete before this method returns); the default
+    /// no-op keeps `end()` usable as a plain decrement (tests, any non-reclaiming caller).
+    ///
+    /// - Returns: `true` iff this call drained `activeCount` to zero (i.e. it ran `reclaim`).
+    @discardableResult
+    func end(reclaimingWhenIdle reclaim: @Sendable () -> Void = {}) -> Bool {
         precondition(activeCount > 0, "MLXActivityTracker.end() called without a matching begin()")
+        let willBeIdle = activeCount == 1
+        // Reclaim BEFORE decrementing: the gate (waitUntilIdle) still sees a non-zero count, so
+        // `exit()` stays blocked until clearCache() has fully run.
+        if willBeIdle { reclaim() }
         activeCount -= 1
         if activeCount == 0 {
             let waiters = idleWaiters
@@ -51,6 +72,7 @@ public actor MLXActivityTracker {
                 waiter.resume()
             }
         }
+        return willBeIdle
     }
 
     /// Suspends until `isIdle` becomes true (returns immediately if already idle).

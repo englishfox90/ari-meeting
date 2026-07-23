@@ -7,6 +7,7 @@
 //  headless `swift test` lane (unlike `MLXClientSmokeTests`/`MLXS1DualRunTests`, which need a
 //  Metal-toolchain build + a downloaded model and are gated behind `ARIKIT_MLX_LIVE_TESTS=1`).
 //
+import Synchronization
 import Testing
 @testable import AriKitEngineMLX
 
@@ -70,4 +71,67 @@ struct MLXActivityTrackerTests {
         await tracker.waitUntilIdle()
         #expect(await tracker.isIdle)
     }
+
+    /// The exact property the GPU-cache reclaim depends on (`MLXClient.endActivityReclaimingCacheIfIdle`,
+    /// memory OOM fixed 2026-07-23): the reclaim closure runs ONLY on the transition back to idle,
+    /// so `MLX.Memory.clearCache()` fires exactly once when all work drains — never mid-flight of an
+    /// overlapping generation.
+    @Test func reclaimRunsOnlyOnTheDrainingTransition() async {
+        let tracker = MLXActivityTracker()
+        let counter = ReclaimCounter()
+
+        await tracker.begin()
+        await tracker.begin()
+
+        // First end() leaves one generation in flight → not idle → must NOT reclaim.
+        #expect(await tracker.end(reclaimingWhenIdle: { counter.bump() }) == false)
+        #expect(counter.count == 0)
+        // Second end() drains to zero → the idle transition → reclaim exactly here.
+        #expect(await tracker.end(reclaimingWhenIdle: { counter.bump() }) == true)
+        #expect(counter.count == 1)
+
+        // A fresh single begin/end also reports the transition and reclaims.
+        await tracker.begin()
+        #expect(await tracker.end(reclaimingWhenIdle: { counter.bump() }) == true)
+        #expect(counter.count == 2)
+    }
+
+    /// The load-bearing ordering (BLOCKER fixed 2026-07-23): the reclaim closure must run BEFORE a
+    /// parked `waitUntilIdle()` waiter resumes. That waiter is the app's termination gate
+    /// (`AppDelegate.awaitMLXIdle` → `exit()`), and the reclaim is an mlx-core call
+    /// (`clearCache()`); if the waiter resumed first, `exit()`'s static-destructor teardown of
+    /// mlx-core globals could race the reclaim — the very crash class this tracker prevents. We
+    /// assert the reclaim was observed by the time the awaiting task returns.
+    @Test func reclaimCompletesBeforeIdleWaiterResumes() async {
+        let tracker = MLXActivityTracker()
+        let order = ReclaimCounter()
+
+        await tracker.begin()
+
+        let waiter = Task {
+            await tracker.waitUntilIdle()
+            order.recordWaiterResumedAt() // stamps the reclaim count visible at resume time
+        }
+
+        // Let the waiter actually suspend inside waitUntilIdle() before we drain.
+        try? await Task.sleep(for: .milliseconds(50))
+        await tracker.end(reclaimingWhenIdle: { order.bump() })
+
+        await waiter.value
+        // The reclaim (bump → count 1) must have already run when the waiter resumed.
+        #expect(order.countSeenByWaiter == 1)
+    }
+}
+
+/// Test-only shared counter, `Sendable` via `Mutex` (not `@unchecked`) so the `@Sendable` reclaim
+/// closure — which runs synchronously inside the `MLXActivityTracker` actor, off the main actor —
+/// can mutate it, and the waiter task can read it, without data races.
+private final class ReclaimCounter: Sendable {
+    private let state = Mutex(State(count: 0, seenByWaiter: -1))
+    private struct State { var count: Int; var seenByWaiter: Int }
+
+    var count: Int { state.withLock { $0.count } }
+    var countSeenByWaiter: Int { state.withLock { $0.seenByWaiter } }
+    func bump() { state.withLock { $0.count += 1 } }
+    func recordWaiterResumedAt() { state.withLock { $0.seenByWaiter = $0.count } }
 }
