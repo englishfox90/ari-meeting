@@ -77,6 +77,11 @@ final class AppEnvironment {
     /// same protocol without touching this wiring.
     private(set) var speakerCountHintProvider: (any SpeakerCountHintProviding)?
 
+    /// The first-run model-install/education flow (docs/plans/onboarding-install-flow.md) — gated
+    /// in `RootSplitView` behind `.onboardingCompleted` not yet being `true`. `nil` until
+    /// `bootstrap()` succeeds, exactly like `diarizationService`/`summaryRunner`.
+    private(set) var onboardingViewModel: OnboardingViewModel?
+
     /// The summary generation service (docs/plans/swift-meeting-generation-flow.md, Track 1 "App
     /// wiring") — `SummaryRunner`'s persistence delegate. `nil` until `bootstrap()` succeeds,
     /// exactly like `diarizationService`.
@@ -252,9 +257,15 @@ final class AppEnvironment {
             // wiring further down can capture them directly — they're Sendable value
             // types/actors, unlike `self`/`AppEnvironment`, which the coordinator's `@Sendable`
             // closures must never capture.
+            // Constructed as its own `let` (not inline) so the SAME actor instance is also
+            // handed to `onboardingViewModel` below (docs/plans/onboarding-install-flow.md §2.2)
+            // — onboarding's `ensureReady()` then warms this exact provider's in-actor
+            // `loadedModels` cache, not just FluidAudio's on-disk model cache, so a real-meeting
+            // diarization run right after onboarding never re-loads the CoreML models.
+            let diarizationProvider = FluidAudioDiarizationProvider()
             let diarizationService = DiarizationService(
                 database: db,
-                provider: FluidAudioDiarizationProvider(),
+                provider: diarizationProvider,
                 audioLoader: DiarizationAudioLoader()
             )
             self.diarizationService = diarizationService
@@ -313,6 +324,19 @@ final class AppEnvironment {
                 profileFacts: db.profileFacts,
                 calendarEvents: db.calendarEvents
             )
+            // docs/plans/onboarding-install-flow.md, §6 "App wiring": the first-run install flow
+            // composes the SAME three provider instances the app's real pipelines use —
+            // `diarizationProvider` (above), a fresh `MLXModelInstaller` (its default `host: .shared`
+            // is the same `ModelHost` singleton `mlxClientProvider`/`MLXClient` resolve against),
+            // and `embedder` (constructed just above, also handed to `hybridSearch`) — so
+            // onboarding's downloads genuinely warm the caches the rest of the app reads, never a
+            // separate, wasted download path.
+            let onboardingViewModel = OnboardingViewModel(
+                components: [diarizationProvider, MLXModelInstaller(), embedder],
+                settings: db.settings
+            )
+            self.onboardingViewModel = onboardingViewModel
+
             recallEngine = RecallEngine(
                 db: db,
                 hybridSearch: hybridSearch,

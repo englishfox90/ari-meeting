@@ -70,4 +70,12 @@ public enum SettingKey: String, Sendable, CaseIterable {
 
     // NOTE: theme is deliberately NOT here — it lives in `@AppStorage("appAppearance")`
     // (plan §2.4), not this table.
+
+    /// Whether the first-run model-install/education flow has been completed or explicitly
+    /// dismissed (docs/plans/onboarding-install-flow.md §4). Absent (nil) means "never shown" —
+    /// distinguished from `false`, which this flow never actually writes (it writes `true` only
+    /// on completion/dismissal, mirroring `SettingsRepository`'s honest-absence pattern: an
+    /// unknown/absent key returns nil, this repository never fabricates a default). "Skip for
+    /// now" writes `true` too (resolved 2026-07-23: never re-nag).
+    case onboardingCompleted
 }

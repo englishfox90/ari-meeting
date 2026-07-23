@@ -36,6 +36,12 @@ struct RootSplitView: View {
         askNavStack.last ?? .none
     }
 
+    /// Drives the first-run install/education flow (docs/plans/onboarding-install-flow.md §6) —
+    /// an additive covering layer over the ready shell, checked once per launch after `.ready`.
+    /// Starts `false` (never shown) until the honest read below flips it — never presented
+    /// optimistically before the real flag is known.
+    @State private var showOnboarding = false
+
     var body: some View {
         Group {
             if let database = environment.database, environment.status == .ready {
@@ -204,6 +210,23 @@ struct RootSplitView: View {
                     session: importSession,
                     onCancel: { showImportSheet = false }
                 )
+            }
+        }
+        // The first-run install/education flow (docs/plans/onboarding-install-flow.md §6) — a
+        // NEW, small, additive branch, not a rework of the pre-ready states above. Checked once
+        // per launch, after the real shell is constructible: an absent/false
+        // `.onboardingCompleted` flag shows the flow; `true` (set by either "Continue" or "Skip
+        // for now" — resolved decision: never re-nag) means it never appears again.
+        .task {
+            guard let value = try? await database.settings.bool(forKey: .onboardingCompleted) else {
+                showOnboarding = true
+                return
+            }
+            showOnboarding = (value != true)
+        }
+        .sheet(isPresented: $showOnboarding) {
+            if let onboardingViewModel = environment.onboardingViewModel {
+                OnboardingView(viewModel: onboardingViewModel, onFinished: { showOnboarding = false })
             }
         }
     }

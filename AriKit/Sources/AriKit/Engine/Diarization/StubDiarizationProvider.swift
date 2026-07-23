@@ -43,10 +43,11 @@
             available
         }
 
-        public func prepare() async throws {
+        public func prepare(progress: (@Sendable (Double) -> Void)?) async throws {
             if let prepareError {
                 throw prepareError
             }
+            progress?(1.0)
         }
 
         public func diarize(
