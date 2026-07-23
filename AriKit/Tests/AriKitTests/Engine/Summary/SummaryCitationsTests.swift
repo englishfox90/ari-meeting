@@ -103,4 +103,42 @@ struct SummaryCitationsTests {
         #expect(stats.snapped == 0)
         #expect(stats.dropped == 0)
     }
+
+    // MARK: - Pass 0: promoting bare (MM:SS) parentheticals into badges
+
+    @Test func bareParenTimestampMatchingRealMarkerIsPromotedToRef() {
+        // The small model wrote plain "(01:05)" instead of the instructed "@ref(01:05)".
+        let summary = "Marcus owns the beta signoff (01:05)."
+        let (out, stats) = SummaryCitations.applyCitations(summary, sourceTranscript: Self.fixtureTranscript)
+        #expect(out.contains("@ref(01:05)"))
+        #expect(!out.contains("signoff (01:05)")) // the bare paren form is gone
+        #expect(stats.verified == 1) // promoted → verified by pass 1 (exact match)
+    }
+
+    @Test func bareParenTimestampNearAMarkerSnapsWhenPromoted() {
+        let summary = "Launch delayed (34:38)." // 5s from the real 34:43, inside tolerance
+        let (out, stats) = SummaryCitations.applyCitations(summary, sourceTranscript: Self.fixtureTranscript)
+        #expect(out.contains("@ref(34:43)")) // promoted to @ref, then snapped by pass 1
+        #expect(!out.contains("(34:38)"))
+        #expect(stats.snapped == 1)
+    }
+
+    @Test func bareParenTimestampWithNoRealMarkerIsLeftAsPlainText() {
+        // (55:00) matches no transcript marker → never fabricated into a badge, never deleted.
+        let summary = "Some unrelated aside (55:00)."
+        let (out, stats) = SummaryCitations.applyCitations(summary, sourceTranscript: Self.fixtureTranscript)
+        #expect(out == summary)
+        #expect(stats.verified == 0)
+        #expect(stats.snapped == 0)
+        #expect(stats.dropped == 0)
+    }
+
+    @Test func existingRefParenIsNotDoublePromoted() {
+        // The "(" inside an existing @ref(...) must not be touched by the promotion pass.
+        let summary = "Marcus owns the beta signoff @ref(01:05)."
+        let (out, _) = SummaryCitations.applyCitations(summary, sourceTranscript: Self.fixtureTranscript)
+        #expect(out.contains("@ref(01:05)"))
+        #expect(!out.contains("@ref(@ref"))
+        #expect(!out.contains("ref(ref("))
+    }
 }

@@ -128,12 +128,19 @@ public struct SummaryRunner: Sendable {
         let contextBlock = await SummaryContextAssembler(database: database).contextBlock(for: meetingId)
         let customPrompt = Self.mergeCustomPrompt(contextBlock: contextBlock, userInstructions: customInstructions)
 
+        // Detect the transcript language on-device so an already-English meeting skips
+        // `SummaryGenerator`'s redundant normalize-English second pass (which otherwise ~doubles
+        // generation time). `nil` (short/uncertain/unsupported) keeps the safe `.normalizeEnglish`
+        // default — the same behavior as before this was wired.
+        let detectedLanguage = TranscriptLanguageDetector.detect(text)
+
         Self.log.info(
             """
             Generating summary for meeting \(meetingId.rawValue, privacy: .public): \
             provider=\(modelConfig.providerKey, privacy: .public) model=\(modelConfig.model, privacy: .public) \
             template=\(resolvedTemplateId, privacy: .public) transcriptChars=\(text.count, privacy: .public) \
-            contextChars=\(contextBlock.count, privacy: .public) speakerCount=\(speakerCount ?? -1, privacy: .public)
+            contextChars=\(contextBlock.count, privacy: .public) speakerCount=\(speakerCount ?? -1, privacy: .public) \
+            detectedLanguage=\(detectedLanguage ?? "nil", privacy: .public)
             """
         )
         if contextBlock.isEmpty {
@@ -150,7 +157,7 @@ public struct SummaryRunner: Sendable {
             customPrompt: customPrompt,
             templateId: resolvedTemplateId,
             summaryLanguage: try? database.settings.string(forKey: .summaryLanguage),
-            detectedTranscriptLanguage: nil,
+            detectedTranscriptLanguage: detectedLanguage,
             customTemplateDirectory: customTemplateDirectory
         )
 

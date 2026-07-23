@@ -36,11 +36,18 @@ public final class MLXClient: LLMClient {
 
     public let kind: ProviderKind = .mlx
 
-    /// Fallback generation budget when neither the request nor the resolved config supplies one.
-    /// Bounded (not unbounded) generation when a caller supplies no explicit budget. Trimmed from
-    /// the S1 spike's 1200 (`Entry.swift:64`) to 800: observed final reports land ~500–600 tokens,
-    /// so 800 leaves headroom without paying decode time for tokens the model won't use.
-    static let defaultMaxTokens = 800
+    /// Fallback generation budget when neither the request nor the resolved config supplies one
+    /// (MLX always lands here — `ProviderConfigResolution` only populates `maxTokens` for
+    /// CustomOpenAI). This is an OUTPUT cap we choose, NOT a model limit: Qwen3.5-4B's context is
+    /// 262k tokens, so a few-thousand-token summary sits far inside what the model can produce.
+    ///
+    /// Raised from 800 → 4096 (2026-07-22): 800 truncated multi-section summary templates
+    /// mid-content — a real one_on_one summary ended `| **Owner** | **Task** | **Due Date` with the
+    /// Action Items table cut off, and later-section `@ref(MM:SS)` citations never got generated.
+    /// 4096 fits a full summary of even a long (37k-char) meeting with citations intact. It is a
+    /// CEILING, not a target: the model emits its natural EOS well before this on short meetings, so
+    /// they don't pay for tokens they don't use — only genuinely long summaries run longer.
+    static let defaultMaxTokens = 4096
 
     /// ← the S1 spike's fixed sampling parameters (`Entry.swift:125-126`) — used only when neither
     /// the request nor the resolved `ProviderConfig` supplies a value.

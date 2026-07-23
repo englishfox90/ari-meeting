@@ -56,7 +56,13 @@ public enum SummaryCitations {
         sourceTranscript: String
     ) -> (String, CitationStats) {
         let segments = parseSegments(sourceTranscript)
-        let (afterRefs, verified, snapped, dropped) = processRefTokens(summaryMarkdown, segments: segments)
+        // Pass 0: promote bare `(MM:SS)` parentheticals — which the small on-device model frequently
+        // emits instead of the instructed `@ref(MM:SS)` — into real `@ref(...)` tokens, but ONLY
+        // when they snap to a real transcript marker. Non-matching timestamps are left as plain text
+        // (No-Fake-State: never fabricate a badge, never delete the model's prose). This makes the
+        // reference badges robust to the model's inconsistent citation formatting.
+        let promoted = promoteParenTimestamps(summaryMarkdown, segments: segments)
+        let (afterRefs, verified, snapped, dropped) = processRefTokens(promoted, segments: segments)
         let (afterBackfill, backfilled) = backfillMissing(afterRefs, segments: segments)
         return (
             afterBackfill,
@@ -146,6 +152,47 @@ public enum SummaryCitations {
             }
         }
         return best
+    }
+
+    // ---------------------------------------------------------------------
+    // Pass 0: promote bare `(MM:SS)` parentheticals into `@ref(...)` (when real)
+    // ---------------------------------------------------------------------
+
+    /// A bare `(MM:SS)` / `(H:MM:SS)` parenthetical that is NOT already the body of an `@ref(...)`
+    /// (the negative lookbehind rejects the `(` in `@ref(`). Brackets `[MM:SS]` are already a
+    /// recognized badge form, so only the paren form needs promoting.
+    private static let parenTimestampRegex: NSRegularExpression = makeRegex(
+        #"(?<!ref)\((\d{1,4}):([0-5]\d)(?::([0-5]\d))?\)"#
+    )
+
+    /// Rewrites each bare `(MM:SS)` that snaps to a real transcript marker (within
+    /// `snapToleranceSecs`) into a canonical `@ref(MM:SS)`; leaves everything else untouched.
+    private static func promoteParenTimestamps(_ summaryMarkdown: String, segments: [Segment]) -> String {
+        guard !segments.isEmpty else { return summaryMarkdown }
+        let ns = summaryMarkdown as NSString
+        let matches = parenTimestampRegex.matches(in: summaryMarkdown, range: NSRange(location: 0, length: ns.length))
+        guard !matches.isEmpty else { return summaryMarkdown }
+
+        var result = ""
+        var lastEnd = 0
+        for match in matches {
+            let matchRange = match.range
+            result += ns.substring(with: NSRange(location: lastEnd, length: matchRange.location - lastEnd))
+
+            let targetSeconds = secondsFromMatch(match, ns: ns, a: 1, b: 2, c: 3)
+            if case let .some((_, diff)) = nearestSegment(segments, targetSeconds), diff <= snapToleranceSecs {
+                // Real (or near-real) timestamp → change only the delimiter form, preserving the
+                // model's own time. Pass 1 then does the real verify/snap accounting (an exact hit
+                // counts as verified; a near-miss as snapped), so promotion never distorts stats.
+                result += "@ref(\(formatHMS(targetSeconds)))"
+            } else {
+                // Not a real transcript moment — keep the model's literal text; never fabricate a badge.
+                result += ns.substring(with: matchRange)
+            }
+            lastEnd = matchRange.location + matchRange.length
+        }
+        result += ns.substring(with: NSRange(location: lastEnd, length: ns.length - lastEnd))
+        return result
     }
 
     private static func processRefTokens(

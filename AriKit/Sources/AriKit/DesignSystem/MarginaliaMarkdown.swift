@@ -67,7 +67,13 @@ public enum MarginaliaMarkdown {
 
         func flushParagraph() {
             guard !paragraph.isEmpty else { return }
-            let text = paragraph.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            // Preserve hard line breaks: the LLM writes one logical line per source line (e.g. a
+            // "**Meeting Metadata**" / "**Date:** …" / "**Participants:**" stack) without blank
+            // separators, and joining those with a space collapsed them onto one run-on line. The
+            // inline renderer parses with `.inlineOnlyPreservingWhitespace`, so a `\n` here survives
+            // as a real line break. (Genuine soft-wrapped prose — rare from these models — would now
+            // hard-break, which reads fine for meeting notes.)
+            let text = paragraph.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
                 blocks.append(.paragraph(text))
             }

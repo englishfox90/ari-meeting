@@ -59,7 +59,7 @@ struct MarginaliaMarkdownTests {
         #expect(MarginaliaMarkdown.parse(markdown) == [.paragraph("| just | text |")])
     }
 
-    @Test("soft-wrapped lines join into one paragraph; blank lines split blocks")
+    @Test("adjacent lines keep their hard breaks within a paragraph; blank lines split blocks")
     func paragraphs() {
         let markdown = """
         Line one
@@ -68,7 +68,7 @@ struct MarginaliaMarkdownTests {
         Second paragraph
         """
         #expect(MarginaliaMarkdown.parse(markdown) == [
-            .paragraph("Line one line two"),
+            .paragraph("Line one\nline two"),
             .paragraph("Second paragraph")
         ])
     }
