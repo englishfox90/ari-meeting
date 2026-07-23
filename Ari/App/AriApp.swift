@@ -45,12 +45,6 @@ struct AriApp: App {
         }
     }
 
-    /// The menu-bar item's SF Symbol — `record.circle` while recording, else `waveform`. A plain
-    /// computed property (kept out of the SceneBuilder for readability).
-    private var menuBarSymbolName: String {
-        environment.recordingSession?.isActive == true ? "record.circle" : "waveform"
-    }
-
     /// Split into per-scene computed properties: composing `WindowGroup` + a conditional
     /// `MenuBarExtra` + a `#if DEBUG` `Window` in one `@SceneBuilder` body overwhelmed the
     /// type-checker ("failed to produce diagnostic for expression" — an expression-too-complex
@@ -94,8 +88,16 @@ struct AriApp: App {
     /// unconditional `MenuBarExtra` compiles fine. `isInserted` is the intended API anyway — it
     /// inserts/removes the status item live as the Settings toggle flips `showInMenuBar`
     /// (docs/plans/menu-bar-item.md). `.window` style hosts the rich Marginalia panel.
+    ///
+    /// The status-bar glyph is the Ari brand mark, not a stock SF Symbol — so the item reads as
+    /// *our* app in the bar. Uses `MenuBarMark` (a 27×18pt variant of `DictationMark`) rather than
+    /// `DictationMark` itself: `MenuBarExtra(image:)` draws the asset at its intrinsic size and does
+    /// NOT scale to the bar, so the 96×64pt artboard rendered enormous — the menu-bar asset carries
+    /// explicit menu-bar-height dimensions. It's a template image, so macOS renders it monochrome
+    /// and auto-adapts to light/dark bars. Live recording state is signalled inside the panel (the
+    /// amber "Recording" badge), since a template menu-bar image can't carry an accent tint.
     private var menuBarScene: some Scene {
-        MenuBarExtra("Ari", systemImage: menuBarSymbolName, isInserted: $showInMenuBar) {
+        MenuBarExtra("Ari", image: "MenuBarMark", isInserted: $showInMenuBar) {
             menuBarContent
         }
         .menuBarExtraStyle(.window)

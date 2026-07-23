@@ -27,11 +27,15 @@ struct MenuBarContentView: View {
     /// fresh, and `load()` re-filters against a fresh `now` each time the panel opens.
     @State private var brief: CalendarBriefViewModel?
 
-    private var recordingSession: RecordingSession? { environment.recordingSession }
+    private var recordingSession: RecordingSession? {
+        environment.recordingSession
+    }
 
     /// The live phase, or `.idle` when the session doesn't exist yet (pre-bootstrap) — the Start
     /// control then renders disabled via `recordingSession == nil`, never a fake-enabled button.
-    private var phase: RecordingSession.Phase { recordingSession?.phase ?? .idle }
+    private var phase: RecordingSession.Phase {
+        recordingSession?.phase ?? .idle
+    }
 
     /// `false` while the session is missing (pre-bootstrap) or already active — Record stays
     /// honestly disabled rather than pretending a second start is possible (Home's posture).
@@ -83,6 +87,14 @@ struct MenuBarContentView: View {
 
     private var header: some View {
         HStack(spacing: MarginaliaSpacing.sm.value) {
+            // The Ari brand mark, tinted accent — the same treatment as the sidebar wordmark
+            // (`SidebarView.wordmark`), so the panel reads as our app rather than plain text.
+            Image("DictationMark")
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(96.0 / 64.0, contentMode: .fit)
+                .frame(width: 24)
+                .foregroundStyle(Color.marginalia(.accent, in: scheme))
             Text("Ari")
                 .marginaliaTextStyle(.headline, in: scheme)
             Spacer(minLength: MarginaliaSpacing.sm.value)
@@ -118,6 +130,11 @@ struct MenuBarContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.marginalia(.primary, .regular, in: scheme))
+            // In a `.window` MenuBarExtra the primary glass button is the window's prominent/default
+            // control, so macOS paints it with the SYSTEM accent (blue) over our amber glass tint.
+            // Pinning `.tint` to the brand accent makes that default-button glow render amber, so the
+            // control reads as Ari's Signal rather than a stock blue button.
+            .tint(Color.marginalia(.accent, in: scheme))
             .disabled(recordingSession == nil)
         }
     }
