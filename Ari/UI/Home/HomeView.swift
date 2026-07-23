@@ -290,8 +290,6 @@ struct HomeView: View {
                 recordTile(.savedMeetings, detail: counted(viewModel.meetingCount, "meeting", "meetings"))
                 recordTile(.people, detail: counted(viewModel.personCount, "person", "people"))
                 recordTile(.series, detail: counted(viewModel.seriesCount, "series", "series"))
-                recordTile(.ask, detail: "Not ready yet", isBuilt: false)
-                recordTile(.calendar, detail: "Not connected yet", isBuilt: false)
             }
         }
     }
