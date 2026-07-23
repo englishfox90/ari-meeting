@@ -49,6 +49,18 @@ struct AskOverlayHost: View {
                 // the panel stuck on `ProgressView()` until a navigation change.
                 .task(id: recallEngine != nil) { ensureViewModel() }
                 .task(id: navKey) { await refreshScope() }
+                // Belt-and-suspenders (caught live 2026-07-23: the panel stayed on `ProgressView()`
+                // even well after bootstrap had clearly finished — the main `.ask` page worked fine
+                // in the same session). `.popover`'s content can be unreliable about picking up a
+                // `@State` change that happens while it's already presented on macOS; re-running the
+                // same idempotent guard at the exact moment the user opens the panel (using
+                // whichever `recallEngine` value is current then) sidesteps that reactivity gap
+                // instead of depending on it.
+                .onChange(of: isExpanded) { _, expanded in
+                    if expanded {
+                        ensureViewModel()
+                    }
+                }
                 .padding(MarginaliaSpacing.lg.value)
         }
     }

@@ -21,7 +21,13 @@ struct RecallIntentClassifierTests {
             ("Did I meet with Sarah?", "sarah"),
             ("When was my last meeting with the design lead", "the design lead"),
             ("meetings with Sarah about the budget", "sarah"),
-            ("meetings with Sarah regarding the roadmap", "sarah")
+            ("meetings with Sarah regarding the roadmap", "sarah"),
+            // Regression (caught live 2026-07-23): a bare trailing time word must not get
+            // swallowed into the name — "ryan today" never matches a real "Ryan Chadwick" row.
+            ("Do I have a meeting with Ryan today?", "ryan"),
+            ("Did I meet with Sarah this morning?", "sarah"),
+            ("meeting with Ryan yesterday", "ryan"),
+            ("meetings with Sarah recently", "sarah")
         ]
     )
     func personLookupExtractsName(question: String, expectedName: String) {

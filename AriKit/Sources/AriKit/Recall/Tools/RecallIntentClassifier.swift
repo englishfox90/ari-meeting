@@ -42,8 +42,18 @@ public enum RecallIntentClassifier {
 
     /// Trailing clauses that qualify rather than name the person/series — trimmed off the
     /// extracted candidate so "meetings with Sarah about the budget" extracts "Sarah", not
-    /// "Sarah about the budget".
-    private static let trailingQualifiers = [" about ", " regarding ", " concerning ", "?", "."]
+    /// "Sarah about the budget". Includes bare time-reference words (real bug, caught live
+    /// 2026-07-23: "meeting with Ryan today?" extracted "ryan today", which then failed
+    /// `RecallTools.findPerson`'s substring match against "Ryan Chadwick" and silently fell
+    /// through to a weaker RAG-only answer) — these have no trailing space of their own since
+    /// they're typically the last word in the question, unlike " about "/" regarding ".
+    private static let trailingQualifiers = [
+        " about ", " regarding ", " concerning ",
+        " today", " tonight", " tomorrow", " yesterday",
+        " this morning", " this afternoon", " this evening",
+        " this week", " this month", " recently", " right now",
+        "?", "."
+    ]
 
     public static func classify(_ question: String) -> Intent? {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)

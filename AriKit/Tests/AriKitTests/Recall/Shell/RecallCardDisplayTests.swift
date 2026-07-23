@@ -41,6 +41,38 @@ struct RecallCardDisplayTests {
         #expect(RecallCardDisplay.friendlyDayOnly("2026-07-18T00:00:00Z") != nil)
     }
 
+    // MARK: - Timezone conversion (live 2026-07-23 Ask-Meetings bug)
+
+    @Test("friendlyDate converts a UTC instant to the injected LOCAL time — 14:46 UTC is 8:46 AM MDT, never 2:46 PM")
+    func friendlyDateConvertsUTCToLocalTime() throws {
+        let denver = try #require(TimeZone(identifier: "America/Denver")) // UTC-6 in July (MDT)
+        let enUS = Locale(identifier: "en_US")
+        let raw = try #require(
+            RecallCardDisplay.friendlyDate("2026-07-23T14:46:29Z", timeZone: denver, locale: enUS)
+        )
+        // `Date.FormatStyle` puts a narrow no-break space (U+202F) before AM/PM — normalize it.
+        let friendly = raw
+            .replacingOccurrences(of: "\u{202F}", with: " ")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+        #expect(friendly.contains("8:46 AM"))
+        #expect(!friendly.contains("2:46 PM")) // the raw-digit relabel the model produced live
+        #expect(!friendly.contains("14:46"))
+        #expect(friendly.contains("Jul 23, 2026"))
+    }
+
+    @Test(
+        "friendlyDayOnly returns the real LOCAL day across a UTC-midnight boundary — 05:30 UTC is still Jul 22 in MDT"
+    )
+    func friendlyDayOnlyCrossesUTCMidnight() throws {
+        let denver = try #require(TimeZone(identifier: "America/Denver")) // UTC-6 in July (MDT)
+        let enUS = Locale(identifier: "en_US")
+        // 2026-07-23T05:30:00Z is 2026-07-22 23:30 MDT — the UTC-prefix trick would say "Jul 23".
+        let friendly = try #require(
+            RecallCardDisplay.friendlyDayOnly("2026-07-23T05:30:00Z", timeZone: denver, locale: enUS)
+        )
+        #expect(friendly == "Jul 22, 2026")
+    }
+
     // MARK: - meetingCountLabel — real integer, correct singular/plural, never vague
 
     @Test("meetingCountLabel pluralizes correctly and shows the exact real integer")

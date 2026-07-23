@@ -66,7 +66,7 @@ struct MenuBarContentView: View {
             footer
         }
         .padding(MarginaliaSpacing.sm.value)
-        .frame(width: 260)
+        .frame(width: 360)
         // Bootstrap even when no main window is open (menu-bar-only state) — idempotent-guarded, so
         // a no-op when the window already ran it at launch.
         .task { await environment.bootstrap() }
@@ -95,7 +95,7 @@ struct MenuBarContentView: View {
                 .aspectRatio(96.0 / 64.0, contentMode: .fit)
                 .frame(width: 16)
                 .foregroundStyle(Color.marginalia(.accent, in: scheme))
-            Text("Ari")
+            Text("Ari Meetings")
                 .marginaliaTextStyle(.subheadline, in: scheme)
             Spacer(minLength: MarginaliaSpacing.sm.value)
             if recordingSession?.isActive == true {

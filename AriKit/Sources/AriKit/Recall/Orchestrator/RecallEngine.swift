@@ -278,7 +278,14 @@ public struct RecallEngine: Sendable {
             "### Series ledger (running context for this series)\n\($0)\n\n"
         } ?? ""
         let toolSection = resolvedContextLine.map { "\($0)\n\n" } ?? ""
-        let userPrompt = "\(priorConversation)\(peopleSection)\(seriesSection)\(toolSection)"
+        // Real, not fabricated (No-Fake-State) — this is the device's actual current date, the
+        // same real signal `RecallTools`/the card payloads already compute "today" against. Without
+        // this the model has no anchor for "today"/"this week" and will infer one from whatever
+        // date happens to appear in a retrieved excerpt (caught live 2026-07-23: asked "today" with
+        // a correct resolved-person card in hand, the model still answered from an unrelated
+        // meeting's date and flatly contradicted its own card).
+        let todaySection = "Today's date is \(Self.todayLine()).\n\n"
+        let userPrompt = "\(todaySection)\(priorConversation)\(peopleSection)\(seriesSection)\(toolSection)"
             + "Question: \(question)\n\nAuthoritative local meeting sources:\n\(context)"
 
         let config = ProviderConfig(
@@ -296,6 +303,15 @@ public struct RecallEngine: Sendable {
             config: config,
             card: resolvedCard
         )
+    }
+
+    /// A real, human-readable "today" line (e.g. "Thursday, July 23, 2026") from the device's
+    /// actual current date — the one honest anchor the model needs for "today"/"this week"
+    /// questions, distinct from any meeting/source date in the retrieved context.
+    private static func todayLine() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE, MMMM d, yyyy"
+        return formatter.string(from: Date())
     }
 
     // MARK: - Meeting-scoped retrieval (← `TranscriptsRepository::

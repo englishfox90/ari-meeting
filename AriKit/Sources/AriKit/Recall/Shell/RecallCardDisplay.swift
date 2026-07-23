@@ -15,22 +15,46 @@ import Foundation
 /// Pure, `Sendable` display-string helpers for recall entity cards. No SwiftUI dependency — safe
 /// to unit test directly.
 public enum RecallCardDisplay: Sendable {
-    /// A meeting/RFC3339 date rendered in a human format ("Jul 22, 2026, 3:45 PM"). `nil` in, `nil`
-    /// out (never a placeholder). An unparseable non-empty string falls back to itself verbatim
-    /// (never dropped, never blanked) — the value is still real, just not in a format we can parse.
-    public static func friendlyDate(_ raw: String?) -> String? {
+    /// A meeting/RFC3339 date rendered in a human, LOCAL-timezone format ("Jul 22, 2026, 3:45 PM").
+    /// `nil` in, `nil` out (never a placeholder). An unparseable non-empty string falls back to
+    /// itself verbatim (never dropped, never blanked) — the value is still real, just not in a
+    /// format we can parse.
+    ///
+    /// The stored `raw` is an RFC3339 UTC instant (e.g. `"2026-07-23T14:46:29Z"`); this converts it
+    /// to the caller's timezone BEFORE rendering, so an 8:46 AM MDT meeting reads "8:46 AM", never
+    /// "2:46 PM" (the raw 24-hour UTC digits relabeled without an offset shift — the live 2026-07-23
+    /// Ask-Meetings bug). `timeZone`/`locale` default to the device's current values; they are
+    /// injectable so this conversion can be proven correct in a test independent of the CI machine's
+    /// own zone.
+    public static func friendlyDate(
+        _ raw: String?,
+        timeZone: TimeZone = .current,
+        locale: Locale = .current
+    ) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
         guard let date = parseISO(raw) else { return raw }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        var style = Date.FormatStyle(date: .abbreviated, time: .shortened)
+        style.timeZone = timeZone
+        style.locale = locale
+        return date.formatted(style)
     }
 
     /// Just the day portion ("Jul 22, 2026") — used where a card shows "last on `<date>`" without
     /// a time-of-day (the plan's series/person card copy, §5.2). Same nil/fallback discipline as
-    /// `friendlyDate`.
-    public static func friendlyDayOnly(_ raw: String?) -> String? {
+    /// `friendlyDate`, and the same LOCAL-timezone conversion: slicing the first 10 characters of a
+    /// UTC RFC3339 string yields the UTC calendar date, which is the WRONG local day near midnight
+    /// (a 2026-07-22 23:30 MDT meeting is 2026-07-23 05:30 UTC) — this renders the real local day.
+    public static func friendlyDayOnly(
+        _ raw: String?,
+        timeZone: TimeZone = .current,
+        locale: Locale = .current
+    ) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
         guard let date = parseISO(raw) else { return raw }
-        return date.formatted(date: .abbreviated, time: .omitted)
+        var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
+        style.timeZone = timeZone
+        style.locale = locale
+        return date.formatted(style)
     }
 
     private static func parseISO(_ string: String) -> Date? {

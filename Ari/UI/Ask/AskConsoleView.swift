@@ -21,6 +21,15 @@ struct AskConsoleView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Only shown mid-thread (`newConversation()` already existed on the view model but was
+            // never wired to anything — caught live 2026-07-23: once you'd asked a question there
+            // was no way back to the recent-conversations/suggestion-chip empty state short of
+            // navigating away entirely). Absent on the empty state itself — there's nothing to go
+            // "back" from yet.
+            if !viewModel.items.isEmpty {
+                backToRecentHeader
+                Divider().overlay(Color.marginalia(.hairline, in: scheme))
+            }
             // The log/empty area claims all remaining vertical space so the composer stays a
             // bounded strip pinned at the bottom instead of a greedy `TextEditor` that expands to
             // fill and overlaps the content above it.
@@ -38,6 +47,20 @@ struct AskConsoleView: View {
         .task(id: viewModel.scope) {
             await viewModel.loadRecent()
         }
+    }
+
+    private var backToRecentHeader: some View {
+        HStack {
+            Button {
+                viewModel.newConversation()
+            } label: {
+                Label("Back", systemImage: "chevron.backward")
+            }
+            .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+            Spacer()
+        }
+        .padding(.horizontal, MarginaliaSpacing.md.value)
+        .padding(.vertical, MarginaliaSpacing.sm.value)
     }
 
     // MARK: - Message log
@@ -320,7 +343,11 @@ private struct AskThinkingRow: View {
             // A dot rises above its resting line during a bounce; reserve that band so the row's
             // height (and the text baseline beside it) stays put.
             .padding(.vertical, Self.bounceHeight)
-            Text("Searching local meeting excerpts…")
+            // Deliberately scope-agnostic and mechanism-agnostic: this same row is shown for a
+            // global cross-meeting search, a single meeting-scoped read, a series-scoped ask, AND
+            // (Slice B) a direct person/meeting/series entity lookup — "searching excerpts" was
+            // literally true only for the first of those (flagged live, 2026-07-23).
+            Text("Thinking through your meetings…")
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
         }
         // Pace the cadence by hand: bump `wave` (which restarts every dot's keyframe track), then

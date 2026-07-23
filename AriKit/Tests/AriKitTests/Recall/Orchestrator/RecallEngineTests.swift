@@ -334,6 +334,22 @@ struct RecallEngineTests {
         #expect(await client.generateCallCount == 1)
     }
 
+    @Test(
+        "Regression (caught live 2026-07-23): the prompt always grounds \"today\" to the real current date, never left for the model to infer from a retrieved excerpt's date"
+    )
+    func promptAlwaysGroundsTodaysRealDate() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Noted.")
+        let engine = makeEngine(db, client: client)
+
+        _ = try await engine.answerMeetingsLocally(question: "Do I have a meeting today?")
+
+        let prompt = try #require(await client.lastUserPrompt)
+        #expect(prompt.hasPrefix("Today's date is "))
+        let currentYear = Calendar.current.component(.year, from: Date())
+        #expect(prompt.contains(String(currentYear)))
+    }
+
     // MARK: - 8. Series ledger injection (precedence: meeting > series > global, ← `shell.rs:350-364`)
 
     @Test("A series ledger is prepended to the prompt for a series-scoped ask")
@@ -481,6 +497,96 @@ struct RecallEngineTests {
         #expect(response.answer.contains("[S1]"))
         #expect(response.sources.count == 1)
         #expect(response.sources.first?.meetingId == meeting.id.rawValue)
+    }
+
+    @Test(
+        "Regression (caught live 2026-07-23): a trailing time word like \"today\" still resolves a person card"
+    )
+    func personLookupWithTrailingTimeWordStillResolves() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = try await seedMeetingWithTranscripts(
+            db,
+            id: "meeting-ryan",
+            title: "Ryan 1:1",
+            segments: [(timestamp: "00:00", text: "Good catchup with Ryan this morning.", start: 0)]
+        )
+        let person = Person(
+            id: PersonID("person-ryan"),
+            email: "ryan.chadwick@arivo.com",
+            displayName: "Ryan Chadwick",
+            isOwner: false,
+            createdAt: meeting.createdAt,
+            updatedAt: meeting.createdAt
+        )
+        try await db.persons.upsert(person)
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-ryan"),
+            calendarId: "cal-1",
+            title: "Ryan 1:1",
+            startTime: meeting.createdAt,
+            endTime: meeting.createdAt.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "Ryan Chadwick", email: "ryan.chadwick@arivo.com")],
+            meetingId: meeting.id,
+            linkSource: .calendar
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Yes, per [S1].")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(question: "Do I have a meeting with Ryan today?")
+
+        let card = try #require(response.card)
+        guard case let .person(payload) = card else {
+            Issue.record("expected a .person card")
+            return
+        }
+        #expect(payload.personId == person.id.rawValue)
+        #expect(payload.meetingCount == 1)
+    }
+
+    @Test(
+        "Regression (caught live 2026-07-23): a resolved person's \"met today\" is stated outright in the prompt, not left for the model to infer by comparing two date strings"
+    )
+    func personCardContextLineStatesTodayOutright() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = makeMeeting(id: "meeting-landon-today", title: "Landon sync", createdAt: Date())
+        try await db.meetings.upsert(meeting)
+        try await db.transcripts.upsert(Transcript(
+            id: TranscriptID("meeting-landon-today-t0"),
+            meetingId: meeting.id,
+            transcript: "Caught up with Landon.",
+            timestamp: "00:00",
+            audioStartTime: 0
+        ))
+        let person = Person(
+            id: PersonID("person-landon"),
+            email: "landon.starr@arivo.com",
+            displayName: "Landon Starr",
+            isOwner: false,
+            createdAt: meeting.createdAt,
+            updatedAt: meeting.createdAt
+        )
+        try await db.persons.upsert(person)
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-landon-today"),
+            calendarId: "cal-1",
+            title: "Landon sync",
+            startTime: meeting.createdAt,
+            endTime: meeting.createdAt.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "Landon Starr", email: "landon.starr@arivo.com")],
+            meetingId: meeting.id,
+            linkSource: .calendar
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Yes.")
+        let engine = makeEngine(db, client: client)
+
+        _ = try await engine.answerMeetingsLocally(question: "Do I have a meeting with Landon today?")
+
+        let prompt = try #require(await client.lastUserPrompt)
+        #expect(prompt.contains("(today)"))
     }
 
     @Test("A meeting-scoped ask with the same question text never attempts entity resolution (no card)")
