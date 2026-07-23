@@ -74,29 +74,61 @@ public final class PersonDetailViewModel {
     // MARK: - Identity
 
     /// Saves authored identity fields onto the currently-loaded person, preserving
-    /// `id`/`isOwner`/`createdAt`/`organization`. No-ops when `name` trims to empty, or when no
-    /// person is loaded — mirrors `PeopleListViewModel.saveOwner`'s best-effort write pattern.
+    /// `id`/`isOwner`/`createdAt`/`organization`.
+    ///
+    /// Returns `nil` on success, or a human-readable error string on failure/rejection (the
+    /// write is NOT swallowed — No-Fake-State: a rejected save must surface, not look like it
+    /// worked). No-ops (returns an error) when `name` trims to empty or no person is loaded.
+    ///
+    /// **Email is the identity key** (`upsertStubFromAttendee` dedups on it), so two rules apply
+    /// (2026-07-23 duplicate-Ryan incident, see `EmailValidation`):
+    /// - **Read-only once set** — if this person already has an email, it is preserved and any
+    ///   incoming change is ignored (correcting a wrong email is a merge/heal operation, not a
+    ///   free-text edit that would silently split identity).
+    /// - **Validated when first set** — setting an email requires a structurally valid address,
+    ///   so a display name can never land in the email field.
+    @discardableResult
     public func saveIdentity(
         name: String,
         email: String?,
         role: String?,
         domain: String?,
         notes: String?
-    ) async {
-        guard let id = personId, case let .loaded(current) = person else { return }
+    ) async -> String? {
+        guard let id = personId, case let .loaded(current) = person else {
+            return "No person is loaded."
+        }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return }
+        guard !trimmedName.isEmpty else { return "Name can't be empty." }
+
+        let resolvedEmail: String?
+        if let existing = current.email, !existing.isEmpty {
+            // Locked: keep the existing key regardless of what the (disabled) field submitted.
+            resolvedEmail = existing
+        } else if let incoming = EmailValidation.normalized(email) {
+            guard EmailValidation.isValid(incoming) else {
+                return "“\(incoming)” isn't a valid email address."
+            }
+            resolvedEmail = incoming
+        } else {
+            resolvedEmail = nil
+        }
 
         var updated = current
         updated.displayName = trimmedName
-        updated.email = nonEmpty(email)
+        updated.email = resolvedEmail
         updated.role = nonEmpty(role)
         updated.domain = nonEmpty(domain)
         updated.notes = nonEmpty(notes)
         updated.updatedAt = Date()
 
-        try? await database.persons.upsert(updated)
-        await load(id)
+        do {
+            try await database.persons.upsert(updated)
+            await load(id)
+            return nil
+        } catch {
+            return String(describing: error)
+        }
     }
 
     // MARK: - Fact actions

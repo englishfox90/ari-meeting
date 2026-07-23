@@ -26,6 +26,7 @@ struct PersonDetailView: View {
     @State private var formDomain = ""
     @State private var formNotes = ""
     @State private var isSavingIdentity = false
+    @State private var identityError: String?
 
     // Manual fact composer.
     @State private var manualFactText = ""
@@ -122,7 +123,7 @@ struct PersonDetailView: View {
             }
 
             identityField("Name", text: $formName)
-            identityField("Email", text: $formEmail)
+            emailField
             identityField("Role", text: $formRole)
             identityField("Domain / focus", text: $formDomain)
             VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
@@ -131,10 +132,16 @@ struct PersonDetailView: View {
                 MarginaliaTextEditor(text: $formNotes, prompt: "Notes", scheme: scheme)
             }
 
+            if let identityError {
+                Text(identityError)
+                    .marginaliaTextStyle(.caption, in: scheme, ink: .accent)
+            }
+
             Button(isSavingIdentity ? "Saving…" : "Save identity") {
                 isSavingIdentity = true
+                identityError = nil
                 Task {
-                    await viewModel.saveIdentity(
+                    identityError = await viewModel.saveIdentity(
                         name: formName, email: formEmail, role: formRole, domain: formDomain, notes: formNotes
                     )
                     isSavingIdentity = false
@@ -155,6 +162,32 @@ struct PersonDetailView: View {
             Text(label.uppercased())
                 .marginaliaTextStyle(.caption, in: scheme)
             MarginaliaTextField(text: text, prompt: label, scheme: scheme)
+        }
+    }
+
+    /// Email is the identity key used to match calendar attendees, so once a person has one it is
+    /// locked (read-only) — correcting a wrong email is a merge/heal operation, not a free-text
+    /// edit that would silently split identity. Editable (and validated) only while still unset.
+    @ViewBuilder
+    private var emailField: some View {
+        let isLocked = !(viewModel.person.value?.email ?? "").isEmpty
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+            HStack(spacing: MarginaliaSpacing.xs.value) {
+                Text("EMAIL")
+                    .marginaliaTextStyle(.caption, in: scheme)
+                if isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                }
+            }
+            MarginaliaTextField(text: $formEmail, prompt: "Email", scheme: scheme)
+                .disabled(isLocked)
+                .opacity(isLocked ? 0.6 : 1)
+            if isLocked {
+                Text("Locked — email is the identity key. Correcting it is a merge operation.")
+                    .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
+            }
         }
     }
 

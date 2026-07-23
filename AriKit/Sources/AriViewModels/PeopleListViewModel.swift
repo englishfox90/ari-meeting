@@ -127,8 +127,23 @@ public final class PeopleListViewModel {
                 updatedAt: now
             )
         }
+
+        // Email is the identity key (see PersonDetailViewModel.saveIdentity): read-only once set,
+        // validated when first set — so a name can't corrupt the key and split identity.
+        let resolvedEmail: String?
+        if let existing = owner?.email, !existing.isEmpty {
+            resolvedEmail = existing
+        } else if let incoming = EmailValidation.normalized(email) {
+            guard EmailValidation.isValid(incoming) else {
+                return "“\(incoming)” isn't a valid email address."
+            }
+            resolvedEmail = incoming
+        } else {
+            resolvedEmail = nil
+        }
+
         person.displayName = displayName
-        person.email = email
+        person.email = resolvedEmail
         person.role = role
         person.organization = organization
         person.domain = domain

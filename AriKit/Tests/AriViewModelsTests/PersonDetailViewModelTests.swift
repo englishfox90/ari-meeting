@@ -172,18 +172,67 @@ struct PersonDetailViewModelTests {
         let viewModel = PersonDetailViewModel(database: database)
         await viewModel.load(personId)
 
-        await viewModel.saveIdentity(name: "   ", email: "new@example.com", role: nil, domain: nil, notes: nil)
+        let emptyNameError = await viewModel.saveIdentity(
+            name: "   ", email: "new@example.com", role: nil, domain: nil, notes: nil
+        )
+        #expect(emptyNameError != nil)
         #expect(viewModel.person.value?.displayName == "Original Name")
         #expect(viewModel.person.value?.email == "old@example.com")
 
-        await viewModel.saveIdentity(
+        // Email is read-only once set: the incoming "new@example.com" is ignored, the rest saves.
+        let error = await viewModel.saveIdentity(
             name: "New Name", email: "new@example.com", role: "Engineer", domain: "Platform", notes: "Notes"
         )
+        #expect(error == nil)
         #expect(viewModel.person.value?.displayName == "New Name")
-        #expect(viewModel.person.value?.email == "new@example.com")
+        #expect(viewModel.person.value?.email == "old@example.com")
         #expect(viewModel.person.value?.role == "Engineer")
         #expect(viewModel.person.value?.isOwner == true)
         #expect(viewModel.person.value?.id == personId)
+    }
+
+    @Test("saveIdentity rejects a non-email when first setting the email key")
+    func saveIdentityRejectsInvalidEmail() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let personId: PersonID = "person-6b"
+        // No email set yet — the field is editable, so validation applies.
+        let person = Person(
+            id: personId, displayName: "ryan.chadwick@arivo.com", isOwner: false,
+            createdAt: Self.now, updatedAt: Self.now
+        )
+        try await database.persons.upsert(person)
+
+        let viewModel = PersonDetailViewModel(database: database)
+        await viewModel.load(personId)
+
+        // The exact incident: a display name typed into the email field must be rejected, not stored.
+        let error = await viewModel.saveIdentity(
+            name: "Ryan Chadwick", email: "Ryan Chadwick", role: "Group Product Manager",
+            domain: nil, notes: nil
+        )
+        #expect(error != nil)
+        #expect(viewModel.person.value?.email == nil)
+        #expect(viewModel.person.value?.role != "Group Product Manager") // whole save rejected
+    }
+
+    @Test("saveIdentity normalizes a valid email when first set (trim + lowercase)")
+    func saveIdentityNormalizesEmail() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let personId: PersonID = "person-6c"
+        let person = Person(
+            id: personId, displayName: "Ryan", isOwner: false,
+            createdAt: Self.now, updatedAt: Self.now
+        )
+        try await database.persons.upsert(person)
+
+        let viewModel = PersonDetailViewModel(database: database)
+        await viewModel.load(personId)
+
+        let error = await viewModel.saveIdentity(
+            name: "Ryan", email: "  Ryan.Chadwick@Arivo.com ", role: nil, domain: nil, notes: nil
+        )
+        #expect(error == nil)
+        #expect(viewModel.person.value?.email == "ryan.chadwick@arivo.com")
     }
 
     @Test("addManualFact lands active")
