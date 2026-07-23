@@ -35,6 +35,10 @@ public struct SummaryRunner: Sendable {
     /// Injectable for tests; production default constructs a real client via `ProviderFactory`.
     let clientFactory: @Sendable (ProviderConfig) throws -> any LLMClient
 
+    /// Cap on the linked event's `notes` snippet folded into `calendarContextString` (← plan
+    /// `docs/plans/summary-pipeline-completion.md` Gap 1's "~200 chars" bound).
+    private static let calendarContextDescriptionCap = 200
+
     public init(
         database: AppDatabase,
         settings: any SettingsReading,
@@ -71,7 +75,7 @@ public struct SummaryRunner: Sendable {
     /// `TemplateSelector.defaultTemplateID` rather than blocking (mirrors
     /// `TemplateSelector.suggestTemplate`'s own contract) — the same degradation applies to any
     /// provider-resolution or client-construction failure along the way.
-    public func suggestTemplateID(text: String, speakerCount: Int?) async -> String {
+    public func suggestTemplateID(meetingId: MeetingID, text: String, speakerCount: Int?) async -> String {
         guard let modelConfig = try? await settings.summaryModelConfig() else {
             return TemplateSelector.defaultTemplateID
         }
@@ -83,17 +87,34 @@ public struct SummaryRunner: Sendable {
                 secrets: secrets
             )
             let client = try clientFactory(providerConfig)
+            let calendarContext = await calendarContextString(for: meetingId)
             let suggestion = await TemplateSelector.suggestTemplate(
                 client: client,
                 text: text,
                 speakerCount: speakerCount,
-                calendarContext: nil,
+                calendarContext: calendarContext,
                 customDirectory: customTemplateDirectory
             )
             return suggestion.id
         } catch {
             return TemplateSelector.defaultTemplateID
         }
+    }
+
+    /// A terse, bounded calendar-context one-liner for the template classifier (← plan
+    /// `docs/plans/summary-pipeline-completion.md` Gap 1, LOCKED decision: calendar-only, not the
+    /// full F3 context block `generate` already injects separately). `nil` when no calendar event
+    /// is linked to `meetingId` — No-Fake-State: the classifier just sees no calendar signal,
+    /// exactly as before this was wired, rather than a fabricated context string.
+    func calendarContextString(for meetingId: MeetingID) async -> String? {
+        guard let event = await (try? database.calendarEvents.forMeeting(meetingId))?.first else {
+            return nil
+        }
+        var context = event.title
+        if let notes = SummaryContextAssembler.trimmedNonEmpty(event.notes) {
+            context += " — \(SummaryContextAssembler.truncateChars(notes, max: Self.calendarContextDescriptionCap))"
+        }
+        return context
     }
 
     /// Runs the full generate: assembles the transcript, resolves the configured provider/model,
@@ -118,7 +139,7 @@ public struct SummaryRunner: Sendable {
         let resolvedTemplateId: String = if let templateId {
             templateId
         } else {
-            await suggestTemplateID(text: text, speakerCount: speakerCount)
+            await suggestTemplateID(meetingId: meetingId, text: text, speakerCount: speakerCount)
         }
 
         // F3 context injection (← the Rust `summary_context_for_meeting` block the first Swift

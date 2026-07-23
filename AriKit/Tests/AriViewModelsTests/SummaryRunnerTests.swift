@@ -165,9 +165,114 @@ struct SummaryRunnerTests {
         let db = try AppDatabase.makeInMemory()
         let runner = makeRunner(db: db, settings: StubSettingsReading())
 
-        let id = await runner.suggestTemplateID(text: "Let's talk roadmap.", speakerCount: nil)
+        let id = await runner.suggestTemplateID(meetingId: meetingId, text: "Let's talk roadmap.", speakerCount: nil)
         #expect(id == TemplateSelector.defaultTemplateID)
         #expect(id == "standard_meeting")
+    }
+
+    // MARK: - calendarContextString (Slice A, Gap 1)
+
+    @Test("calendarContextString returns nil when no event is linked to the meeting")
+    func calendarContextStringNilWhenNoEventLinked() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(makeMeeting())
+        let runner = makeRunner(db: db, settings: StubSettingsReading())
+
+        let context = await runner.calendarContextString(for: meetingId)
+        #expect(context == nil)
+    }
+
+    @Test("calendarContextString returns a bounded title-only string when the event has no notes")
+    func calendarContextStringTitleOnly() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(makeMeeting())
+        let event = CalendarEvent(
+            id: "event-1", calendarId: "cal-1", title: "1:1 with Ada",
+            startTime: Date(timeIntervalSince1970: 1_700_000_000),
+            endTime: Date(timeIntervalSince1970: 1_700_003_600),
+            isAllDay: false, attendees: [], meetingId: meetingId
+        )
+        try await db.calendarEvents.upsert(event)
+        let runner = makeRunner(db: db, settings: StubSettingsReading())
+
+        let context = await runner.calendarContextString(for: meetingId)
+        #expect(context == "1:1 with Ada")
+    }
+
+    @Test("calendarContextString truncates a long description at the cap")
+    func calendarContextStringTruncatesDescription() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(makeMeeting())
+        let longNotes = String(repeating: "x", count: 400)
+        let event = CalendarEvent(
+            id: "event-1", calendarId: "cal-1", title: "Quarterly planning",
+            startTime: Date(timeIntervalSince1970: 1_700_000_000),
+            endTime: Date(timeIntervalSince1970: 1_700_003_600),
+            isAllDay: false, notes: longNotes, attendees: [], meetingId: meetingId
+        )
+        try await db.calendarEvents.upsert(event)
+        let runner = makeRunner(db: db, settings: StubSettingsReading())
+
+        let context = await runner.calendarContextString(for: meetingId)
+        #expect(context != nil)
+        #expect(try #require(context?.hasPrefix("Quarterly planning — ")))
+        // 200-char cap + the ellipsis suffix, not the full 400-char notes string.
+        #expect(try #require(context?.contains("…")))
+        #expect(try !(#require(context?.contains(longNotes))))
+    }
+
+    @Test("suggestTemplateID forwards a non-nil calendar context into the classifier prompt")
+    func suggestTemplateIDForwardsCalendarContext() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(makeMeeting())
+        try await db.transcripts.upsert(Transcript(
+            id: "transcript-1", meetingId: meetingId, transcript: "Let's talk roadmap.",
+            timestamp: "00:00:01"
+        ))
+        let event = CalendarEvent(
+            id: "event-1", calendarId: "cal-1", title: "1:1 with Ada",
+            startTime: Date(timeIntervalSince1970: 1_700_000_000),
+            endTime: Date(timeIntervalSince1970: 1_700_003_600),
+            isAllDay: false, attendees: [], meetingId: meetingId
+        )
+        try await db.calendarEvents.upsert(event)
+        let settings = StubSettingsReading(
+            summaryModelConfigValue: SummaryModelConfig(providerKey: "ollama", model: "llama3")
+        )
+
+        let promptSpy = PromptSpy()
+        let runner = makeRunner(
+            db: db,
+            settings: settings,
+            classifierClientFactory: { _ in PromptCapturingLLMClient(spy: promptSpy) }
+        )
+
+        _ = await runner.suggestTemplateID(meetingId: meetingId, text: "Let's talk roadmap.", speakerCount: 2)
+
+        let capturedPrompt = await promptSpy.lastUserPrompt
+        #expect(capturedPrompt != nil)
+        #expect(try #require(capturedPrompt?.contains("Calendar event context:")))
+        #expect(try #require(capturedPrompt?.contains("1:1 with Ada")))
+    }
+
+    /// Captures the `user` half of the last `LLMRequest` it was asked to `generate` (← mirrors the
+    /// Rust `prompt_includes_speaker_count_and_calendar_context_when_present` test's assertion on
+    /// the classifier's user prompt).
+    private actor PromptSpy {
+        private(set) var lastUserPrompt: String?
+        func record(_ prompt: String) {
+            lastUserPrompt = prompt
+        }
+    }
+
+    private struct PromptCapturingLLMClient: LLMClient {
+        let kind: ProviderKind = .mlx
+        let spy: PromptSpy
+
+        func generate(_ request: LLMRequest) async throws -> String {
+            await spy.record(request.user)
+            return "standard_meeting"
+        }
     }
 
     // MARK: - generate: template resolution

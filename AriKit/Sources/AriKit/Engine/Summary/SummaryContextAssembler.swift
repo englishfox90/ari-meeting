@@ -223,7 +223,10 @@ public struct SummaryContextAssembler: Sendable {
         return formatter
     }()
 
-    static func trimmedNonEmpty(_ text: String?) -> String? {
+    /// `public` (Slice A, docs/plans/summary-pipeline-completion.md Gap 1): `SummaryRunner`
+    /// (`AriViewModels`) reuses this for its own bounded calendar-context string rather than
+    /// duplicating the trim rule.
+    public static func trimmedNonEmpty(_ text: String?) -> String? {
         guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
             return nil
         }
@@ -236,8 +239,9 @@ public struct SummaryContextAssembler: Sendable {
         return truncateChars(trimmed, max: maxPersonNotesChars)
     }
 
-    /// Unicode-scalar truncation with an ellipsis suffix (Rust `chars().take(n)`).
-    static func truncateChars(_ text: String, max maximum: Int) -> String {
+    /// Unicode-scalar truncation with an ellipsis suffix (Rust `chars().take(n)`). `public` — see
+    /// `trimmedNonEmpty` above for the same cross-module reuse rationale (Slice A, Gap 1).
+    public static func truncateChars(_ text: String, max maximum: Int) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.count <= maximum {
             return trimmed
