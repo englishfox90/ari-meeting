@@ -41,7 +41,11 @@ struct AskOverlayHost: View {
         } else {
             fab
                 .popover(isPresented: $isExpanded, arrowEdge: .trailing) { panel }
-                .task { ensureViewModel() }
+                // Keyed on engine readiness so it re-runs when `recallEngine` flips nil→available:
+                // the shell can mount the FAB before bootstrap assigns the engine, and a plain
+                // `.task {}` (no id) would run once against the nil engine and never retry, leaving
+                // the panel stuck on `ProgressView()` until a navigation change.
+                .task(id: recallEngine != nil) { ensureViewModel() }
                 .task(id: navKey) { await refreshScope() }
                 .padding(MarginaliaSpacing.lg.value)
         }
@@ -53,9 +57,9 @@ struct AskOverlayHost: View {
         selectedSection == .newMeeting || isRecordingActive || selectedSection == .ask
     }
 
-    // A round chat-bubble FAB — the one amber Signal for "ask the AI" (plan §7/§8). Built as an
-    // explicit accent-filled circle rather than the `.primary` glass pill: the pill read as a flat
-    // system-tinted button, not a speech bubble, and the glyph looked like a zoom control.
+    /// A round chat-bubble FAB — the one amber Signal for "ask the AI" (plan §7/§8). Built as an
+    /// explicit accent-filled circle rather than the `.primary` glass pill: the pill read as a flat
+    /// system-tinted button, not a speech bubble, and the glyph looked like a zoom control.
     private var fab: some View {
         Button {
             isExpanded.toggle()
@@ -126,7 +130,7 @@ struct AskOverlayHost: View {
 
         case let .meeting(meetingId):
             guard let meeting = try? await database.meetings.find(meetingId) else { return .none }
-            let seriesIds = (try? await database.series.seriesIds(forMeeting: meetingId)) ?? []
+            let seriesIds = await (try? database.series.seriesIds(forMeeting: meetingId)) ?? []
             var seriesRef: AskNavSeriesRef?
             if let firstSeriesId = seriesIds.first,
                let series = try? await database.series.find(firstSeriesId) {
