@@ -124,6 +124,54 @@ struct NotchGeometryTests {
         #expect(IslandGeometry.expandedMinWidth(notchWidth: 0.5) == nil)
     }
 
+    // MARK: - fixedPanelFrame (structural fix: the panel never resizes mid-animation)
+
+    @Test("fixedPanelFrame centers at maxPanelWidth on a screen wider than the ceiling")
+    func fixedPanelFrameCentersAtMaxWidthOnWideScreen() {
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+
+        let frame = IslandGeometry.fixedPanelFrame(inScreen: screen)
+
+        #expect(abs(frame.width - IslandGeometry.maxPanelWidth) < 0.001)
+        #expect(abs(frame.midX - screen.midX) < 0.001)
+        #expect(abs(frame.height - (IslandGeometry.maxPanelContentHeight + IslandGeometry.topBleed)) < 0.001)
+        // Same top anchor as the old per-resize `islandFrame`: topBleed above the screen's top.
+        #expect(abs(frame.maxY - (screen.maxY + IslandGeometry.topBleed)) < 0.001)
+    }
+
+    @Test("fixedPanelFrame clamps width to a screen narrower than maxPanelWidth")
+    func fixedPanelFrameClampsWidthOnNarrowScreen() {
+        let narrowWidth: CGFloat = 400
+        let screen = CGRect(x: 0, y: 0, width: narrowWidth, height: 900)
+
+        let frame = IslandGeometry.fixedPanelFrame(inScreen: screen)
+
+        #expect(abs(frame.width - narrowWidth) < 0.001)
+        #expect(abs(frame.midX - screen.midX) < 0.001)
+    }
+
+    @Test("fixedPanelFrame centers on an offset secondary screen, not the global origin")
+    func fixedPanelFrameCentersOnOffsetSecondaryScreen() {
+        let screen = CGRect(x: 1512, y: 0, width: 2560, height: 1440)
+
+        let frame = IslandGeometry.fixedPanelFrame(inScreen: screen)
+
+        #expect(abs(frame.midX - screen.midX) < 0.001)
+        #expect(abs(frame.maxY - (screen.maxY + IslandGeometry.topBleed)) < 0.001)
+    }
+
+    @Test("fixedPanelFrame's frame depends only on screen params, not on any content size")
+    func fixedPanelFrameIsContentIndependent() {
+        // The whole point: calling this twice with the same screen always yields the same
+        // frame — there is no content-size parameter to vary it, unlike `islandFrame`.
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+
+        let first = IslandGeometry.fixedPanelFrame(inScreen: screen)
+        let second = IslandGeometry.fixedPanelFrame(inScreen: screen)
+
+        #expect(first == second)
+    }
+
     // MARK: - IslandPresentation mapping (basic cases; exhaustive mapping in NotchPresentationTests)
 
     @Test("idle with no upcoming meeting is hidden — the island is transient")

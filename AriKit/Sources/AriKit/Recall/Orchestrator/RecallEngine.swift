@@ -223,30 +223,27 @@ public struct RecallEngine: Sendable {
             matches = try await hybridSearch.globalSearch(question)
         }
 
-        guard !matches.isEmpty else {
-            if isMeetingScoped {
-                throw RecallEngineError.noSavedMatch(
-                    "This meeting has no saved transcript or summary yet. Record, import, recover, or retranscribe it before asking the local assistant."
-                )
-            } else if isSeriesScoped {
-                throw RecallEngineError.noSavedMatch(
-                    "No saved local transcript in this series matched that question."
-                )
-            } else {
-                throw RecallEngineError.noSavedMatch("No saved local transcript matched that question.")
-            }
-        }
-
-        var sources = isMeetingScoped
-            ? Recall.buildMeetingSources(matches)
-            : Recall.buildGlobalSources(matches)
+        // LLM-first (retrieve-augment-always): an empty retrieval is NOT a dead end. The model
+        // always runs, augmented with whatever the search found — so a greeting or an
+        // out-of-corpus question gets an honest conversational reply and streaming is visible,
+        // instead of a hard "no match" wall. Sources stay DB-built (empty when nothing matched),
+        // so the never-invent-citations guard is untouched: with zero sources, reconcile() strips
+        // any [Sn] the model emits.
+        let hasMatches = !matches.isEmpty
+        var sources = hasMatches
+            ? (isMeetingScoped
+                ? Recall.buildMeetingSources(matches)
+                : Recall.buildGlobalSources(matches))
+            : []
         await peopleContext.attachPeople(&sources)
         let peopleBlock = await peopleContext.peopleContextBlock(
             sources: sources,
             scopedMeetingId: meetingId
         )
 
-        let context = Recall.buildContext(sources)
+        let context = hasMatches
+            ? Recall.buildContext(sources)
+            : "(No saved meeting excerpts matched this question.)"
         let systemPrompt = Recall.systemPrompt(isMeetingScoped: isMeetingScoped)
         let priorConversation = historyText.isEmpty
             ? ""

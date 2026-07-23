@@ -61,15 +61,14 @@ public enum IslandGeometry {
 
     /// Extra chrome height the AppKit panel keeps ABOVE the visible island's own top edge — an
     /// animation-timing safety margin (docs/plans/notch-panel-absorption.md, "top-gap during
-    /// bounce" fix). The panel's frame is driven by discrete SwiftUI geometry reports
-    /// (`NotchPanelController.islandDidResize`/`reanchor`) while the on-screen expand/collapse
-    /// morph is a continuous spring; the two can drift by a frame. `islandFrame` keeps the
-    /// panel's BOTTOM anchored exactly where content ends (unchanged) but grows the panel
-    /// `topBleed` points TALLER at the top, past the screen's physical top edge. The SwiftUI
-    /// chrome (`IslandContainerView`) paints that extra strip solid black and keeps the visible
-    /// island's own top pinned at `screenFrame.maxY` exactly as before, so the steady-state look
-    /// is unchanged — but a stray out-of-sync animation frame now reveals more black chrome,
-    /// never bare desktop, at the seam with the physical notch.
+    /// bounce" fix). Originally sized to absorb drift between the panel's discrete resize and the
+    /// island's continuous spring; that discrete resize is gone now (`fixedPanelFrame` below —
+    /// the panel no longer resizes mid-animation at all), but the bleed band stays as a second,
+    /// independent margin: the SwiftUI chrome (`IslandContainerView`) still paints it solid black
+    /// as part of the SAME `IslandShape` fill as the island body (one path, no layer seam), and
+    /// `islandFrame`/`fixedPanelFrame` both still extend the panel `topBleed` points past the
+    /// screen's physical top edge so even a stray fractional-pixel frame reveals more black
+    /// chrome, never bare desktop, at the seam with the physical notch.
     public static let topBleed: CGFloat = 6
 
     /// The expanded island's width floor: the active screen's physical notch width plus
@@ -112,5 +111,45 @@ public enum IslandGeometry {
         // Guard against float noise and non-notched screens (aux areas span the whole width,
         // leaving ~0).
         return width > 1.0 ? width : nil
+    }
+
+    // MARK: - Fixed panel frame (structural fix for the expand-animation top-gap artifact)
+
+    /// The panel's maximum width, over any content the expanded island ever needs
+    /// (`IslandContainerView`'s own `maxWidth: 460` ceiling on expanded content leaves headroom
+    /// under this). The panel no longer sizes to the island's LIVE content — see
+    /// `fixedPanelFrame` — so this is a one-time ceiling, not a per-frame measurement.
+    public static let maxPanelWidth: CGFloat = 520
+
+    /// The panel's maximum content height (excluding `topBleed`), over the recording HUD and the
+    /// upcoming-meeting alert alike (REC/title row + meter + up to two transcript lines +
+    /// controls, or title + countdown + controls, each with their own padding). Generous
+    /// deliberately: unused headroom is fully transparent and click-through (see
+    /// `ClickThroughHostingView` in the app target), so oversizing costs nothing visually or
+    /// interactively.
+    public static let maxPanelContentHeight: CGFloat = 240
+
+    /// The panel's FIXED frame for a given screen — sized once to `maxPanelWidth` ×
+    /// (`maxPanelContentHeight` + `topBleed`), top-centered, with the panel's own top edge
+    /// `topBleed` points above `screenFrame.maxY` (the same anchor `islandFrame` used for its
+    /// per-resize frame). Width clamps to the screen's own width on a laptop narrower than
+    /// `maxPanelWidth`.
+    ///
+    /// This is the structural fix for the animation-time top-gap artifact (three earlier attempts
+    /// — no-overshoot spring, single-fill bleed band, whole-pixel snapping — all left a class of
+    /// bug open because the panel was still being RESIZED via `setFrame` mid-animation on every
+    /// SwiftUI geometry report, racing AppKit's own re-layout against Core Animation's
+    /// interpolation). The panel's frame now depends ONLY on screen parameters, never on the
+    /// island's live content size — `NotchPanelController` calls this exclusively from
+    /// `reanchor()`, itself invoked only on construction and on
+    /// `didChangeScreenParametersNotification`, never per content resize. The SwiftUI island still
+    /// morphs continuously inside this larger, static panel via its own top-aligned layout; only
+    /// the interactive (hit-testable) region tracks the live size now, not the window frame.
+    public static func fixedPanelFrame(inScreen screenFrame: CGRect) -> CGRect {
+        let width = min(maxPanelWidth, screenFrame.width)
+        let height = maxPanelContentHeight + topBleed
+        let x = screenFrame.midX - width / 2.0
+        let y = screenFrame.maxY - maxPanelContentHeight
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 }

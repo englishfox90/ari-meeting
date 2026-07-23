@@ -17,8 +17,14 @@
 //  Screen anchoring: the island is PINNED to the PRIMARY display — the one designated "main" in
 //  System Settings > Displays (always the screen whose global frame origin is (0,0)). It
 //  deliberately does NOT follow the active window from screen to screen; a meeting HUD that
-//  teleports when you click another monitor reads as a bug. We re-anchor only when the display
-//  layout itself changes, and continuously as the SwiftUI island resizes (collapsed <-> expanded).
+//  teleports when you click another monitor reads as a bug. We re-anchor (`reanchor()`, i.e.
+//  `setFrame`) ONLY when the display layout itself changes — the panel is otherwise a FIXED size
+//  (`IslandGeometry.fixedPanelFrame`, sized for the island's maximum content) so it never resizes
+//  as the SwiftUI island itself morphs collapsed <-> expanded; only the click-through hit-test
+//  region (`updateActiveRect()`) tracks that live size. This is the structural fix for the
+//  expand-animation top-gap artifact (docs/plans/notch-panel-absorption.md): a discrete `setFrame`
+//  racing the SwiftUI spring's continuous interpolation was the remaining mechanism after three
+//  earlier fixes; removing per-resize `setFrame` entirely closes that class of bug.
 //
 //  Constructor takes `NotchOverlayModel` (no wire emitter — plan §2: the model's actions call
 //  straight into `RecordingSession`/the injected closures).
@@ -29,14 +35,20 @@ import SwiftUI
 
 @MainActor
 final class NotchPanelController {
+    /// Extra click radius around the visible island's own footprint (plan: "a couple points of
+    /// slack is fine") so the Stop/Record/Dismiss/open-app controls near the island's edge never
+    /// feel clipped.
+    private static let hitTestSlack: CGFloat = 6
+
     private let model: NotchOverlayModel
     private let environment = IslandEnvironment()
 
     private let panel: TopEdgePanel
-    private let hostingView: NSHostingView<IslandContainerView>
+    private let hostingView: ClickThroughHostingView
 
-    /// Last size the SwiftUI island reported; used to re-anchor on screen changes without
-    /// waiting for a new layout pass.
+    /// Last size the SwiftUI island reported. Drives ONLY the hit-test `activeRect`
+    /// (`updateActiveRect()`) now — the panel's own frame is fixed
+    /// (`IslandGeometry.fixedPanelFrame`) and no longer follows this value.
     private var currentContentSize = CGSize(width: 190, height: 30)
 
     /// `nonisolated(unsafe)`: `deinit` isn't main-actor isolated, but it only ever calls
@@ -97,7 +109,7 @@ final class NotchPanelController {
         // Built after `panel` exists so `onResize` can drive `panel` sizing. Stash a
         // placeholder root first, then assign the real one below (the closure captures `self`,
         // which must come after this init's other fields are set).
-        hostingView = NSHostingView(
+        hostingView = ClickThroughHostingView(
             rootView: IslandContainerView(
                 model: model,
                 environment: environment,
@@ -137,6 +149,10 @@ final class NotchPanelController {
     /// reactively from the SwiftUI container's `onPresentationChange`.
     func show() {
         installObservers()
+        // Establish the FIXED frame (and a seeded hit-test rect) up front, once, rather than
+        // waiting for the first presentation change — the frame no longer depends on it.
+        refreshNotchEnvironment()
+        reanchor()
         // Drive the initial state explicitly (idle -> hidden) so we don't depend on SwiftUI
         // `onAppear` timing before the panel is ever ordered in.
         applyPresentation(model.presentation)
@@ -150,16 +166,17 @@ final class NotchPanelController {
     }
 
     /// Show or hide the panel based on presentation. `.hidden` -> `orderOut` (island disappears
-    /// entirely, e.g. after Stop -> saved). `.expanded` / `.collapsed` -> re-anchor top-center of
-    /// the active screen and `orderFrontRegardless()` (never `makeKey*`, so the user's
-    /// frontmost app keeps focus).
+    /// entirely, e.g. after Stop -> saved). `.expanded` / `.collapsed` -> `orderFrontRegardless()`
+    /// (never `makeKey*`, so the user's frontmost app keeps focus). The panel's FRAME is no
+    /// longer touched here — it is fixed (`reanchor()` only runs from `show()` and on screen-
+    /// parameter changes) so a presentation change can never race a `setFrame` against the
+    /// SwiftUI spring.
     private func applyPresentation(_ presentation: IslandPresentation) {
         switch presentation {
         case .hidden:
             panel.orderOut(nil)
         case .expanded, .collapsed:
             refreshNotchEnvironment()
-            reanchor()
             panel.orderFrontRegardless()
         }
     }
@@ -207,8 +224,9 @@ final class NotchPanelController {
     }
 
     /// Called by the SwiftUI island whenever its rendered size changes (the collapsed <->
-    /// expanded morph). We resize + re-anchor the panel to follow so the click region stays
-    /// tight to the visible island.
+    /// expanded morph). The panel's FRAME no longer follows this (see `reanchor()`) — only the
+    /// hit-test `activeRect` does, so clicks stay tight to the visible island without ever
+    /// resizing the window mid-animation.
     private func islandDidResize(to size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
         // Ignore sub-pixel churn.
@@ -217,24 +235,55 @@ final class NotchPanelController {
             return
         }
         currentContentSize = size
-        reanchor()
+        updateActiveRect()
     }
 
-    /// Re-position (and size) the panel top-center of the PRIMARY screen using the last known
-    /// content size. We use its full `.frame` (NOT `.visibleFrame`) so the island hugs the very
-    /// top edge, over the menu bar.
+    /// Re-position the panel top-center of the PRIMARY screen with a FIXED frame
+    /// (`IslandGeometry.fixedPanelFrame`) sized for the island's maximum content. Called ONLY on
+    /// construction (`show()`) and on `didChangeScreenParametersNotification` — NEVER per content
+    /// resize (`islandDidResize` above only updates the hit-test rect). This is the structural
+    /// fix for the expand-animation top-gap artifact: the panel's frame now depends solely on
+    /// screen parameters, so it can never race a `setFrame` against the SwiftUI spring mid-morph.
+    /// We use the screen's full `.frame` (NOT `.visibleFrame`) so the island hugs the very top
+    /// edge, over the menu bar.
     private func reanchor() {
         guard let screen = primaryScreen else { return }
-        let frame = IslandGeometry.islandFrame(
-            inScreen: screen.frame,
-            contentSize: currentContentSize
-        )
-        // Snap to whole backing pixels: SwiftUI reports fractional content sizes, and a
-        // fractional panel edge antialiases against whatever is behind it — at the top seam
-        // that reads as a hairline "gap" with the physical notch. Aligning outward keeps the
-        // island covering at least its requested rect.
+        let frame = IslandGeometry.fixedPanelFrame(inScreen: screen.frame)
+        // Snap to whole backing pixels: a fractional panel edge antialiases against whatever is
+        // behind it — at the top seam that reads as a hairline "gap" with the physical notch.
+        // Aligning outward keeps the panel covering at least its requested rect.
         let aligned = panel.backingAlignedRect(frame, options: .alignAllEdgesOutward)
         panel.setFrame(aligned, display: true)
+        updateActiveRect()
+    }
+
+    /// Recomputes the hosting view's hit-test `activeRect` from the last-reported SwiftUI content
+    /// size — the panel is now much bigger than the visible island for most of its life
+    /// (`IslandGeometry.fixedPanelFrame` sizes it to the content CEILING, not the live size), so
+    /// only this rect, not the panel's frame, tracks the collapsed <-> expanded morph.
+    private func updateActiveRect() {
+        let bounds = hostingView.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+
+        let width = currentContentSize.width
+        // The reported content size has `topBleed` already subtracted (`IslandContainerView
+        // .visibleSize(of:)`) — the actual rendered (and thus hit-testable) island includes that
+        // band back, since it's painted as part of the same shape fill.
+        let renderedHeight = min(currentContentSize.height + IslandGeometry.topBleed, bounds.height)
+
+        // The island is TOP-aligned within the panel
+        // (`.frame(maxWidth:.infinity, maxHeight:.infinity, alignment:.top)`), i.e. its footprint
+        // sits at the panel's visual top regardless of `NSHostingView`'s flip direction — handle
+        // both explicitly rather than assume one.
+        let topY: CGFloat = hostingView.isFlipped ? 0 : max(0, bounds.height - renderedHeight)
+
+        let rect = CGRect(
+            x: bounds.midX - width / 2.0,
+            y: topY,
+            width: width,
+            height: renderedHeight
+        )
+        hostingView.activeRect = rect.insetBy(dx: -Self.hitTestSlack, dy: -Self.hitTestSlack)
     }
 
     /// Read the PRIMARY screen's physical notch (if any) into the chrome environment so the

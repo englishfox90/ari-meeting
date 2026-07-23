@@ -284,25 +284,26 @@ struct RecallEngineTests {
         }
     }
 
-    // MARK: - 7. No-match messages, scoped by meeting / series / global (← `shell.rs:389-395`)
+    // MARK: - 7. LLM-first: an empty retrieval still runs the model (retrieve-augment-always).
+    // The model always answers — conversationally when nothing matched — instead of the old hard
+    // `noSavedMatch` gate. Sources stay empty (DB-built), preserving never-invent-citations.
 
-    @Test("A meeting with no transcript or summary throws the meeting-scoped no-match message")
-    func meetingScopedNoMatchThrows() async throws {
+    @Test("A meeting with no transcript still runs the model with no sources (no hard gate)")
+    func meetingScopedEmptyStillAnswers() async throws {
         let db = try AppDatabase.makeInMemory()
         let meeting = makeMeeting(id: "empty-meeting")
         try await db.meetings.upsert(meeting)
-        let engine = makeEngine(db, client: RecordingLLMClient(cannedResponse: "n/a"))
+        let client = RecordingLLMClient(cannedResponse: "I don't see a transcript for this meeting yet.")
+        let engine = makeEngine(db, client: client)
 
-        do {
-            _ = try await engine.answerMeetingsLocally(question: "Anything?", meetingId: meeting.id)
-            Issue.record("expected .noSavedMatch")
-        } catch let RecallEngineError.noSavedMatch(message) {
-            #expect(message.contains("This meeting has no saved transcript"))
-        }
+        let response = try await engine.answerMeetingsLocally(question: "Anything?", meetingId: meeting.id)
+        #expect(response.answer == "I don't see a transcript for this meeting yet.")
+        #expect(response.sources.isEmpty)
+        #expect(await client.generateCallCount == 1)
     }
 
-    @Test("A series with no member meetings throws the series-scoped no-match message")
-    func seriesScopedNoMatchThrows() async throws {
+    @Test("A series with no member meetings still runs the model with no sources")
+    func seriesScopedEmptyStillAnswers() async throws {
         let db = try AppDatabase.makeInMemory()
         let series = Series(
             id: SeriesID("series-empty"),
@@ -311,27 +312,25 @@ struct RecallEngineTests {
             updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
         try await db.series.upsert(series)
-        let engine = makeEngine(db, client: RecordingLLMClient(cannedResponse: "n/a"))
+        let client = RecordingLLMClient(cannedResponse: "Nothing saved in this series yet.")
+        let engine = makeEngine(db, client: client)
 
-        do {
-            _ = try await engine.answerMeetingsLocally(question: "Anything?", seriesId: series.id)
-            Issue.record("expected .noSavedMatch")
-        } catch let RecallEngineError.noSavedMatch(message) {
-            #expect(message == "No saved local transcript in this series matched that question.")
-        }
+        let response = try await engine.answerMeetingsLocally(question: "Anything?", seriesId: series.id)
+        #expect(response.answer == "Nothing saved in this series yet.")
+        #expect(response.sources.isEmpty)
+        #expect(await client.generateCallCount == 1)
     }
 
-    @Test("Global scope with nothing saved anywhere throws the global no-match message")
-    func globalNoMatchThrows() async throws {
+    @Test("Global scope with nothing saved still runs the model (a greeting gets a reply)")
+    func globalEmptyStillAnswers() async throws {
         let db = try AppDatabase.makeInMemory()
-        let engine = makeEngine(db, client: RecordingLLMClient(cannedResponse: "n/a"))
+        let client = RecordingLLMClient(cannedResponse: "Hi! I couldn't find anything in your saved meetings.")
+        let engine = makeEngine(db, client: client)
 
-        do {
-            _ = try await engine.answerMeetingsLocally(question: "Anything at all?")
-            Issue.record("expected .noSavedMatch")
-        } catch let RecallEngineError.noSavedMatch(message) {
-            #expect(message == "No saved local transcript matched that question.")
-        }
+        let response = try await engine.answerMeetingsLocally(question: "Hi")
+        #expect(response.answer == "Hi! I couldn't find anything in your saved meetings.")
+        #expect(response.sources.isEmpty)
+        #expect(await client.generateCallCount == 1)
     }
 
     // MARK: - 8. Series ledger injection (precedence: meeting > series > global, ← `shell.rs:350-364`)

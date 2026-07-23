@@ -204,15 +204,16 @@ struct IslandContainerView: View {
 
     var body: some View {
         content
-            // The island's overall SIZE transition drives the AppKit panel's frame
-            // (`onResize` -> `NotchPanelController.reanchor`), a DISCRETE resize following a
-            // CONTINUOUS on-screen spring — the two can drift by a frame. Deliberately no
-            // overshoot here: an overshooting height would report (and briefly position the
-            // panel at) a size past the final target, widening the window for any transient
-            // mismatch to show through as a sliver at the physical top edge during the bounce
-            // (docs/plans/notch-panel-absorption.md). This inner `.animation` is more deeply
-            // nested than the bouncy one below, so it wins for content's own geometry; the
-            // corner-radius spring below still gets its bounce.
+            // The island's overall SIZE transition drives ONLY the AppKit host's hit-test rect
+            // now (`onResize` -> `NotchPanelController.updateActiveRect`) — the panel's own FRAME
+            // is fixed (`IslandGeometry.fixedPanelFrame`) and never resizes to follow this
+            // anymore, closing the class of bug where a discrete `setFrame` raced this
+            // CONTINUOUS spring and could show through as a sliver at the top edge mid-morph
+            // (docs/plans/notch-panel-absorption.md). Deliberately no overshoot here regardless:
+            // an overshooting height still reads as the island briefly detaching from its final
+            // size. This inner `.animation` is more deeply nested than the bouncy one below, so it
+            // wins for content's own geometry; the corner-radius spring below still gets its
+            // bounce.
             .animation(.spring(response: 0.34, dampingFraction: 1.0), value: presentation)
             // Top bleed: the extra headroom the host panel reserves ABOVE the physical screen
             // edge (`IslandGeometry.topBleed`) is padded in here and drawn by the SAME
