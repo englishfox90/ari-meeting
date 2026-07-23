@@ -1,40 +1,48 @@
 //
-//  SchemaMigrator.swift — the `DatabaseMigrator` for the AriKit store (plan §6).
+//  SchemaMigrator.swift — the `DatabaseMigrator` for the AriKit store (plan §6;
+//  docs/plans/robust-migration-and-backup.md).
 //
 //  A fresh Swift migration history — NOT a port of the Rust engine's `_sqlx_migrations`. One
 //  `v1_baseline` migration creates every table in its final shape; every later schema change is a
 //  NEW registered migration, never an edit to `v1_baseline` after it ships.
 //
-//  ⚠️ `v1_baseline` is STILL BEING BUILT INCREMENTALLY (plan §10 slice-1 findings): because it
-//  has not shipped/been released anywhere, later slices extend this same migration directly
-//  rather than opening `v2_...`. Slice 2 (plan §10 steps 3–5) added `summary`, `meetingNote`,
-//  `person`, `profileFact`, and `profileFactSource` to the foundation slice's
-//  `meeting`/`speaker`/`speakerSegment`/`transcript`. Slice 3 (plan §10 step 6) adds §4.7
-//  (`series`+`seriesLedger`+`seriesMember`) and §4.8 (`calendarEvent`+`calendarSyncSetting`).
-//  Recall Slice 2 (docs/plans/arikit-recall-slice2.md §4) appends `recallChunk`,
-//  `recallIndexState`, `recallFts` (FTS5), and the schema-only `askConversation`/`askMessage`.
-//  `docs/plans/ari-ask-ui.md` Phase 0 later adds `askConversation.seriesId` in place (same
-//  extend-in-place policy, table still unshipped).
+//  ⚠️ `v1_baseline` IS NOW FROZEN (2026-07-23, docs/plans/robust-migration-and-backup.md). Real
+//  user data exists against this exact baseline (22 meetings, 3765 transcripts, hand-repaired
+//  after an incident — see that plan's §2). It previously carried a "still being built
+//  incrementally, extend in place" policy; that policy is RETIRED. Editing `v1_baseline` — adding,
+//  removing, or retyping ANY column/table/index — is now prohibited. Every future schema change is
+//  a NEW `migrator.registerMigration("v2_<desc>")`/`v3_...` block using additive-only DDL
+//  (`ALTER TABLE ... ADD COLUMN`, `CREATE TABLE`, `CREATE INDEX`) — see that plan's §5 Layer 1 for
+//  the shape and constraints (nullable/defaulted columns only; a destructive change needs an
+//  explicit data-migration path + sign-off per the `sqlite-schema` skill).
 //
-//  ⚠️ Table order is now parent-before-child throughout, per the slice-1 finding: `person` is
-//  declared BEFORE `speaker` so `speaker.personId REFERENCES person(id)` can be inline from the
-//  start (SQLite validates a FK's parent table exists at `CREATE TABLE` time under
+//  The table order below is parent-before-child throughout (unchanged, historical rationale kept):
+//  `person` is declared BEFORE `speaker` so `speaker.personId REFERENCES person(id)` can be inline
+//  from the start (SQLite validates a FK's parent table exists at `CREATE TABLE` time under
 //  `PRAGMA foreign_keys = ON` — a forward reference fails migration outright, "no such table:
-//  person"). This resolves the foundation slice's `speaker.personId` deferred-FK gap: the column
-//  now carries `REFERENCES person(id) ON DELETE SET NULL` inline, matching §4.3.
+//  person").
+//
+//  ⚠️ `eraseDatabaseOnSchemaChange` REMOVED from the default path (2026-07-23 incident fix): this
+//  GRDB flag drops + recreates the WHOLE database on any schema mismatch — with NO thrown error —
+//  which is exactly the mechanism that silently wiped a populated production DB after an in-place
+//  `v1_baseline` edit. It is now an explicit, off-by-default parameter
+//  (`migrator(eraseOnSchemaChange:)`) threaded from `AppDatabase.makeShared`/`makeInMemory`, which
+//  in turn is only ever set `true` via the app-layer `ARI_RESET_STORE=1` opt-in
+//  (`Ari/App/AppEnvironment.swift`) — never automatically, never in a normal launch. With it off, a
+//  genuine schema mismatch surfaces as an honest SQLite error out of the migrator (No-Fake-State),
+//  not a silent wipe.
 //
 import Foundation
 import GRDB
 
 enum SchemaMigrator {
-    static var migrator: DatabaseMigrator {
+    /// - Parameter eraseOnSchemaChange: deliberately OFF by default. `true` DROPS AND RECREATES
+    ///   the database on any schema mismatch — the exact mechanism that wiped 22 meetings in the
+    ///   2026-07-23 incident. Only ever enabled via the explicit `ARI_RESET_STORE` opt-in read in
+    ///   `AppEnvironment.bootstrap()`, never in normal launch.
+    static func migrator(eraseOnSchemaChange: Bool = false) -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
-
-        #if DEBUG
-            // DEBUG-only convenience: drops + recreates the database on any schema mismatch.
-            // Never enabled in a release build — it would silently destroy production data.
-            migrator.eraseDatabaseOnSchemaChange = true
-        #endif
+        migrator.eraseDatabaseOnSchemaChange = eraseOnSchemaChange
 
         migrator.registerMigration("v1_baseline") { db in
             try db.create(table: "meeting") { t in

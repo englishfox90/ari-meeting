@@ -45,7 +45,7 @@ private func onDeleteActions(
 struct RecallIndexSchemaFidelityTests {
     private func migratedQueue() throws -> DatabaseQueue {
         let queue = try DatabaseQueue()
-        try SchemaMigrator.migrator.migrate(queue)
+        try SchemaMigrator.migrator().migrate(queue)
         return queue
     }
 

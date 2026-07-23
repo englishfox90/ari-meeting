@@ -9,6 +9,16 @@
 //  the frozen Tauri app's data dir (`com.meetily.ai`). The repository-backed screens (S6) then
 //  render real meetings. The legacy dir is only ever read — never written, never deleted.
 //
+//  Migration safety, Layer 3 (docs/plans/robust-migration-and-backup.md §5): immediately before
+//  `AppDatabase.makeShared` opens the Store, `bootstrap()` runs a best-effort pre-migration
+//  snapshot via `StoreBackup` (`VACUUM INTO`, off the main actor) into a rolling 3-day
+//  `backups/` directory sibling to `ari.sqlite`. Skipped when the DB is absent (fresh install) or
+//  empty (nothing to protect — never snapshot/retain an empty DB). A failure here is logged and
+//  swallowed; it must never block launch or itself cause a wipe. `ARI_RESET_STORE=1` in the
+//  process environment is the ONLY sanctioned way to pass `eraseDatabaseOnSchemaChange: true` to
+//  `makeShared` — set it in the Xcode scheme's environment for a deliberate clean-slate dev reset;
+//  it must never be set for a normal launch.
+//
 import AppKit
 import AriCapture
 import AriKit
@@ -17,6 +27,7 @@ import AriKitEngineMLX
 import AriViewModels
 import Foundation
 import Observation
+import os
 import SwiftUI
 
 @MainActor
@@ -131,6 +142,8 @@ final class AppEnvironment {
         case meeting(MeetingID)
     }
 
+    private static let logger = Logger(subsystem: "com.arivo.ari", category: "store.backup")
+
     /// Bundle identifier decided 2026-07-20 (arikit-native-shell.md §9): the fresh Swift app.
     static let bundleIdentifier = "com.arivo.ari"
 
@@ -142,7 +155,19 @@ final class AppEnvironment {
         guard database == nil else { return }
         do {
             let url = try Self.databaseURL()
-            let db = try AppDatabase.makeShared(at: url)
+
+            // Layer 3 (docs/plans/robust-migration-and-backup.md §5): best-effort pre-migration
+            // snapshot, strictly BEFORE `AppDatabase.makeShared` opens the pool — so at no instant
+            // do two writers/live connections coexist on `ari.sqlite` (single-owner, principle 3
+            // preserved by sequencing, not by a second simultaneous owner). Never fatal: any
+            // failure here is logged and swallowed, falling through to the real store open.
+            await Self.runPreMigrationBackup(sourceURL: url)
+
+            // Layer 2 (same plan, §5): `ARI_RESET_STORE=1` is the only sanctioned way to pass
+            // `eraseDatabaseOnSchemaChange: true` — a deliberate dev-only clean-slate opt-in, never
+            // set in a normal launch. Read here (the composition root), never inside the Store.
+            let allowReset = ProcessInfo.processInfo.environment["ARI_RESET_STORE"] == "1"
+            let db = try AppDatabase.makeShared(at: url, eraseDatabaseOnSchemaChange: allowReset)
             database = db
 
             // First-run import: gated on a persisted completion MARKER, not on row count. A
@@ -490,6 +515,103 @@ final class AppEnvironment {
         let dir = support.appendingPathComponent(bundleIdentifier, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("ari.sqlite", isDirectory: false)
+    }
+
+    /// `~/Library/Application Support/com.arivo.ari/backups`, creating the directory if needed
+    /// (docs/plans/robust-migration-and-backup.md §5 — a new sibling of `ari.sqlite`, resolved
+    /// here alongside `databaseURL()`/`recordingsRootURL()`; `StoreBackup` never touches
+    /// FileManager itself).
+    private static func backupsDirURL() throws -> URL {
+        let support = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let dir = support
+            .appendingPathComponent(bundleIdentifier, isDirectory: true)
+            .appendingPathComponent("backups", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Layer 3 (docs/plans/robust-migration-and-backup.md §5): snapshot `ari.sqlite` to a
+    /// uniquely-timestamped file under `backups/` before the migrator can run, then prune to a
+    /// rolling 3-day retention window. Best-effort and non-fatal by construction — every step is
+    /// wrapped so a failure here logs and simply skips straight through to `makeShared`; it must
+    /// never block launch or itself risk data loss.
+    private static func runPreMigrationBackup(sourceURL: URL) async {
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            // Genuine fresh first launch — nothing to protect.
+            return
+        }
+
+        let meetingCount: Int
+        do {
+            meetingCount = try await Task.detached {
+                try StoreBackup.meetingCount(at: sourceURL)
+            }.value
+        } catch {
+            logger.error("pre-migration backup: could not read meetingCount, skipping: \(String(describing: error), privacy: .public)")
+            return
+        }
+        guard meetingCount > 0 else {
+            // Empty/already-wiped DB — never snapshot or retain an empty DB (plan §5 step 2: this
+            // single guard is what keeps every file ever written into `backups/` non-empty).
+            return
+        }
+
+        do {
+            let dir = try backupsDirURL()
+            let formatter = DateFormatter()
+            // Fixed-format formatter → pin POSIX locale so a non-Gregorian/non-Latin-digit user
+            // locale can't inject unexpected years or digits into the backup filename.
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            formatter.timeZone = .current
+            let destination = dir.appendingPathComponent("ari-\(formatter.string(from: Date())).sqlite")
+
+            let capturedCount = try await Task.detached {
+                try StoreBackup.snapshot(from: sourceURL, to: destination)
+            }.value
+
+            if capturedCount == 0 {
+                // Defensive verify: a snapshot that somehow captured nothing is worse than none —
+                // never leave an empty file in the backups directory.
+                try? FileManager.default.removeItem(at: destination)
+                logger.error("pre-migration backup: snapshot captured 0 meetings, discarding")
+                return
+            }
+
+            try pruneOldBackups(in: dir)
+        } catch {
+            logger.error("pre-migration backup failed (non-fatal, continuing to open the store): \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Enumerates `backups/`, asks the pure `StoreBackup.snapshotsToPrune` policy which files are
+    /// past the 3-day rolling retention window (always keeping the single most-recent
+    /// regardless of age), and deletes those via FileManager — the only place in this flow that
+    /// touches the filesystem for enumeration/deletion (`StoreBackup` itself never does).
+    private static func pruneOldBackups(in dir: URL) throws {
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )
+        let existing: [(url: URL, date: Date)] = entries.compactMap { url in
+            guard let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            else { return nil }
+            return (url, date)
+        }
+        let toPrune = StoreBackup.snapshotsToPrune(
+            existing: existing,
+            now: Date(),
+            keepWithin: 3 * 24 * 3600
+        )
+        for url in toPrune {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     /// `~/Library/Application Support/com.arivo.ari/recordings`, creating the directory if
