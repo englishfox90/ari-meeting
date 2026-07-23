@@ -19,9 +19,12 @@ struct MeetingsListView: View {
     @State private var deleteTarget: Meeting?
     @State private var actionError: String?
 
-    init(database: AppDatabase) {
+    init(database: AppDatabase, recallIndexTrigger: RecallIndexTrigger? = nil) {
         self.database = database
-        _viewModel = State(initialValue: MeetingsListViewModel(database: database))
+        _viewModel = State(initialValue: MeetingsListViewModel(
+            database: database,
+            recallIndexTrigger: recallIndexTrigger
+        ))
     }
 
     var body: some View {

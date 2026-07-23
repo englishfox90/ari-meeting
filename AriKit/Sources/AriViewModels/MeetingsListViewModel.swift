@@ -24,9 +24,14 @@ public final class MeetingsListViewModel {
 
     private let database: AppDatabase
     private var observationTask: Task<Void, Never>?
+    /// Fires the recall-index purge on delete (docs/plans/ask-meetings-tools-and-cards.md §3.1.1)
+    /// — `nil` in contexts that don't wire recall indexing (e.g. narrower tests), in which case a
+    /// delete simply doesn't purge anything (the meeting is still tombstoned either way).
+    private let recallIndexTrigger: RecallIndexTrigger?
 
-    public init(database: AppDatabase) {
+    public init(database: AppDatabase, recallIndexTrigger: RecallIndexTrigger? = nil) {
         self.database = database
+        self.recallIndexTrigger = recallIndexTrigger
     }
 
     /// Loads the initial list (honest `.failed` on a real error), then starts consuming the
@@ -67,5 +72,8 @@ public final class MeetingsListViewModel {
     /// a real write failure so the caller can surface it.
     public func delete(_ meeting: Meeting) async throws {
         try await database.meetings.softDelete(meeting.id, at: Date())
+        // Fire-and-forget purge of any indexed recall chunks (§3.1.1) — never blocks the delete,
+        // never surfaces its own failure to the caller.
+        recallIndexTrigger?.purgeOnDelete(meeting.id)
     }
 }

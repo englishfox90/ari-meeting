@@ -102,6 +102,11 @@ final class AppEnvironment {
     /// separate property — it's already `db.askConversations`.
     private(set) var recallEngine: RecallEngine?
 
+    /// The single, gated recall-index trigger (docs/plans/ask-meetings-tools-and-cards.md §3.1) —
+    /// wired into `summaryService` (index-after-summary) and handed to the meeting list/detail
+    /// view models (purge-on-delete). `nil` until `bootstrap()` succeeds.
+    private(set) var recallIndexTrigger: RecallIndexTrigger?
+
     /// The post-recording pipeline (docs/plans/swift-meeting-generation-flow.md, Track 2) —
     /// speaker identification → template selection → summary, mount-independent like
     /// `recordingSession` so it survives navigation away from the recording page. `nil` until
@@ -291,12 +296,31 @@ final class AppEnvironment {
             let clientFactory: @Sendable (ProviderConfig) throws -> any LLMClient = {
                 try ProviderFactory.make(config: $0, mlxClientProvider: mlxClientProvider)
             }
+
+            // docs/plans/ask-meetings-tools-and-cards.md §3.1: the single, gated recall-index
+            // trigger. Constructed BEFORE `summaryService` so it can be threaded into it directly
+            // — `indexAfterSummary` is the ONLY place indexing fires outside the manual "Rebuild
+            // index" Settings button. `embedder` is also handed to `hybridSearch` below (built
+            // just after) — one embedder instance, not two independently-warmed caches.
+            let embedder = AppleContextualEmbedder()
+            let indexer = Indexer(
+                recallIndex: db.recallIndex,
+                transcripts: db.transcripts,
+                meetings: db.meetings,
+                summaries: db.summaries,
+                embedder: embedder,
+                coordinator: ReindexCoordinator()
+            )
+            let indexTrigger = RecallIndexTrigger(indexer: indexer, recallIndex: db.recallIndex)
+            recallIndexTrigger = indexTrigger
+
             let summaryService = SummaryService(
                 db: db,
                 settings: settingsReader,
                 secrets: summarySecrets,
                 cancellation: TaskCancellationCoordinator(),
-                clientFactory: clientFactory
+                clientFactory: clientFactory,
+                recallIndexTrigger: indexTrigger
             )
             self.summaryService = summaryService
             let ledgerReducer = SeriesLedgerReducer(
@@ -310,8 +334,8 @@ final class AppEnvironment {
             // docs/plans/ari-ask-ui.md §6: the "Ask" recall engine. Reuses the SAME MLX-aware
             // `clientFactory` above — the default `RecallEngine.init` factory omits MLX and a
             // `.mlx` config would throw "MLX client not registered", exactly like the summary
-            // stack's own note above.
-            let embedder = AppleContextualEmbedder()
+            // stack's own note above. `embedder` is the SAME instance built above for `indexer`
+            // (ask-meetings-tools-and-cards.md §3.1) — one embedder, one warmed cache.
             let hybridSearch = HybridSearch(
                 recallIndex: db.recallIndex,
                 meetings: db.meetings,

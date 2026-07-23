@@ -69,6 +69,11 @@ public struct SummaryService: Sendable {
     private let secrets: any SecretsReading
     private let cancellation: TaskCancellationCoordinator
     private let clientFactory: @Sendable (ProviderConfig) throws -> any LLMClient
+    /// The single, gated recall-index trigger (docs/plans/ask-meetings-tools-and-cards.md §3.1) —
+    /// fired exactly once per summary save, immediately after the summary upsert succeeds. `nil`
+    /// in contexts that don't wire recall indexing at all (e.g. a narrower test harness); the app
+    /// composition root (`AppEnvironment`) always supplies one.
+    private let recallIndexTrigger: RecallIndexTrigger?
 
     public init(
         db: AppDatabase,
@@ -77,13 +82,15 @@ public struct SummaryService: Sendable {
         cancellation: TaskCancellationCoordinator,
         clientFactory: @escaping @Sendable (ProviderConfig) throws -> any LLMClient = {
             try ProviderFactory.make(config: $0)
-        }
+        },
+        recallIndexTrigger: RecallIndexTrigger? = nil
     ) {
         self.db = db
         self.settings = settings
         self.secrets = secrets
         self.cancellation = cancellation
         self.clientFactory = clientFactory
+        self.recallIndexTrigger = recallIndexTrigger
     }
 
     /// ← `SummaryService::cancel_summary`. Returns `true` if an in-flight generation for
@@ -243,6 +250,12 @@ public struct SummaryService: Sendable {
             updatedAt: now
         )
         try await db.summaries.upsert(summary)
+
+        // The ONLY trigger point for recall indexing (docs/plans/ask-meetings-tools-and-cards.md
+        // §3.1) — fired immediately after the summary upsert succeeds, never before. Fire-and-
+        // forget: `indexAfterSummary` spawns its own detached `Task` and never blocks this method,
+        // since indexing does embedding inference and summary generation is itself a hot path.
+        recallIndexTrigger?.indexAfterSummary(request.meetingId)
 
         // Best-effort meeting title-rename + provenance (← `update_summary_provenance`,
         // `service.rs:632-645`): a failure here must not discard the already-persisted summary

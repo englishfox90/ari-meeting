@@ -475,6 +475,7 @@ public final class SettingsViewModel {
             recallIndex: database.recallIndex,
             transcripts: database.transcripts,
             meetings: database.meetings,
+            summaries: database.summaries,
             embedder: AppleContextualEmbedder(),
             coordinator: reindexCoordinator
         )

@@ -19,6 +19,7 @@ public struct Indexer: Sendable {
     private let recallIndex: RecallIndexRepository
     private let transcripts: TranscriptRepository
     private let meetings: MeetingRepository
+    private let summaries: SummaryRepository
     private let embedder: any RecallEmbedder
     private let coordinator: ReindexCoordinator
 
@@ -26,12 +27,14 @@ public struct Indexer: Sendable {
         recallIndex: RecallIndexRepository,
         transcripts: TranscriptRepository,
         meetings: MeetingRepository,
+        summaries: SummaryRepository,
         embedder: any RecallEmbedder,
         coordinator: ReindexCoordinator
     ) {
         self.recallIndex = recallIndex
         self.transcripts = transcripts
         self.meetings = meetings
+        self.summaries = summaries
         self.embedder = embedder
         self.coordinator = coordinator
     }
@@ -48,21 +51,29 @@ public struct Indexer: Sendable {
         }
     }
 
-    /// ← `index_meeting_inner` (indexer.rs:39-135).
+    /// ← `index_meeting_inner` (indexer.rs:39-135), extended by plan
+    /// `ask-meetings-tools-and-cards.md` §3.2 (Bug B fix): the summary body is now a SECOND chunk
+    /// stream, tagged `sourceKind == .summary` so a summary-only fact becomes searchable even
+    /// though it never appears verbatim in the raw transcript. The content hash covers BOTH texts,
+    /// so a newly-generated/edited summary re-triggers indexing even when the transcript itself is
+    /// unchanged.
     private func indexMeetingInner(_ meetingId: MeetingID) async throws {
         let transcriptRows = try await transcripts.forMeeting(meetingId)
+        let summary = try await summaries.forMeeting(meetingId)
 
-        let joined = transcriptRows
+        let joinedTranscript = transcriptRows
             .map { $0.transcript.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
-        if joined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // No transcript text (e.g. summary-only meeting) — clear any stale index.
+        let summaryText = summary?.bodyMarkdown.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if joinedTranscript.isEmpty, summaryText.isEmpty {
+            // Nothing to index at all — clear any stale index.
             try? await recallIndex.deleteMeeting(meetingId)
             return
         }
 
-        let contentHash = Self.fnv1aHex(joined)
+        let contentHash = Self.fnv1aHex(joinedTranscript + "\n---\n" + summaryText)
         let wantModel = embedder.modelTag
 
         // Idempotency: skip only when unchanged AND already fully embedded with this model. A
@@ -76,16 +87,23 @@ public struct Indexer: Sendable {
             return
         }
 
-        let drafts = Recall.chunkTranscripts(transcriptRows)
-        if drafts.isEmpty {
+        let transcriptDrafts = Recall.chunkTranscripts(transcriptRows)
+        let summaryDrafts = summaryText.isEmpty ? [] : Recall.chunkSummary(summaryText)
+        if transcriptDrafts.isEmpty, summaryDrafts.isEmpty {
             try? await recallIndex.deleteMeeting(meetingId)
             return
         }
 
-        // Embed all chunks in one batch with the injected backend. Best-effort: any failure
-        // (embedder unavailable, or a mismatched count) falls back to lexical-only for the whole
-        // meeting — never a partial or fabricated set of vectors.
-        let texts = drafts.map(\.text)
+        // Tag each draft with the stream it came from BEFORE embedding, so the two arrays can be
+        // combined into one `embedder.embed(texts)` call (embedding-model consistency, fewer
+        // round trips) and split back apart afterward.
+        let taggedDrafts: [(draft: ChunkDraft, sourceKind: RecallChunkSourceKind)] =
+            transcriptDrafts.map { ($0, .transcript) } + summaryDrafts.map { ($0, .summary) }
+
+        // Embed all chunks (transcript + summary together) in one batch with the injected backend.
+        // Best-effort: any failure (embedder unavailable, or a mismatched count) falls back to
+        // lexical-only for the whole meeting — never a partial or fabricated set of vectors.
+        let texts = taggedDrafts.map(\.draft.text)
         let embeddings: [[Float]]?
         do {
             let vectors = try await embedder.embed(texts)
@@ -105,8 +123,9 @@ public struct Indexer: Sendable {
         }
 
         var inputs: [RecallChunkInput] = []
-        inputs.reserveCapacity(drafts.count)
-        for (index, draft) in drafts.enumerated() {
+        inputs.reserveCapacity(taggedDrafts.count)
+        for (index, tagged) in taggedDrafts.enumerated() {
+            let draft = tagged.draft
             let embeddingBytes: Data?
             let dim: Int?
             if let vectors = embeddings {
@@ -126,7 +145,8 @@ public struct Indexer: Sendable {
                 embedding: embeddingBytes,
                 embeddingModel: dim != nil ? wantModel : nil,
                 dim: dim,
-                tokenEstimate: draft.tokenEstimate
+                tokenEstimate: draft.tokenEstimate,
+                sourceKind: tagged.sourceKind
             ))
         }
 

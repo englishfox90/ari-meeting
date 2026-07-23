@@ -74,7 +74,11 @@ struct RootSplitView: View {
             NavigationStack(path: $path) {
                 rootContent(database: database)
                     .navigationDestination(for: MeetingID.self) { meetingId in
-                        MeetingDetailView(database: database, meetingId: meetingId)
+                        MeetingDetailView(
+                            database: database,
+                            meetingId: meetingId,
+                            recallIndexTrigger: environment.recallIndexTrigger
+                        )
                     }
                     // The persistent live-capture pill (plan §4.4): visible from every section
                     // and pushed detail screen while recording — EXCEPT the recording page,
@@ -93,7 +97,8 @@ struct RootSplitView: View {
                         MeetingDetailView(
                             database: database,
                             meetingId: moment.meetingId,
-                            initialSeek: moment.seconds
+                            initialSeek: moment.seconds,
+                            recallIndexTrigger: environment.recallIndexTrigger
                         )
                     }
                     .navigationDestination(for: PersonID.self) { personId in
@@ -257,7 +262,7 @@ struct RootSplitView: View {
                 selection: $selectedSection
             )
         case .savedMeetings:
-            MeetingsListView(database: database)
+            MeetingsListView(database: database, recallIndexTrigger: environment.recallIndexTrigger)
         case .series:
             SeriesListView(database: database, onCreated: { path.append($0); askNavStack.append(.series($0)) })
         case .people:

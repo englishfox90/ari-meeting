@@ -24,6 +24,11 @@ struct RecallChunkRecord: Codable, FetchableRecord, PersistableRecord, Sendable 
     var dim: Int?
     var tokenEstimate: Int?
     var createdAt: String
+    /// Raw `RecallChunkSourceKind` string ("transcript"/"summary") — stored as plain `String`
+    /// (not the enum directly), matching this codebase's convention for GRDB-persisted enums
+    /// (see `ProfileFactRecord`'s `factKind`/`origin`/`status`). An unrecognized raw value
+    /// defaults to `.transcript`, matching the column's own `DEFAULT 'transcript'`.
+    var sourceKind: String
 }
 
 extension RecallChunkRecord {
@@ -40,6 +45,7 @@ extension RecallChunkRecord {
         dim = chunk.dim
         tokenEstimate = chunk.tokenEstimate
         self.createdAt = createdAt
+        sourceKind = chunk.sourceKind.rawValue
     }
 
     func asModel() -> RecallChunk {
@@ -55,7 +61,8 @@ extension RecallChunkRecord {
             embeddingModel: embeddingModel,
             dim: dim,
             tokenEstimate: tokenEstimate,
-            createdAt: createdAt
+            createdAt: createdAt,
+            sourceKind: RecallChunkSourceKind(rawValue: sourceKind) ?? .transcript
         )
     }
 }

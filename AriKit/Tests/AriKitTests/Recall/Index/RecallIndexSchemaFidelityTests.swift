@@ -91,7 +91,10 @@ struct RecallIndexSchemaFidelityTests {
             ExpectedColumn(name: "embeddingModel", type: "TEXT", notNull: false),
             ExpectedColumn(name: "dim", type: "INTEGER", notNull: false),
             ExpectedColumn(name: "tokenEstimate", type: "INTEGER", notNull: false),
-            ExpectedColumn(name: "createdAt", type: "TEXT", notNull: true)
+            ExpectedColumn(name: "createdAt", type: "TEXT", notNull: true),
+            // v2_recall_chunk_source_kind (ask-meetings-tools-and-cards.md §3.2/§7) — additive,
+            // NOT NULL DEFAULT 'transcript'.
+            ExpectedColumn(name: "sourceKind", type: "TEXT", notNull: true)
         ], table: "recallChunk")
     }
 

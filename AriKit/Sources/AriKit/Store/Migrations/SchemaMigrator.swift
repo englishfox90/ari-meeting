@@ -446,6 +446,17 @@ enum SchemaMigrator {
             }
         }
 
+        // v2 (docs/plans/ask-meetings-tools-and-cards.md §3.2/§7) — additive-only, `v1_baseline`
+        // stays frozen. Tags each `recallChunk` row with what text it was built from
+        // ("transcript" or "summary") so retrieval/presentation can tell them apart. Every
+        // existing row backfills to `'transcript'` — correct, since that's all `recallChunk` ever
+        // held before this migration.
+        migrator.registerMigration("v2_recall_chunk_source_kind") { db in
+            try db.alter(table: "recallChunk") { t in
+                t.add(column: "sourceKind", .text).notNull().defaults(to: "transcript")
+            }
+        }
+
         return migrator
     }
 }

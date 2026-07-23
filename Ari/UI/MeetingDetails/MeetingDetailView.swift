@@ -87,11 +87,19 @@ struct MeetingDetailView: View {
     /// via its own observation).
     @Environment(\.dismiss) private var dismiss
 
-    init(database: AppDatabase, meetingId: MeetingID, initialSeek: Double? = nil) {
+    init(
+        database: AppDatabase,
+        meetingId: MeetingID,
+        initialSeek: Double? = nil,
+        recallIndexTrigger: RecallIndexTrigger? = nil
+    ) {
         self.database = database
         self.meetingId = meetingId
         self.initialSeek = initialSeek
-        _viewModel = State(initialValue: MeetingDetailViewModel(database: database))
+        _viewModel = State(initialValue: MeetingDetailViewModel(
+            database: database,
+            recallIndexTrigger: recallIndexTrigger
+        ))
         _seriesViewModel = State(initialValue: AddToSeriesViewModel(database: database))
     }
 

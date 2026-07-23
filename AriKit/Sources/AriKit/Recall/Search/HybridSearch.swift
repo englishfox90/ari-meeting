@@ -141,9 +141,11 @@ public struct HybridSearch: Sendable {
             // Drop chunks whose parent meeting was soft-deleted (tombstoned): its metadata is
             // absent from `meetingMeta` (built from `meetings.all()`, which excludes deleted rows),
             // so it would otherwise surface as an "Untitled meeting" with no date and leak deleted
-            // content into Ask. The recall index is NOT purged on delete (the tombstone is
-            // recoverable), so the tombstone must be respected here at query time — matching the
-            // meetings list, `observeAll()`, and the keyword-fallback's `WHERE m.isDeleted = 0`.
+            // content into Ask. Delete now also purges the index (`RecallIndexTrigger.purgeOnDelete`),
+            // but that purge is a fire-and-forget detached task, so a race window exists between the
+            // tombstone write and the purge completing — this query-time filter is the defense-in-depth
+            // backstop that closes that window, matching the meetings list, `observeAll()`, and the
+            // keyword-fallback's `WHERE m.isDeleted = 0`.
             guard let meetingId = chunkMeeting[chunkId], let meta = meetingMeta[meetingId] else {
                 return nil
             }
@@ -182,11 +184,17 @@ public struct HybridSearch: Sendable {
         for (chunkId, _) in scoredChunks {
             guard let chunk = chunkById[chunkId] else { continue }
             let meta = meetingMeta[chunk.meetingId]
+            // A summary chunk never carries a real transcript timestamp — stamp it explicitly
+            // rather than relying on `timestampLabel` happening to be `nil` (plan
+            // ask-meetings-tools-and-cards.md §3.2).
+            let timestamp: String = chunk.sourceKind == .summary
+                ? "not available"
+                : chunk.timestampLabel ?? "not available"
             results.append(TranscriptSearchResult(
                 id: chunk.meetingId.rawValue,
                 title: meta?.title ?? "Untitled meeting",
                 matchContext: chunk.chunkText,
-                timestamp: chunk.timestampLabel ?? "not available",
+                timestamp: timestamp,
                 meetingDate: meta?.date,
                 summary: summaryByMeeting[chunk.meetingId] ?? nil
             ))
