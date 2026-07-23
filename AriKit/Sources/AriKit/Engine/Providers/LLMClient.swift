@@ -154,4 +154,30 @@ public enum LLMError: Error, Sendable {
     /// MLX/FoundationModels (or any on-device backend) is not available on this device
     /// (No-Fake-State — the factory never substitutes a fake client for an unavailable one).
     case providerUnavailable(String)
+    /// The meeting has no transcript text — a benign outcome (a recording that captured no
+    /// speech), not a provider failure. Callers present it as an honest "nothing to summarize"
+    /// note rather than an error.
+    case nothingToSummarize
+}
+
+/// User-facing wording. Without this, `String(describing:)` at a UI call site renders the raw
+/// case — `notConfigured("This meeting has no transcript to summarize.")` — as if the app had
+/// leaked a crash log. Every case here reads as a sentence a person can act on.
+extension LLMError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .notConfigured(message):
+            message
+        case .loopbackViolation:
+            "The local model endpoint must be on this device. Point Ollama back at localhost in Settings."
+        case let .requestFailed(message):
+            message
+        case .cancelled:
+            "Summary generation was cancelled."
+        case let .providerUnavailable(message):
+            message
+        case .nothingToSummarize:
+            "No speech was captured in this recording, so there's nothing to summarize."
+        }
+    }
 }

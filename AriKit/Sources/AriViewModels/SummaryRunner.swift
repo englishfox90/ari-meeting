@@ -13,7 +13,7 @@
 //  the compiler-synthesized conformance needs no `@unchecked Sendable`/`nonisolated(unsafe)`.
 //
 //  No-Fake-State: `transcriptText` never fabricates a transcript — an empty result is honest
-//  ("nothing to summarize") and `generate` turns that into an explicit `LLMError.notConfigured`
+//  ("nothing to summarize") and `generate` turns that into an explicit `LLMError.nothingToSummarize`
 //  rather than asking the LLM to summarize nothing. `suggestTemplateID` never throws — it degrades
 //  to `TemplateSelector.defaultTemplateID` on any failure (no configured model, a bad provider
 //  config, a classifier error), matching `TemplateSelector.suggestTemplate`'s own "never blocks
@@ -125,9 +125,10 @@ public struct SummaryRunner: Sendable {
 
     /// Runs the full generate: assembles the transcript, resolves the configured provider/model,
     /// resolves (or auto-suggests, when `templateId == nil`) the template, and delegates
-    /// persistence to `SummaryService.processTranscript`. Throws `LLMError.notConfigured` when
-    /// there is nothing to summarize or no summary provider/model is configured — both honest,
-    /// actionable failures rather than a silently-empty summary.
+    /// persistence to `SummaryService.processTranscript`. Throws `LLMError.nothingToSummarize`
+    /// when the meeting has no transcript text (benign — a recording that captured no speech) and
+    /// `LLMError.notConfigured` when no summary provider/model is configured — both honest and
+    /// actionable, rather than a silently-empty summary.
     public func generate(
         meetingId: MeetingID,
         templateId: String?,
@@ -136,7 +137,7 @@ public struct SummaryRunner: Sendable {
     ) async throws -> Summary {
         let text = try await transcriptText(for: meetingId)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw LLMError.notConfigured("This meeting has no transcript to summarize.")
+            throw LLMError.nothingToSummarize
         }
         guard let modelConfig = try await settings.summaryModelConfig() else {
             throw LLMError.notConfigured("No summarization model is configured. Choose one in Settings.")

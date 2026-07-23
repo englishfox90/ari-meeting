@@ -205,6 +205,59 @@ struct MeetingProcessingCoordinatorTests {
         #expect(!message.isEmpty)
     }
 
+    @Test("an empty transcript resolves to .skipped with readable prose, not .failed")
+    func emptyTranscriptResolvesToSkipped() async {
+        let coordinator = makeCoordinator(
+            resolveAudioURL: { _ in nil },
+            generateSummary: { _, _ in throw LLMError.nothingToSummarize }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        guard case let .skipped(message) = coordinator.phase else {
+            Issue.record("expected .skipped, got \(coordinator.phase)")
+            return
+        }
+        // Never the raw enum case — the whole point of this path.
+        #expect(!message.contains("nothingToSummarize"))
+        #expect(message == "No speech was captured in this recording, so there's nothing to summarize.")
+    }
+
+    @Test("a failure message is prose, never the raw enum case")
+    func failureMessageIsProse() async {
+        let coordinator = makeCoordinator(
+            resolveAudioURL: { _ in nil },
+            generateSummary: { _, _ in throw LLMError.notConfigured("No summarization model is configured.") }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        guard case let .failed(message) = coordinator.phase else {
+            Issue.record("expected .failed, got \(coordinator.phase)")
+            return
+        }
+        #expect(message == "No summarization model is configured.")
+        #expect(!message.contains("notConfigured("))
+    }
+
+    @Test("a benign .skipped run does not block a later meeting's pipeline")
+    func skippedDoesNotBlockNextRun() async {
+        let summarySpy = CallSpy<Never>()
+        let coordinator = makeCoordinator(
+            resolveAudioURL: { _ in nil },
+            generateSummary: { _, _ in
+                await summarySpy.record()
+                if await summarySpy.callCount == 1 { throw LLMError.nothingToSummarize }
+            }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+        await coordinator.begin(meetingId: meetingId2)
+
+        #expect(coordinator.phase == .completed)
+        #expect(await summarySpy.callCount == 2)
+    }
+
     @Test("summary cancellation resolves to .idle, not .failed")
     func summaryCancellationResolvesToIdle() async {
         let coordinator = makeCoordinator(

@@ -144,10 +144,10 @@ public final class MeetingSummaryViewModel {
                 state = .idle
                 return nil
             }
-            state = .failed(String(describing: error))
+            state = .failed(UserFacingError.message(error))
             return nil
         } catch {
-            state = .failed(String(describing: error))
+            state = .failed(UserFacingError.message(error))
             return nil
         }
     }

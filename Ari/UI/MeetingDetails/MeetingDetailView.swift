@@ -488,7 +488,7 @@ struct MeetingDetailView: View {
             // one was recorded (decision 3) — otherwise nothing (the reloaded summary above is
             // the real signal that processing finished).
             coordinator.diarizationNote
-        case let .failed(message):
+        case let .skipped(message), let .failed(message):
             message
         case .idle:
             nil
@@ -512,7 +512,7 @@ struct MeetingDetailView: View {
         switch coordinator.phase {
         case .identifyingSpeakers, .selectingTemplate, .summarizing:
             return true
-        case .idle, .needsSpeakerCount, .completed, .failed:
+        case .idle, .needsSpeakerCount, .completed, .skipped, .failed:
             return false
         }
     }

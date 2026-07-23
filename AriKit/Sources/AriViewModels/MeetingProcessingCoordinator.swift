@@ -46,6 +46,11 @@ public final class MeetingProcessingCoordinator {
         case selectingTemplate
         case summarizing
         case completed
+        /// Terminal, benign: the pipeline finished without a summary for a reason that is not a
+        /// fault — today only "the recording captured no speech, so there is nothing to
+        /// summarize". Presented as a calm note, never as an error (a silent recording is a fact
+        /// about the room, not a bug the user should be alarmed by).
+        case skipped(String)
         case failed(String)
     }
 
@@ -129,13 +134,14 @@ public final class MeetingProcessingCoordinator {
 
     /// Starts the post-recording pipeline for `meetingId`. A no-op while a pipeline is ACTIVELY
     /// running for any meeting (`.identifyingSpeakers`/`.needsSpeakerCount`/`.selectingTemplate`/
-    /// `.summarizing`); proceeds — resetting all per-run state — from `.idle` or either terminal
-    /// state (`.completed`/`.failed`), so a prior meeting's finished run never blocks this one.
+    /// `.summarizing`); proceeds — resetting all per-run state — from `.idle` or any terminal
+    /// state (`.completed`/`.skipped`/`.failed`), so a prior meeting's finished run never blocks
+    /// this one.
     public func begin(meetingId: MeetingID) async {
         switch phase {
         case .identifyingSpeakers, .needsSpeakerCount, .selectingTemplate, .summarizing:
             return
-        case .idle, .completed, .failed:
+        case .idle, .completed, .skipped, .failed:
             break
         }
 
@@ -264,8 +270,8 @@ public final class MeetingProcessingCoordinator {
             continuation.finish()
             await consumer.value
             diarizationNote =
-                "Speaker identification didn't complete: \(String(describing: error)). " +
-                "Summary generated without speaker labels."
+                "Speaker identification didn't complete: \(UserFacingError.message(error)) " +
+                "The summary was generated without speaker labels."
         }
 
         await proceedToTemplateAndSummary(meetingId: meetingId)
@@ -299,8 +305,15 @@ public final class MeetingProcessingCoordinator {
             // A user-initiated cancel is not a failure (mirrors `MeetingSummaryViewModel.generate`).
             phase = .idle
             return
+        } catch LLMError.cancelled {
+            phase = .idle
+            return
+        } catch LLMError.nothingToSummarize {
+            // Benign, not a fault: the recording captured no speech. Terminal, calm, honest.
+            phase = .skipped(UserFacingError.message(LLMError.nothingToSummarize))
+            return
         } catch {
-            phase = .failed(String(describing: error))
+            phase = .failed(UserFacingError.message(error))
             return
         }
         let elapsed = clock.now - started

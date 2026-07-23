@@ -376,6 +376,8 @@ struct RecordingView: View {
                 .marginaliaTextStyle(.title2, in: scheme)
             Text(segmentCountLine)
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
             processingStatusSection(meetingId: meetingId)
             HStack(spacing: MarginaliaSpacing.md.value) {
                 Button("New recording") { session.reset() }
@@ -388,8 +390,14 @@ struct RecordingView: View {
         .padding(MarginaliaSpacing.xl.value)
     }
 
+    /// Honest either way (No-Fake-State): the real segment count, or — when there is none — what
+    /// that actually means, phrased as the observation it is rather than a bare "0 segments".
     private var segmentCountLine: String {
         let count = session.segments.count
+        guard count > 0 else {
+            return "No speech was recognized, so this meeting has no transcript. "
+                + "The audio was still saved — you can open the meeting to play it back."
+        }
         return "\(count) transcript \(count == 1 ? "segment" : "segments") saved."
     }
 
@@ -426,7 +434,7 @@ struct RecordingView: View {
         switch phase {
         case .identifyingSpeakers, .selectingTemplate, .summarizing:
             true
-        case .idle, .needsSpeakerCount, .completed, .failed:
+        case .idle, .needsSpeakerCount, .completed, .skipped, .failed:
             false
         }
     }
@@ -445,12 +453,13 @@ struct RecordingView: View {
             "Generating summary…"
         case .completed:
             "Processing complete."
-        case let .failed(message):
+        case let .skipped(message), let .failed(message):
             message
         }
     }
 
     private func processingStatusInk(_ phase: MeetingProcessingCoordinator.Phase) -> MarginaliaColorRole {
+        // `.skipped` stays secondary ink: a recording with no speech is a fact, not a fault.
         if case .failed = phase { return .error }
         return .inkSecondary
     }
