@@ -283,7 +283,37 @@ final class NotchPanelController {
             width: width,
             height: renderedHeight
         )
-        hostingView.activeRect = rect.insetBy(dx: -Self.hitTestSlack, dy: -Self.hitTestSlack)
+
+        // Expanded mushroom silhouette: the visible island is notch-width at menu-bar height
+        // (the STEM) and only widens BELOW the menu bar (the BODY). Hit-test the two tiers
+        // separately so clicks beside the stem — over menu-bar status items — pass through:
+        // slack on the body, but NONE on the stem's sides (slack there would re-cover the very
+        // icons the mushroom shape exists to uncover).
+        if let notch = environment.notchSize, notch.width > 1, notch.height > 1,
+           width > notch.width + 8 {
+            let stemHeight = min(IslandGeometry.topBleed + notch.height, renderedHeight)
+            // Visual-top-relative Y flipped into this view's coordinates when needed.
+            let stemY: CGFloat = hostingView.isFlipped
+                ? 0 : max(0, bounds.height - stemHeight)
+            let stem = CGRect(
+                x: bounds.midX - notch.width / 2.0,
+                y: stemY,
+                width: notch.width,
+                height: stemHeight
+            )
+            let bodyHeight = max(0, renderedHeight - stemHeight)
+            let bodyY: CGFloat = hostingView.isFlipped
+                ? stemHeight : max(0, bounds.height - renderedHeight)
+            let body = CGRect(
+                x: rect.minX,
+                y: bodyY,
+                width: width,
+                height: bodyHeight
+            ).insetBy(dx: -Self.hitTestSlack, dy: -Self.hitTestSlack)
+            hostingView.activeRects = [stem, body]
+        } else {
+            hostingView.activeRects = [rect.insetBy(dx: -Self.hitTestSlack, dy: -Self.hitTestSlack)]
+        }
     }
 
     /// Read the PRIMARY screen's physical notch (if any) into the chrome environment so the

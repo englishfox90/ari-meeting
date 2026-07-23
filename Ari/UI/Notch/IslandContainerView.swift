@@ -66,6 +66,17 @@ struct IslandShape: Shape {
     /// island body (not a separate layer), there is no seam at the screen's top row that
     /// fractional-pixel animation frames can crack open into hairlines.
     var bleed: CGFloat = 0
+    /// Two-tier "mushroom" mode (EXPANDED island on a NOTCHED screen): when set, the tier at
+    /// menu-bar height — from the top edge down `stemHeight` points — spans only `stemWidth`
+    /// (the physical notch's width), and the wide body hangs BELOW it from concave-free convex
+    /// shoulders. The strip beside the notch at menu-bar height belongs to menu-bar status
+    /// items (and the system's mic privacy indicator, which macOS always draws topmost); a
+    /// full-width island there overlays them, so the island only widens once it's below the
+    /// menu bar. `nil` → the single-tier silhouette (non-notched screens, collapsed pill).
+    /// These snap rather than animate (they change only with the notch environment /
+    /// presentation, where the radii spring carries the morph).
+    var stemWidth: CGFloat?
+    var stemHeight: CGFloat = 0
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(topRadius, bottomRadius) }
@@ -80,6 +91,19 @@ struct IslandShape: Shape {
         let bleed = max(0, min(self.bleed, rect.height))
         let bodyTop = rect.minY + bleed
         let bodyHeight = rect.height - bleed
+
+        // Mushroom mode only engages when the stem is meaningfully NARROWER than the rect and
+        // there's body height left below the shoulder — otherwise fall through to the plain
+        // single-tier silhouette (degenerate stems would self-intersect).
+        if let stemWidth,
+           stemWidth > 1, stemHeight > 1,
+           stemWidth < rect.width - 8,
+           bleed + stemHeight < rect.height - 8 {
+            return mushroomPath(
+                in: rect, bleed: bleed, bodyTop: bodyTop,
+                stemWidth: stemWidth, stemHeight: stemHeight
+            )
+        }
         // Clamp so the two arcs on each side can't overrun the geometry on a narrow/short
         // island (the fallback pill is only 30pt tall).
         let top = max(0, min(topRadius, min(rect.width / 2.0, bodyHeight)))
@@ -127,6 +151,90 @@ struct IslandShape: Shape {
         // Straight up the bleed band's right edge, then close along its top.
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+
+        return path
+    }
+
+    /// The two-tier silhouette: a notch-width STEM through menu-bar height (same concave
+    /// top-corner fusion as ever), small convex junctions where the stem meets the shoulder
+    /// line, a flat shoulder, convex "hanging card" outer top corners on the wide BODY, and the
+    /// usual convex bottom rounding. The bleed band spans only the stem (nothing beside the
+    /// notch is ever painted at or above the screen edge).
+    private func mushroomPath(
+        in rect: CGRect, bleed: CGFloat, bodyTop: CGFloat,
+        stemWidth: CGFloat, stemHeight: CGFloat
+    ) -> Path {
+        let stemLeft = rect.midX - stemWidth / 2.0
+        let stemRight = rect.midX + stemWidth / 2.0
+        let shoulderY = bodyTop + stemHeight
+        let bodyBelow = rect.maxY - shoulderY
+
+        // Stem fusion fillet: clamp to the stem's own geometry.
+        let top = max(0, min(topRadius, min(stemWidth / 2.0, stemHeight)))
+        // Convex junction where the stem's side turns outward onto the shoulder.
+        let junction = max(0, min(10, stemHeight - top))
+        // Convex outer top corner of the hanging body.
+        let shoulder = max(0, min(14, min((stemLeft - rect.minX) / 2.0, bodyBelow / 2.0)))
+        // Bottom rounding: clamp against the body's own height and width.
+        let bottom = max(0, min(bottomRadius, min(rect.width / 2.0, bodyBelow - shoulder)))
+
+        var path = Path()
+
+        // Bleed band top-left, down its left edge to the screen's top edge.
+        path.move(to: CGPoint(x: stemLeft, y: rect.minY))
+        path.addLine(to: CGPoint(x: stemLeft, y: bodyTop))
+        // Stem top-left: concave fusion fillet (identical language to the single-tier top).
+        path.addQuadCurve(
+            to: CGPoint(x: stemLeft + top, y: bodyTop + top),
+            control: CGPoint(x: stemLeft + top, y: bodyTop)
+        )
+        // Stem left side down to the junction…
+        path.addLine(to: CGPoint(x: stemLeft + top, y: shoulderY - junction))
+        // …convex turn outward onto the shoulder line…
+        path.addQuadCurve(
+            to: CGPoint(x: stemLeft + top - junction, y: shoulderY),
+            control: CGPoint(x: stemLeft + top, y: shoulderY)
+        )
+        // …flat shoulder out to the body's left edge…
+        path.addLine(to: CGPoint(x: rect.minX + shoulder, y: shoulderY))
+        // …convex body top-left corner.
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: shoulderY + shoulder),
+            control: CGPoint(x: rect.minX, y: shoulderY)
+        )
+
+        // Body left side, bottom rounding, bottom edge, bottom-right rounding.
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - bottom))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + bottom, y: rect.maxY),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - bottom, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.maxY - bottom),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+
+        // Mirror back up the right: body corner, shoulder, junction, stem side, fusion fillet.
+        path.addLine(to: CGPoint(x: rect.maxX, y: shoulderY + shoulder))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - shoulder, y: shoulderY),
+            control: CGPoint(x: rect.maxX, y: shoulderY)
+        )
+        path.addLine(to: CGPoint(x: stemRight - top + junction, y: shoulderY))
+        path.addQuadCurve(
+            to: CGPoint(x: stemRight - top, y: shoulderY - junction),
+            control: CGPoint(x: stemRight - top, y: shoulderY)
+        )
+        path.addLine(to: CGPoint(x: stemRight - top, y: bodyTop + top))
+        path.addQuadCurve(
+            to: CGPoint(x: stemRight, y: bodyTop),
+            control: CGPoint(x: stemRight - top, y: bodyTop)
+        )
+
+        // Bleed band right edge and top.
+        path.addLine(to: CGPoint(x: stemRight, y: rect.minY))
+        path.addLine(to: CGPoint(x: stemLeft, y: rect.minY))
 
         return path
     }
@@ -193,6 +301,19 @@ struct IslandContainerView: View {
         IslandGeometry.expandedMinWidth(notchWidth: environment.notchSize?.width)
     }
 
+    /// Stem (menu-bar tier) dimensions for the EXPANDED mushroom silhouette: the physical notch
+    /// itself. `nil` when not expanded or on a non-notched screen — the shape then stays
+    /// single-tier. Keeping the island notch-width at menu-bar height means it never overlays
+    /// menu-bar status items or the system mic privacy indicator (which macOS always draws
+    /// topmost); the wide body only begins BELOW the menu bar.
+    private var expandedStem: CGSize? {
+        guard presentation == .expanded,
+              let notch = environment.notchSize, notch.width > 1, notch.height > 1 else {
+            return nil
+        }
+        return notch
+    }
+
     /// Collapsed pill dimensions: the physical notch size when present (so it disappears INTO
     /// the real notch), else a small centered pill.
     private var collapsedSize: CGSize {
@@ -223,10 +344,14 @@ struct IslandContainerView: View {
             .padding(.top, IslandGeometry.topBleed)
             .background(
                 IslandShape(topRadius: topRadius, bottomRadius: bottomRadius,
-                            bleed: IslandGeometry.topBleed).fill(chrome))
+                            bleed: IslandGeometry.topBleed,
+                            stemWidth: expandedStem?.width,
+                            stemHeight: expandedStem?.height ?? 0).fill(chrome))
             .clipShape(
                 IslandShape(topRadius: topRadius, bottomRadius: bottomRadius,
-                            bleed: IslandGeometry.topBleed))
+                            bleed: IslandGeometry.topBleed,
+                            stemWidth: expandedStem?.width,
+                            stemHeight: expandedStem?.height ?? 0))
             // The corner-radius morph uses the SAME no-overshoot curve as the content size.
             // The bounce was dropped deliberately (2026-07-22, live pass): even cosmetic
             // overshoot reads as the island detaching from the notch it's meant to be part of.

@@ -21,16 +21,19 @@ import AriViewModels
 import SwiftUI
 
 final class ClickThroughHostingView: NSHostingView<IslandContainerView> {
-    /// The current interactive footprint (the visible island, plus a few points of click slack —
-    /// see `NotchPanelController.hitTestSlack`), expressed in THIS view's own bounds coordinate
-    /// system. Empty by default so nothing is clickable before the first `onResize` report.
-    var activeRect: CGRect = .zero
+    /// The current interactive footprint, expressed in THIS view's own bounds coordinate system.
+    /// Usually two rects for the expanded mushroom silhouette — the notch-width STEM at menu-bar
+    /// height (no side slack, so clicks beside the notch reach the menu-bar icons there) and the
+    /// wide BODY below it (with `NotchPanelController.hitTestSlack`) — or one rect for the
+    /// single-tier shapes. Empty by default so nothing is clickable before the first `onResize`
+    /// report.
+    var activeRects: [CGRect] = []
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         // `hitTest(_:)` receives `point` in the coordinate system of the receiver's SUPERVIEW, not
         // its own — convert explicitly rather than assume the two happen to coincide.
         let localPoint = superview?.convert(point, to: self) ?? point
-        guard activeRect.contains(localPoint) else { return nil }
+        guard activeRects.contains(where: { $0.contains(localPoint) }) else { return nil }
         return super.hitTest(point)
     }
 }
