@@ -100,9 +100,13 @@ public final class PeopleListViewModel {
     // MARK: - Owner actions
 
     /// Saves the owner profile: mutates the existing owner in place (preserving id/createdAt) if
-    /// one exists, otherwise creates a new owner `Person`. `setOwner` is called either way so the
-    /// single-true-owner invariant is repository-enforced, not hand-rolled here. Best-effort — a
-    /// write failure leaves `owner` at its prior value.
+    /// one exists, otherwise creates a new owner `Person`. Persistence, the single-owner
+    /// invariant, and any email-collision merge all happen atomically in `PersonRepository`.
+    ///
+    /// Returns `nil` on success, or a human-readable error string on failure. The write is NOT
+    /// swallowed (No-Fake-State): if it fails, the caller keeps the sheet open and shows the
+    /// message rather than falsely reporting success. On success, `owner` is refreshed.
+    @discardableResult
     public func saveOwner(
         displayName: String,
         email: String?,
@@ -110,7 +114,7 @@ public final class PeopleListViewModel {
         organization: String?,
         domain: String?,
         notes: String?
-    ) async {
+    ) async -> String? {
         let now = Date()
         var person: Person = if let existing = owner {
             existing
@@ -131,9 +135,13 @@ public final class PeopleListViewModel {
         person.notes = notes
         person.updatedAt = now
 
-        try? await database.persons.upsert(person)
-        try? await database.persons.setOwner(person.id)
-        await refreshOwner()
+        do {
+            _ = try await database.persons.saveOwner(person, at: now)
+            await refreshOwner()
+            return nil
+        } catch {
+            return String(describing: error)
+        }
     }
 
     // MARK: - Pending-fact actions

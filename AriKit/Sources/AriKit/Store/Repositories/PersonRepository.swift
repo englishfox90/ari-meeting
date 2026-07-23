@@ -68,6 +68,77 @@ public struct PersonRepository: Sendable {
         }
     }
 
+    /// Persists the owner identity and enforces the single-owner invariant in ONE write
+    /// transaction, resolving an `email` collision by MERGING the colliding person into the owner
+    /// instead of failing on the `email UNIQUE` constraint.
+    ///
+    /// This is the durable fix for the owner/attendee duplicate: the owner is seeded once from the
+    /// macOS account name *without* an email (`ensureOwner`) and, separately, the same human is
+    /// imported once as a calendar attendee *with* an email (`upsertStubFromAttendee`) — two rows
+    /// for one person. A plain `upsert` of the owner with that email then hits `email UNIQUE` and
+    /// (pre-fix) failed silently. Here, if another non-deleted person already holds `owner.email`,
+    /// that person's references (participant links, profile facts, voiceprints, series ownership)
+    /// are re-homed onto the owner and the duplicate row is removed *before* the owner takes the
+    /// email — so the save succeeds and no history is lost. Returns the saved owner.
+    @discardableResult
+    public func saveOwner(_ owner: Person, at date: Date = Date()) async throws -> Person {
+        try await dbWriter.write { db in
+            var owner = owner
+            owner.isOwner = true
+            owner.updatedAt = date
+
+            // Resolve an email collision by merging the colliding person into the owner first.
+            if let email = owner.email,
+               let collider = try Self.findByEmail(email, db: db),
+               collider.id != owner.id.rawValue {
+                // The owner row must exist before we re-home foreign keys onto it. Save it without
+                // the (still-taken) email so the UNIQUE constraint can't fire mid-transaction.
+                var seed = owner
+                seed.email = nil
+                try PersonRecord(seed).save(db)
+                try Self.mergePerson(source: PersonID(collider.id), into: owner.id, db: db)
+            }
+
+            // The email (if any) is now free; save the full owner identity.
+            try PersonRecord(owner).save(db)
+
+            // Single-owner invariant: unset any other owner in the same transaction.
+            try PersonRecord
+                .filter(Column("isOwner") == true)
+                .filter(Column("id") != owner.id.rawValue)
+                .updateAll(db, [Column("isOwner").set(to: false)])
+
+            return owner
+        }
+    }
+
+    /// Re-homes every reference to `source` onto `destination` (participant links, profile facts,
+    /// voiceprints, series ownership) and hard-deletes the now-empty `source` person — all within
+    /// the caller's write transaction. No-op when `source == destination`.
+    ///
+    /// `meetingParticipant`'s composite primary key `(meetingId, personId)` is the only clash risk:
+    /// a plain re-assignment would violate it for any meeting both persons already attend, so those
+    /// `source` rows are dropped first (`destination` is already linked there). No other re-homed
+    /// column carries a uniqueness constraint.
+    static func mergePerson(source: PersonID, into destination: PersonID, db: Database) throws {
+        guard source != destination else { return }
+        let s = source.rawValue
+        let d = destination.rawValue
+        try db.execute(
+            sql: """
+            DELETE FROM meetingParticipant
+            WHERE personId = ?
+              AND meetingId IN (SELECT meetingId FROM meetingParticipant WHERE personId = ?)
+            """,
+            arguments: [s, d]
+        )
+        try db.execute(sql: "UPDATE meetingParticipant SET personId = ? WHERE personId = ?", arguments: [d, s])
+        try db.execute(sql: "UPDATE profileFact SET personId = ? WHERE personId = ?", arguments: [d, s])
+        try db.execute(sql: "UPDATE speaker SET personId = ? WHERE personId = ?", arguments: [d, s])
+        try db.execute(sql: "UPDATE series SET ownerPersonId = ? WHERE ownerPersonId = ?", arguments: [d, s])
+        try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [s])
+    }
+
     /// Tombstone — sets `isDeleted`/`deletedAt`, never issues a hard `DELETE`.
     public func softDelete(_ id: PersonID, at date: Date) async throws {
         try await dbWriter.write { db in

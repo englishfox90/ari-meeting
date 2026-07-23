@@ -52,7 +52,6 @@ struct PeopleListView: View {
                     domain: form.domain,
                     notes: form.notes
                 )
-                ownerSheetPresented = false
             }
         }
     }
@@ -311,7 +310,9 @@ struct OwnerFormFields {
 
 private struct OwnerEditSheet: View {
     let owner: Person?
-    let onSave: (OwnerFormFields) async -> Void
+    /// Returns `nil` on success (the sheet then dismisses), or an error message to surface inline
+    /// while keeping the sheet open (No-Fake-State: a failed save must not look like it worked).
+    let onSave: (OwnerFormFields) async -> String?
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
@@ -322,8 +323,9 @@ private struct OwnerEditSheet: View {
     @State private var domain: String
     @State private var notes: String
     @State private var isSaving = false
+    @State private var errorMessage: String?
 
-    init(owner: Person?, onSave: @escaping (OwnerFormFields) async -> Void) {
+    init(owner: Person?, onSave: @escaping (OwnerFormFields) async -> String?) {
         self.owner = owner
         self.onSave = onSave
         _displayName = State(initialValue: owner?.displayName ?? "")
@@ -344,6 +346,12 @@ private struct OwnerEditSheet: View {
                     field("Organization", text: $organization)
                     field("Domain / focus", text: $domain)
                     field("Notes", text: $notes)
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
+                            .padding(.top, MarginaliaSpacing.xs.value)
+                    }
                 }
                 .padding(MarginaliaSpacing.lg.value)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -358,8 +366,9 @@ private struct OwnerEditSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "Saving…" : "Save") {
                         isSaving = true
+                        errorMessage = nil
                         Task {
-                            await onSave(OwnerFormFields(
+                            let error = await onSave(OwnerFormFields(
                                 displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
                                 email: nonEmpty(email),
                                 role: nonEmpty(role),
@@ -368,6 +377,11 @@ private struct OwnerEditSheet: View {
                                 notes: nonEmpty(notes)
                             ))
                             isSaving = false
+                            if let error {
+                                errorMessage = error
+                            } else {
+                                dismiss()
+                            }
                         }
                     }
                     .buttonStyle(.marginalia(.primary, .regular, in: scheme))
