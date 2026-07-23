@@ -264,6 +264,12 @@ public struct PersonRepository: Sendable {
         at date: Date = Date()
     ) async throws -> Person {
         try await dbWriter.write { db in
+            // Normalize (trim + lowercase) before both the dedup lookup AND the insert. The
+            // `email` UNIQUE index is case-sensitive BINARY while `findByEmail` matches
+            // case-insensitively; storing the canonical form here keeps calendar-sourced emails
+            // in the same shape the authored paths write, so the two never disagree and a
+            // mixed-case attendee can't slip a duplicate past UNIQUE (2026-07-23 incident).
+            let email = EmailValidation.normalized(email)
             if let email, let existing = try Self.findByEmail(email, db: db) {
                 return existing.asModel()
             }

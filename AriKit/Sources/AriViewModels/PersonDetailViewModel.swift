@@ -127,6 +127,13 @@ public final class PersonDetailViewModel {
             await load(id)
             return nil
         } catch {
+            // First-setting an email that another person already holds trips the `person.email`
+            // UNIQUE index. That's exactly the "two rows, one human" case this feature guards
+            // against — surface it as a merge hint rather than a raw SQLite string (still honest,
+            // No-Fake-State), since this editor has no merge affordance of its own yet.
+            if String(describing: error).contains("UNIQUE constraint failed: person.email") {
+                return "Another person already uses this email — they may need to be merged."
+            }
             return String(describing: error)
         }
     }
