@@ -268,31 +268,46 @@ struct AskConsoleView: View {
     }
 }
 
-/// The honest "searching local meeting excerpts…" placeholder (plan §8): three pulsing dots,
-/// static under Reduce Motion (BRAND.md §8 — "pulses become static").
+/// The honest "searching local meeting excerpts…" placeholder (plan §8): three dots that bounce
+/// up and down in sequence, static under Reduce Motion (BRAND.md §8 — "pulses become static").
 private struct AskThinkingRow: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulse = false
+    @State private var bounce = false
+
+    private static let dotCount = 3
+    private static let bounceHeight: CGFloat = 3
+    /// Per-dot start offset, so the three dots read as one travelling wave rather than a blink.
+    private static let stagger = 0.14
 
     var body: some View {
         HStack(spacing: MarginaliaSpacing.sm.value) {
             HStack(spacing: 3) {
-                ForEach(0 ..< 3, id: \.self) { _ in
+                ForEach(0 ..< Self.dotCount, id: \.self) { index in
                     Circle()
                         .fill(Color.marginalia(.inkSecondary, in: scheme))
                         .frame(width: 5, height: 5)
-                        .opacity(reduceMotion ? 0.6 : (pulse ? 1 : 0.3))
+                        .opacity(reduceMotion ? 0.6 : (bounce ? 1 : 0.5))
+                        .offset(y: (reduceMotion || !bounce) ? Self.bounceHeight : -Self.bounceHeight)
+                        .animation(animation(for: index), value: bounce)
                 }
             }
+            // The dots swing above and below their resting line; reserve that band so the row's
+            // height (and the text baseline beside it) stays put.
+            .padding(.vertical, Self.bounceHeight)
             Text("Searching local meeting excerpts…")
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
         }
         .onAppear {
             guard !reduceMotion else { return }
-            withAnimation(MarginaliaMotion.animation(.standard).repeatForever(autoreverses: true)) {
-                pulse.toggle()
-            }
+            bounce = true
         }
+    }
+
+    private func animation(for index: Int) -> Animation? {
+        guard !reduceMotion else { return nil }
+        return MarginaliaMotion.animation(.standard)
+            .repeatForever(autoreverses: true)
+            .delay(Double(index) * Self.stagger)
     }
 }
