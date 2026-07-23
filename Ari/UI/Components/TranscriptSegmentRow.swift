@@ -34,7 +34,9 @@ struct TranscriptSegmentRow: View {
                     // `nil` signature renders the glyph's honest placeholder dot, never a fake
                     // ring (No-Fake-State).
                     HStack(spacing: MarginaliaSpacing.xs.value) {
-                        VoiceprintGlyph(signature: speakerSignature, size: 18)
+                        // 24pt row avatar — enough for the voice-derived ring shape to read inline
+                        // without dominating the callout-sized speaker name.
+                        VoiceprintGlyph(signature: speakerSignature, size: 24)
                         Text(speakerName)
                             .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                     }

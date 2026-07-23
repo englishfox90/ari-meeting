@@ -92,7 +92,8 @@ struct VoiceprintGlyph: View {
         let half = Double(edge) / 2
         func point(_ i: Int) -> CGPoint {
             let index = ((i % n) + n) % n
-            let radius = radii[index]
+            // `radii` are fractions of `half` (VoiceprintRing.ringRadii); scale to absolute points.
+            let radius = radii[index] * half
             let angle = (Double(index) / Double(n)) * 2 * .pi - .pi / 2
             return CGPoint(x: half + radius * cos(angle), y: half + radius * sin(angle))
         }

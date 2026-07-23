@@ -38,8 +38,9 @@ public enum VoiceprintRing {
     public static let minRadiusRatio = 0.46
     public static let maxRadiusRatio = 0.94
 
-    /// Per-bucket normalized radii (as a fraction of half the glyph size) in
-    /// `[minRadiusRatio, maxRadiusRatio]`. Input values are expected in `[0, 1]`
+    /// Per-bucket radii as a **fraction of half the glyph size** in
+    /// `[minRadiusRatio, maxRadiusRatio]` — the View layer multiplies by `half`
+    /// (`size / 2`) to get absolute points. Input values are expected in `[0, 1]`
     /// (clamped if not). Returns `nil` when there is nothing honest to draw
     /// (fewer than 3 values) so the caller falls back to a neutral placeholder
     /// rather than inventing a shape.
