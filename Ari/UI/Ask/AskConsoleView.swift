@@ -273,58 +273,79 @@ struct AskConsoleView: View {
 private struct AskThinkingRow: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var bounce = false
+    /// Bumped once per wave to (re)trigger every dot's keyframe track; the `.task` paces the bumps,
+    /// leaving a beat of stillness between waves.
+    @State private var wave = 0
 
     private static let dotCount = 3
-    private static let bounceHeight: CGFloat = 3
-    /// Per-dot start offset, so the three dots read as one travelling wave rather than a blink.
-    private static let stagger = 0.14
-    /// One dot's rise/fall duration — deliberately ~2× the Marginalia `.standard` (260ms) step,
-    /// i.e. "half speed", so the wave reads as a calm thinking pulse rather than a fast blink.
+    private static let bounceHeight: CGFloat = 4
+    /// Per-dot start delay, so the three dots read as one travelling wave rather than a blink.
+    private static let stagger = 0.12
+    /// One dot's full rise-and-fall duration — deliberately ~2× the Marginalia `.standard` (260ms)
+    /// step, i.e. "half speed", so the wave reads as a calm thinking pulse rather than a fast blink.
     private static let travel = 0.5
     /// A beat of stillness after each full wave: the dots settle, hold, then travel again — a
     /// gentle breathing cadence instead of a relentless loop.
     private static let restBetweenCycles = 0.55
 
+    /// The pair of properties one dot's keyframe tracks animate together.
+    private struct Bounce: Equatable {
+        var offset: CGFloat = 0
+        var opacity: Double = 0.5
+    }
+
     var body: some View {
         HStack(spacing: MarginaliaSpacing.sm.value) {
             HStack(spacing: 3) {
                 ForEach(0 ..< Self.dotCount, id: \.self) { index in
-                    Circle()
-                        .fill(Color.marginalia(.inkSecondary, in: scheme))
-                        .frame(width: 5, height: 5)
-                        .opacity(reduceMotion ? 0.6 : (bounce ? 1 : 0.5))
-                        .offset(y: (reduceMotion || !bounce) ? Self.bounceHeight : -Self.bounceHeight)
-                        .animation(animation(for: index), value: bounce)
+                    dot(index: index)
                 }
             }
-            // The dots swing above and below their resting line; reserve that band so the row's
+            // A dot rises above its resting line during a bounce; reserve that band so the row's
             // height (and the text baseline beside it) stays put.
             .padding(.vertical, Self.bounceHeight)
             Text("Searching local meeting excerpts…")
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
         }
-        // Drive the wave by hand rather than `.repeatForever`: rise, fall, then hold still for a
-        // beat before the next wave. `repeatForever(autoreverses:)` can do neither the pause nor a
-        // clean settle, which is exactly the too-fast, never-resting loop we're replacing. Each
-        // dot's own `.animation(for:)` (with its stagger) shapes the motion; the toggle just paces
-        // the cadence. The task cancels with the view, so it stops the moment the answer arrives.
+        // Pace the cadence by hand: bump `wave` (which restarts every dot's keyframe track), then
+        // wait out the full wave PLUS a rest before the next bump. `repeatForever(autoreverses:)`
+        // can do neither the pause nor a clean settle — exactly the never-resting loop we replaced.
+        // Each dot's own staggered keyframes shape the single up-and-down; the task only paces it.
+        // The task cancels with the view, so it stops the moment the answer arrives.
         .task {
             guard !reduceMotion else { return }
             let waveSpan = Self.travel + Double(Self.dotCount - 1) * Self.stagger
             while !Task.isCancelled {
-                bounce = true
-                try? await Task.sleep(for: .seconds(waveSpan))
-                bounce = false
+                wave += 1
                 try? await Task.sleep(for: .seconds(waveSpan + Self.restBetweenCycles))
             }
         }
     }
 
-    private func animation(for index: Int) -> Animation? {
-        guard !reduceMotion else { return nil }
-        return MarginaliaMotion.animation(.standard)
-            .speed(MarginaliaDuration.standard.seconds / Self.travel)
-            .delay(Double(index) * Self.stagger)
+    @ViewBuilder
+    private func dot(index: Int) -> some View {
+        let circle = Circle()
+            .fill(Color.marginalia(.inkSecondary, in: scheme))
+            .frame(width: 5, height: 5)
+        if reduceMotion {
+            // BRAND.md §8 — "pulses become static": a still, slightly-dimmed dot, no motion.
+            circle.opacity(0.6)
+        } else {
+            circle.keyframeAnimator(initialValue: Bounce(), trigger: wave) { view, value in
+                view.offset(y: value.offset).opacity(value.opacity)
+            } keyframes: { _ in
+                // Hold at rest through this dot's stagger delay, then a single rise-and-fall.
+                KeyframeTrack(\.offset) {
+                    LinearKeyframe(0, duration: Double(index) * Self.stagger)
+                    SpringKeyframe(-Self.bounceHeight, duration: Self.travel / 2)
+                    SpringKeyframe(0, duration: Self.travel / 2)
+                }
+                KeyframeTrack(\.opacity) {
+                    LinearKeyframe(0.5, duration: Double(index) * Self.stagger)
+                    LinearKeyframe(1, duration: Self.travel / 2)
+                    LinearKeyframe(0.5, duration: Self.travel / 2)
+                }
+            }
+        }
     }
 }
