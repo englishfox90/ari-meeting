@@ -24,12 +24,21 @@ public enum RecallIntentClassifier {
         case personMeetings(nameQuery: String)
         /// "meetings in the X series".
         case seriesMeetings(titleQuery: String)
+        /// "did I have a meeting about X" / "meeting about X" / "meeting titled/called X".
+        case meetingLookup(titleQuery: String)
     }
 
     /// Recognizes trigger phrases for a person-meetings lookup. Order matters only in that longer,
     /// more specific triggers are tried first so a shorter trigger can't swallow part of a longer
     /// one's match range.
     private static let personTriggers = ["meetings with ", "meeting with ", "meet with "]
+
+    /// Recognizes trigger phrases for a single-meeting lookup by title/topic. Tried only after
+    /// `personTriggers`/series matching fail, so "meeting with Sarah about the budget" resolves as
+    /// a person lookup, never a meeting-title lookup on "the budget".
+    private static let meetingTriggers = [
+        "meeting about ", "meeting titled ", "meeting called ", "meeting on "
+    ]
 
     /// Trailing clauses that qualify rather than name the person/series — trimmed off the
     /// extracted candidate so "meetings with Sarah about the budget" extracts "Sarah", not
@@ -46,6 +55,9 @@ public enum RecallIntentClassifier {
         }
         if let name = personName(in: lower) {
             return .personMeetings(nameQuery: name)
+        }
+        if let title = meetingTitle(in: lower) {
+            return .meetingLookup(titleQuery: title)
         }
         return nil
     }
@@ -84,7 +96,20 @@ public enum RecallIntentClassifier {
     // MARK: - "meeting(s)/meet with <name>"
 
     private static func personName(in lower: String) -> String? {
-        for trigger in personTriggers {
+        extractCandidate(triggers: personTriggers, in: lower)
+    }
+
+    // MARK: - "meeting about/titled/called <title>"
+
+    private static func meetingTitle(in lower: String) -> String? {
+        extractCandidate(triggers: meetingTriggers, in: lower)
+    }
+
+    /// Shared trigger-then-trim extraction: find the first matching trigger phrase, take
+    /// everything after it, then cut at the first trailing qualifier (so "meeting about the
+    /// budget, right?" extracts "the budget", not "the budget, right?").
+    private static func extractCandidate(triggers: [String], in lower: String) -> String? {
+        for trigger in triggers {
             guard let range = lower.range(of: trigger) else { continue }
             var rest = String(lower[range.upperBound...])
             for qualifier in trailingQualifiers {
@@ -92,9 +117,9 @@ public enum RecallIntentClassifier {
                     rest = String(rest[rest.startIndex ..< stopRange.lowerBound])
                 }
             }
-            let name = rest.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !name.isEmpty {
-                return name
+            let candidate = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !candidate.isEmpty {
+                return candidate
             }
         }
         return nil

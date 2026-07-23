@@ -43,6 +43,33 @@ struct RecallIntentClassifierTests {
         #expect(intent == .seriesMeetings(titleQuery: expectedTitle))
     }
 
+    // MARK: - Positive: single-meeting lookup shape
+
+    @Test(
+        "Recognized meeting-lookup phrasings extract the title/topic",
+        arguments: [
+            ("Did I have a meeting about the Q3 budget?", "the q3 budget"),
+            ("meeting titled Kickoff", "kickoff"),
+            ("meeting called All Hands", "all hands"),
+            (
+                "Did I have a meeting about Kaye Lynn taking over the GPM role?",
+                "kaye lynn taking over the gpm role"
+            )
+        ]
+    )
+    func meetingLookupExtractsTitle(question: String, expectedTitle: String) {
+        let intent = RecallIntentClassifier.classify(question)
+        #expect(intent == .meetingLookup(titleQuery: expectedTitle))
+    }
+
+    @Test("A person-lookup phrase is never misclassified as a meeting lookup")
+    func personTriggerTakesPrecedenceOverMeetingTrigger() {
+        // Contains "about" (a meeting-trigger qualifier context) but is unambiguously a
+        // person-lookup shape — personTriggers must win.
+        let intent = RecallIntentClassifier.classify("meetings with Sarah about the Q3 budget")
+        #expect(intent == .personMeetings(nameQuery: "sarah"))
+    }
+
     // MARK: - Negative: open-ended questions must NOT classify as entity-lookup
 
     @Test(

@@ -15,7 +15,8 @@ struct RecallToolsTests {
             meetings: db.meetings,
             persons: db.persons,
             series: db.series,
-            calendarEvents: db.calendarEvents
+            calendarEvents: db.calendarEvents,
+            summaries: db.summaries
         )
     }
 
@@ -273,5 +274,27 @@ struct RecallToolsTests {
         let tools = makeTools(db)
         let result = try await tools.meetings(inSeries: series.id, limit: 10)
         #expect(result.isEmpty)
+    }
+
+    // MARK: - hasSummary: real, never fabricated
+
+    @Test("hasSummary is true only when a real summary row exists for the meeting")
+    func hasSummaryReflectsRealSummaryPresence() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let withSummary = makeMeeting(id: "m-with-summary", title: "Has a summary")
+        let withoutSummary = makeMeeting(id: "m-without-summary", title: "No summary yet")
+        try await db.meetings.upsert(withSummary)
+        try await db.meetings.upsert(withoutSummary)
+        try await db.summaries.upsert(Summary(
+            id: SummaryID("s1"),
+            meetingId: withSummary.id,
+            bodyMarkdown: "Discussed the roadmap.",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        ))
+
+        let tools = makeTools(db)
+        #expect(try await tools.hasSummary(for: withSummary.id) == true)
+        #expect(try await tools.hasSummary(for: withoutSummary.id) == false)
     }
 }

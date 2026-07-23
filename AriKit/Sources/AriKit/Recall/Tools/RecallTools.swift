@@ -22,17 +22,20 @@ public struct RecallTools: Sendable {
     private let persons: PersonRepository
     private let series: SeriesRepository
     private let calendarEvents: CalendarEventRepository
+    private let summaries: SummaryRepository
 
     public init(
         meetings: MeetingRepository,
         persons: PersonRepository,
         series: SeriesRepository,
-        calendarEvents: CalendarEventRepository
+        calendarEvents: CalendarEventRepository,
+        summaries: SummaryRepository
     ) {
         self.meetings = meetings
         self.persons = persons
         self.series = series
         self.calendarEvents = calendarEvents
+        self.summaries = summaries
     }
 
     // MARK: - Person / meeting / series resolution (ambiguity-safe)
@@ -121,6 +124,13 @@ public struct RecallTools: Sendable {
     /// roster read that feeds `lastMeetingDate`/context.
     public func meetingCount(inSeries seriesId: SeriesID) async throws -> Int {
         try await series.orderedMeetingIds(inSeries: seriesId).count
+    }
+
+    /// Whether `meetingId` has a real, saved summary — real, not fabricated (drives
+    /// `MeetingCardPayload.hasSummary`, which in turn decides whether Slice C's card UI offers a
+    /// summary snippet).
+    public func hasSummary(for meetingId: MeetingID) async throws -> Bool {
+        try await summaries.forMeeting(meetingId) != nil
     }
 
     // MARK: - Helpers

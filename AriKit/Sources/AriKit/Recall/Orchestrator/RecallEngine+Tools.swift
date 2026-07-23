@@ -34,6 +34,8 @@ extension RecallEngine {
             try await resolvePersonMeetings(nameQuery: nameQuery, tools: tools)
         case let .seriesMeetings(titleQuery):
             try await resolveSeriesMeetings(titleQuery: titleQuery, tools: tools)
+        case let .meetingLookup(titleQuery):
+            try await resolveMeetingLookup(titleQuery: titleQuery, tools: tools)
         }
     }
 
@@ -81,6 +83,25 @@ extension RecallEngine {
             "Resolved: the \"\(series.title)\" series — \(totalCount) meeting(s) recorded."
         )
         return ResolvedEntity(card: .series(payload), contextLine: contextLine)
+    }
+
+    private static func resolveMeetingLookup(
+        titleQuery: String,
+        tools: RecallTools
+    ) async throws -> ResolvedEntity? {
+        guard let meeting = try await tools.findMeeting(titleContaining: titleQuery) else { return nil }
+        let hasSummary = try await tools.hasSummary(for: meeting.id)
+        let payload = MeetingCardPayload(
+            meetingId: meeting.id.rawValue,
+            title: meeting.title,
+            meetingDate: RFC3339.string(from: meeting.createdAt),
+            hasSummary: hasSummary
+        )
+        let contextLine = truncateCardContext(
+            "Resolved: the meeting \"\(meeting.title)\" "
+                + "on \(String(RFC3339.string(from: meeting.createdAt).prefix(10)))."
+        )
+        return ResolvedEntity(card: .meeting(payload), contextLine: contextLine)
     }
 
     /// Bounded-context truncation for the tool-resolved fact line (mirrors `PeopleContext`'s own

@@ -161,7 +161,8 @@ public struct RecallEngine: Sendable {
             meetings: db.meetings,
             persons: db.persons,
             series: db.series,
-            calendarEvents: db.calendarEvents
+            calendarEvents: db.calendarEvents,
+            summaries: db.summaries
         )
     }
 

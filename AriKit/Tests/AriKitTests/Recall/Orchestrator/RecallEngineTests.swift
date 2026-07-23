@@ -598,6 +598,39 @@ struct RecallEngineTests {
         #expect(payload.meetingCount == 1)
     }
 
+    @Test("A global-scope ask matching a recognized meeting-lookup shape attaches a .meeting card")
+    func globalScopeResolvesUnambiguousMeetingEntityAndAttachesCard() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = try await seedMeetingWithTranscripts(
+            db,
+            id: "meeting-budget",
+            title: "Q3 budget planning",
+            segments: [(timestamp: "00:00", text: "Reviewed the Q3 numbers.", start: 0)]
+        )
+        try await db.summaries.upsert(Summary(
+            id: SummaryID("s-budget"),
+            meetingId: meeting.id,
+            bodyMarkdown: "Reviewed Q3 budget numbers.",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Noted.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(
+            question: "Did I have a meeting about Q3 budget planning?"
+        )
+        let card = try #require(response.card)
+        guard case let .meeting(payload) = card else {
+            Issue.record("expected a .meeting card")
+            return
+        }
+        #expect(payload.meetingId == meeting.id.rawValue)
+        #expect(payload.title == meeting.title)
+        #expect(payload.hasSummary == true)
+    }
+
     @Test("Streaming honors the loopback gate too — no deltas, an error, before any generation")
     func streamingHonorsLoopbackGate() async throws {
         let db = try AppDatabase.makeInMemory()
