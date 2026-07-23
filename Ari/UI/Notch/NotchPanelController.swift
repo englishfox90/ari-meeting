@@ -229,7 +229,12 @@ final class NotchPanelController {
             inScreen: screen.frame,
             contentSize: currentContentSize
         )
-        panel.setFrame(frame, display: true)
+        // Snap to whole backing pixels: SwiftUI reports fractional content sizes, and a
+        // fractional panel edge antialiases against whatever is behind it — at the top seam
+        // that reads as a hairline "gap" with the physical notch. Aligning outward keeps the
+        // island covering at least its requested rect.
+        let aligned = panel.backingAlignedRect(frame, options: .alignAllEdgesOutward)
+        panel.setFrame(aligned, display: true)
     }
 
     /// Read the PRIMARY screen's physical notch (if any) into the chrome environment so the

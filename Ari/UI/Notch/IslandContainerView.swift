@@ -226,11 +226,11 @@ struct IslandContainerView: View {
             .clipShape(
                 IslandShape(topRadius: topRadius, bottomRadius: bottomRadius,
                             bleed: IslandGeometry.topBleed))
-            // Spring the corner-radius morph on the state change. Purely a clip effect — it
-            // doesn't feed `sizeReporter`/the panel's geometry — so its overshoot is cosmetic
-            // only and can never reveal the physical top edge.
-            .animation(.snappy(duration: 0.34, extraBounce: 0.12), value: presentation)
-            .animation(.snappy(duration: 0.34, extraBounce: 0.12), value: environment.notchSize)
+            // The corner-radius morph uses the SAME no-overshoot curve as the content size.
+            // The bounce was dropped deliberately (2026-07-22, live pass): even cosmetic
+            // overshoot reads as the island detaching from the notch it's meant to be part of.
+            .animation(.spring(response: 0.34, dampingFraction: 1.0), value: presentation)
+            .animation(.spring(response: 0.34, dampingFraction: 1.0), value: environment.notchSize)
             .background(sizeReporter)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             // Belt-and-suspenders with the host's `safeAreaRegions = []`: whichever macOS
