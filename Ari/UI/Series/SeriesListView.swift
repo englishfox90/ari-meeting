@@ -14,12 +14,18 @@ import SwiftUI
 
 struct SeriesListView: View {
     let database: AppDatabase
+    /// Called with the freshly created series' id so the shell can navigate into it (the "+"
+    /// affordance's create-then-open flow, plan Part 4).
+    let onCreated: (SeriesID) -> Void
 
     @State private var viewModel: SeriesListViewModel
     @Environment(\.colorScheme) private var scheme
+    @State private var showCreateSheet = false
+    @State private var newTitle = ""
 
-    init(database: AppDatabase) {
+    init(database: AppDatabase, onCreated: @escaping (SeriesID) -> Void) {
         self.database = database
+        self.onCreated = onCreated
         _viewModel = State(initialValue: SeriesListViewModel(database: database))
     }
 
@@ -35,6 +41,48 @@ struct SeriesListView: View {
         .background(Color.marginalia(.canvas, in: scheme))
         .navigationTitle("Series")
         .task { await viewModel.observe() }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    newTitle = ""
+                    showCreateSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $showCreateSheet) {
+            createSheet
+        }
+    }
+
+    private var createSheet: some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+            Text("New series")
+                .marginaliaTextStyle(.title2, in: scheme, ink: .inkHeading)
+            TextField("Series title", text: $newTitle)
+                .textFieldStyle(.roundedBorder)
+            if let errorMessage = viewModel.errorMessage {
+                Text(errorMessage)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .error)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { showCreateSheet = false }
+                    .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                Button("Create") {
+                    Task {
+                        if let id = await viewModel.createSeries(title: newTitle) {
+                            showCreateSheet = false
+                            onCreated(id)
+                        }
+                    }
+                }
+                .buttonStyle(.marginalia(.primary, .regular, in: scheme))
+            }
+        }
+        .padding(MarginaliaSpacing.xl.value)
+        .frame(minWidth: 320)
     }
 
     private func loadedContent(searchText: Binding<String>) -> some View {

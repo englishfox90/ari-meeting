@@ -34,5 +34,12 @@ struct CardRow: View {
         }
         .padding(.vertical, MarginaliaSpacing.sm.value)
         .padding(.horizontal, MarginaliaSpacing.md.value)
+        // Fills the row's full width and makes the ENTIRE row (not just the text glyphs) a hit
+        // target. Without this, a `NavigationLink(value:)` wrapping this view — especially with
+        // `.buttonStyle(.plain)` outside a `List` (SeriesDetailView's timeline, PersonDetailView's
+        // meetings section) — only responds to taps on opaque content (the title/metadata text),
+        // leaving the Spacer/chevron area dead.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }

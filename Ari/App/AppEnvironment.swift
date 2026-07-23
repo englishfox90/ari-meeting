@@ -72,6 +72,11 @@ final class AppEnvironment {
     /// app's settings/secrets seams. `MeetingSummaryViewModel` (Track 1) and the later
     /// `MeetingProcessingCoordinator` (Track 2) both build from this ONE instance.
     private(set) var summaryRunner: SummaryRunner?
+    /// The F9 series-ledger reducer (docs/plans/glittery-humming-truffle.md) — shared by
+    /// `summaryRunner`'s auto-fold hook and `SeriesDetailViewModel`'s manual "Rebuild ledger"
+    /// control, so both go through the ONE reducer built from this app's `db`/settings/secrets/
+    /// `clientFactory`. `nil` until `bootstrap()` succeeds, exactly like `summaryRunner`.
+    private(set) var seriesLedgerReducer: SeriesLedgerReducer?
 
     /// The post-recording pipeline (docs/plans/swift-meeting-generation-flow.md, Track 2) —
     /// speaker identification → template selection → summary, mount-independent like
@@ -215,13 +220,21 @@ final class AppEnvironment {
                 clientFactory: clientFactory
             )
             self.summaryService = summaryService
+            let ledgerReducer = SeriesLedgerReducer(
+                db: db,
+                settings: settingsReader,
+                secrets: summarySecrets,
+                clientFactory: clientFactory
+            )
+            seriesLedgerReducer = ledgerReducer
             let runner = SummaryRunner(
                 database: db,
                 settings: settingsReader,
                 secrets: summarySecrets,
                 summaryService: summaryService,
                 customTemplateDirectory: nil,
-                clientFactory: clientFactory
+                clientFactory: clientFactory,
+                ledgerReducer: ledgerReducer
             )
             summaryRunner = runner
 

@@ -53,7 +53,8 @@ struct SummaryRunnerTests {
         },
         generationClientFactory: @escaping @Sendable (ProviderConfig) throws -> any LLMClient = { _ in
             StubLLMClient()
-        }
+        },
+        ledgerReducer: SeriesLedgerReducer? = nil
     ) -> SummaryRunner {
         SummaryRunner(
             database: db,
@@ -67,7 +68,8 @@ struct SummaryRunnerTests {
                 clientFactory: generationClientFactory
             ),
             customTemplateDirectory: nil,
-            clientFactory: classifierClientFactory
+            clientFactory: classifierClientFactory,
+            ledgerReducer: ledgerReducer
         )
     }
 
@@ -308,6 +310,73 @@ struct SummaryRunnerTests {
         let summary = try await autoRunner.generate(meetingId: meetingId, templateId: nil, speakerCount: 3)
         #expect(await classifierSpy.callCount == 1)
         #expect(summary.templateId == "daily_standup")
+    }
+
+    // MARK: - generate: F9 auto-fold (docs/plans/glittery-humming-truffle.md Part 5)
+
+    @Test("generate auto-folds the fresh summary into the meeting's series ledger, fire-and-forget")
+    func generateAutoFoldsIntoSeriesLedger() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(makeMeeting())
+        try await db.transcripts.upsert(Transcript(
+            id: "transcript-1", meetingId: meetingId, transcript: "Let's talk roadmap.",
+            timestamp: "00:00:01"
+        ))
+        let seriesId = try await db.series.createSeries(title: "Weekly sync series")
+        try await db.series.addMember(seriesId: seriesId, meetingId: meetingId)
+
+        let settings = StubSettingsReading(
+            summaryModelConfigValue: SummaryModelConfig(providerKey: "ollama", model: "llama3")
+        )
+        let cannedLedger = "## Open action items\n_None yet._\n\n## Decisions\n_None yet._\n\n## Recurring themes\n_None yet._\n\n## Per-person threads\n_None yet._"
+        let reducer = SeriesLedgerReducer(
+            db: db,
+            settings: settings,
+            secrets: StubSecretsReading(),
+            clientFactory: { _ in StubLLMClient(cannedResponse: cannedLedger) }
+        )
+        let runner = makeRunner(
+            db: db,
+            settings: settings,
+            generationClientFactory: { _ in StubLLMClient(cannedResponse: "# Notes\n\nDetails.") },
+            ledgerReducer: reducer
+        )
+
+        _ = try await runner.generate(meetingId: meetingId, templateId: "standard_meeting", speakerCount: nil)
+
+        // The fold is a detached fire-and-forget task — poll briefly for it to land rather than
+        // assuming a fixed delay is enough (and never blocking `generate` itself, per the plan).
+        var foldedLedger: String?
+        for _ in 0 ..< 50 {
+            if let ledger = try await db.series.find(seriesId)?.ledgerMarkdown {
+                foldedLedger = ledger
+                break
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        #expect(foldedLedger == cannedLedger)
+    }
+
+    @Test("generate never blocks or fails the summary when auto-fold has nothing to do")
+    func generateSucceedsWithNoLedgerReducerInjected() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(makeMeeting())
+        try await db.transcripts.upsert(Transcript(
+            id: "transcript-1", meetingId: meetingId, transcript: "Let's talk roadmap.",
+            timestamp: "00:00:01"
+        ))
+        let settings = StubSettingsReading(
+            summaryModelConfigValue: SummaryModelConfig(providerKey: "ollama", model: "llama3")
+        )
+        // No ledgerReducer injected — auto-fold is disabled, `generate` must still succeed.
+        let runner = makeRunner(
+            db: db,
+            settings: settings,
+            generationClientFactory: { _ in StubLLMClient(cannedResponse: "# Notes\n\nDetails.") }
+        )
+
+        let summary = try await runner.generate(meetingId: meetingId, templateId: "standard_meeting", speakerCount: nil)
+        #expect(summary.bodyMarkdown.contains("Details."))
     }
 
     // MARK: - cancel

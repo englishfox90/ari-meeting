@@ -82,4 +82,32 @@ struct SeriesListViewModelTests {
         }
         #expect(!message.isEmpty)
     }
+
+    // MARK: - createSeries
+
+    @Test("createSeries refuses a blank title")
+    func createSeriesRefusesBlankTitle() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = SeriesListViewModel(database: database)
+
+        let id = await viewModel.createSeries(title: "   ")
+
+        #expect(id == nil)
+        #expect(viewModel.errorMessage != nil)
+        let all = try await database.series.allSummaries()
+        #expect(all.isEmpty)
+    }
+
+    @Test("createSeries creates a new series and returns its id")
+    func createSeriesCreates() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let viewModel = SeriesListViewModel(database: database)
+
+        let id = await viewModel.createSeries(title: "  Brian 1:1  ")
+
+        #expect(id != nil)
+        #expect(viewModel.errorMessage == nil)
+        let persisted = try await database.series.find(#require(id))
+        #expect(persisted?.title == "Brian 1:1")
+    }
 }

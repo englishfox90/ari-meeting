@@ -21,6 +21,9 @@ public final class SeriesListViewModel {
     /// The current search query. Filtering is derived (`filtered`); the underlying `state` is left
     /// whole so clearing the query restores the full list without a re-read.
     public var searchText: String = ""
+    /// The real error text of the last failed create, or `nil`. Surfaced honestly in the UI
+    /// (No-Fake-State) rather than a silent no-op.
+    public private(set) var errorMessage: String?
 
     private let database: AppDatabase
     private var observationTask: Task<Void, Never>?
@@ -64,6 +67,26 @@ public final class SeriesListViewModel {
                 guard let self else { return }
                 state = summaries.isEmpty ? .empty : .loaded(summaries)
             }
+        }
+    }
+
+    /// Creates a new, meeting-less series (the list screen's "+" affordance). A blank/whitespace
+    /// title is refused (No-Fake-State: never create an untitled series) — `errorMessage` is set
+    /// and `nil` returned rather than silently no-oping. The live `observeSummaries()` stream
+    /// already started by `observe()` refreshes the list on success, so this doesn't re-read.
+    public func createSeries(title: String) async -> SeriesID? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            errorMessage = "Give the series a title."
+            return nil
+        }
+        do {
+            let id = try await database.series.createSeries(title: trimmed)
+            errorMessage = nil
+            return id
+        } catch {
+            errorMessage = String(describing: error)
+            return nil
         }
     }
 }

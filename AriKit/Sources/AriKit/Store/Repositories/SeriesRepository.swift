@@ -244,6 +244,112 @@ public struct SeriesRepository: Sendable {
         }
     }
 
+    // MARK: - Mutations (create / rename / merge / delete — F9 series management)
+
+    /// Creates a brand-new, meeting-less series (the series-list "+" affordance) — no
+    /// `seriesKey`/owner/ledger, just a title. Returns the freshly generated `SeriesID`.
+    @discardableResult
+    public func createSeries(title: String, at date: Date = Date()) async throws -> SeriesID {
+        let series = Series(
+            id: SeriesID(UUID().uuidString),
+            title: title,
+            createdAt: date,
+            updatedAt: date
+        )
+        try await upsert(series)
+        return series.id
+    }
+
+    /// Renames a series. `upsert(_:)` only touches the `seriesLedger` row when the incoming
+    /// `Series` carries ledger content (see its header) — since `find` hydrates the current
+    /// ledger onto the value we mutate here, a rename round-trips the existing ledger untouched.
+    public func rename(_ id: SeriesID, to title: String, at date: Date = Date()) async throws {
+        guard var series = try await find(id) else { return }
+        series.title = title
+        series.updatedAt = date
+        try await upsert(series)
+    }
+
+    /// Atomically absorbs `source` into `target`: every `source` member meeting not already in
+    /// `target` is re-pointed to `target` (preserving its original `occurrenceTime`/`linkSource`/
+    /// `createdAt`), `source`'s own member rows are removed, then `source` is tombstoned. The
+    /// caller (view model) is responsible for rebuilding `target`'s ledger afterward — this is a
+    /// pure membership operation.
+    public func merge(source: SeriesID, into target: SeriesID, at date: Date = Date()) async throws {
+        guard source != target else { return }
+
+        try await dbWriter.write { db in
+            let sourceMembers = try SeriesMemberRecord
+                .filter(Column("seriesId") == source.rawValue)
+                .fetchAll(db)
+
+            let targetMeetingIds = try Set(
+                SeriesMemberRecord
+                    .filter(Column("seriesId") == target.rawValue)
+                    .fetchAll(db)
+                    .map(\.meetingId)
+            )
+
+            for member in sourceMembers where !targetMeetingIds.contains(member.meetingId) {
+                try SeriesMemberRecord(
+                    seriesId: target.rawValue,
+                    meetingId: member.meetingId,
+                    occurrenceTime: member.occurrenceTime,
+                    linkSource: member.linkSource,
+                    createdAt: member.createdAt
+                ).insert(db)
+            }
+
+            try SeriesMemberRecord
+                .filter(Column("seriesId") == source.rawValue)
+                .deleteAll(db)
+
+            guard var sourceRecord = try SeriesRecord.fetchOne(db, key: source.rawValue) else { return }
+            sourceRecord.isDeleted = true
+            sourceRecord.deletedAt = date
+            try sourceRecord.update(db)
+        }
+    }
+
+    /// Detaches every member meeting from `id` (hard-deletes the link rows, so the meeting's
+    /// "Add to series" chip clears) and tombstones the series row itself, in one transaction.
+    public func deleteSeries(_ id: SeriesID, at date: Date = Date()) async throws {
+        try await dbWriter.write { db in
+            try SeriesMemberRecord
+                .filter(Column("seriesId") == id.rawValue)
+                .deleteAll(db)
+
+            guard var record = try SeriesRecord.fetchOne(db, key: id.rawValue) else { return }
+            record.isDeleted = true
+            record.deletedAt = date
+            try record.update(db)
+        }
+    }
+
+    /// The meetings belonging to a series ordered chronologically by meeting time (`createdAt`,
+    /// then `id` as a stable tiebreak) — NOT link-creation order like `meetingIds(inSeries:)`.
+    /// This is the ordering the ledger reducer's 1-based `mN` citation index is built against, so
+    /// it must match what the detail view's timeline shows.
+    ///
+    /// L2 known limitation: this ordering is NOT immutable — linking a backdated/imported meeting
+    /// (an earlier `createdAt` than an already-folded member) shifts every later member's index.
+    /// `@mref(mN@…)` tokens already baked into the ledger are stored verbatim, so a shift like this
+    /// can leave a stored, in-range `@mref` pointing at the wrong member until the series' ledger
+    /// is manually rebuilt (`SeriesLedgerReducer.rebuildLedger`, which re-derives every index from
+    /// this same ordering from scratch). See `SeriesLedgerReducer.foldMeeting`.
+    public func orderedMeetingIds(inSeries seriesId: SeriesID) async throws -> [MeetingID] {
+        try await dbWriter.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+            SELECT m.id AS id
+            FROM seriesMember sm
+            JOIN meeting m ON m.id = sm.meetingId
+            WHERE sm.seriesId = ? AND m.isDeleted = 0
+            ORDER BY m.createdAt ASC, m.id ASC
+            """, arguments: [seriesId.rawValue])
+            return rows.map { MeetingID($0["id"]) }
+        }
+    }
+
     // MARK: - Read-time reconciliation (series ⊕ seriesLedger — plan §4.7, No-Fake-State)
 
     private static func hydrate(_ record: SeriesRecord, db: Database) throws -> Series {

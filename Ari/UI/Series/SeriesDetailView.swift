@@ -25,16 +25,26 @@ struct SeriesDetailView: View {
 
     @State private var viewModel: SeriesDetailViewModel
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
+
+    /// Local UI state for the toolbar's Rename / Merge / Delete affordances (plan Part 4).
+    @State private var showRenameSheet = false
+    @State private var renameText = ""
+    @State private var showMergeSheet = false
+    @State private var mergeTargetId: SeriesID?
+    @State private var showDeleteConfirm = false
+    @State private var showMergeConfirm = false
 
     init(
         database: AppDatabase,
         seriesId: SeriesID,
+        ledgerReducer: SeriesLedgerReducer,
         onOpenMeetingMoment: @escaping (MeetingID, Double) -> Void
     ) {
         self.database = database
         self.seriesId = seriesId
         self.onOpenMeetingMoment = onOpenMeetingMoment
-        _viewModel = State(initialValue: SeriesDetailViewModel(database: database))
+        _viewModel = State(initialValue: SeriesDetailViewModel(database: database, ledgerReducer: ledgerReducer))
     }
 
     // No own `NavigationStack`: this view is pushed onto the shell's outer stack, which owns the
@@ -53,6 +63,137 @@ struct SeriesDetailView: View {
         .navigationTitle(viewModel.series.value?.title ?? "Series")
         .task(id: seriesId) {
             await viewModel.load(seriesId)
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("Rename") {
+                        viewModel.clearError()
+                        renameText = viewModel.series.value?.title ?? ""
+                        showRenameSheet = true
+                    }
+                    Button("Merge into…") {
+                        viewModel.clearError()
+                        mergeTargetId = viewModel.mergeTargets.first?.id
+                        showMergeSheet = true
+                    }
+                    .disabled(viewModel.mergeTargets.isEmpty)
+                    Button("Delete", role: .destructive) {
+                        showDeleteConfirm = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                // M3: no two mutations may overlap — a rebuild in flight must block Rename/Merge/
+                // Delete just as much as another rename/merge/delete would (e.g. Delete firing
+                // mid-rebuild would write a fresh ledger to a series it just tombstoned).
+                .disabled(viewModel.isBusy || viewModel.isRebuildingLedger)
+            }
+        }
+        .sheet(isPresented: $showRenameSheet) {
+            renameSheet
+        }
+        .sheet(isPresented: $showMergeSheet) {
+            mergeSheet
+        }
+        .confirmationDialog(
+            "Delete this series?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                Task {
+                    if await viewModel.delete() {
+                        dismiss()
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the series and detaches its meetings. The meetings themselves are kept.")
+        }
+    }
+
+    // MARK: - Rename sheet
+
+    private var renameSheet: some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+            Text("Rename series")
+                .marginaliaTextStyle(.title2, in: scheme, ink: .inkHeading)
+            TextField("Series title", text: $renameText)
+                .textFieldStyle(.roundedBorder)
+            if let errorMessage = viewModel.errorMessage {
+                Text(errorMessage)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .error)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { showRenameSheet = false }
+                    .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                Button("Save") {
+                    Task {
+                        await viewModel.rename(to: renameText)
+                        if viewModel.errorMessage == nil {
+                            showRenameSheet = false
+                        }
+                    }
+                }
+                .buttonStyle(.marginalia(.primary, .regular, in: scheme))
+                .disabled(viewModel.isBusy)
+            }
+        }
+        .padding(MarginaliaSpacing.xl.value)
+        .frame(minWidth: 320)
+    }
+
+    // MARK: - Merge sheet
+
+    private var mergeSheet: some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+            Text("Merge into…")
+                .marginaliaTextStyle(.title2, in: scheme, ink: .inkHeading)
+            Text("Every meeting in this series moves to the chosen series, and this series is deleted.")
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+            Picker("Target series", selection: $mergeTargetId) {
+                ForEach(viewModel.mergeTargets) { target in
+                    Text(target.title).tag(Optional(target.id))
+                }
+            }
+            .pickerStyle(.menu)
+            if let errorMessage = viewModel.errorMessage {
+                Text(errorMessage)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .error)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { showMergeSheet = false }
+                    .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                Button("Merge") { showMergeConfirm = true }
+                    .buttonStyle(.marginalia(.primary, .regular, in: scheme))
+                    .disabled(viewModel.isBusy || mergeTargetId == nil)
+            }
+        }
+        .padding(MarginaliaSpacing.xl.value)
+        .frame(minWidth: 360)
+        .confirmationDialog(
+            "Merge this series?",
+            isPresented: $showMergeConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Merge", role: .destructive) {
+                guard let target = mergeTargetId else { return }
+                Task {
+                    // This series is now tombstoned by the merge — it no longer exists, so pop
+                    // back to the list rather than trying to navigate to the target in place.
+                    if await viewModel.merge(into: target) != nil {
+                        showMergeSheet = false
+                        dismiss()
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This cannot be undone.")
         }
     }
 
@@ -109,9 +250,28 @@ struct SeriesDetailView: View {
     // MARK: - Ledger
 
     private func ledgerSection(for series: Series) -> some View {
-        VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
-            Text("Ledger")
-                .marginaliaTextStyle(.caption, in: scheme)
+        let hasLedger = series.ledgerMarkdown?.isEmpty == false
+        return VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Ledger")
+                    .marginaliaTextStyle(.caption, in: scheme)
+                Spacer()
+                if viewModel.isRebuildingLedger {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Button(hasLedger ? "Rebuild ledger" : "Build ledger") {
+                    Task { await viewModel.rebuildLedger() }
+                }
+                .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                // M3: a rename/merge/delete in flight must also block a rebuild — e.g. a rebuild
+                // firing mid-delete would write a ledger to a series that's about to be tombstoned.
+                .disabled(viewModel.isRebuildingLedger || viewModel.isBusy)
+            }
+            if let errorMessage = viewModel.errorMessage {
+                Text(errorMessage)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+            }
             if let ledgerMarkdown = series.ledgerMarkdown, !ledgerMarkdown.isEmpty {
                 panel {
                     MarginaliaMarkdownView(

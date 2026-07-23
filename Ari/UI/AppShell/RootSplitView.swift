@@ -78,11 +78,14 @@ struct RootSplitView: View {
                         PersonDetailView(database: database, personId: personId)
                     }
                     .navigationDestination(for: SeriesID.self) { seriesId in
-                        SeriesDetailView(
-                            database: database,
-                            seriesId: seriesId,
-                            onOpenMeetingMoment: { path.append(MeetingMoment(meetingId: $0, seconds: $1)) }
-                        )
+                        if let ledgerReducer = environment.seriesLedgerReducer {
+                            SeriesDetailView(
+                                database: database,
+                                seriesId: seriesId,
+                                ledgerReducer: ledgerReducer,
+                                onOpenMeetingMoment: { path.append(MeetingMoment(meetingId: $0, seconds: $1)) }
+                            )
+                        }
                     }
             }
         }
@@ -176,7 +179,7 @@ struct RootSplitView: View {
         case .savedMeetings:
             MeetingsListView(database: database)
         case .series:
-            SeriesListView(database: database)
+            SeriesListView(database: database, onCreated: { path.append($0) })
         case .people:
             PeopleListView(database: database)
         case .newMeeting:

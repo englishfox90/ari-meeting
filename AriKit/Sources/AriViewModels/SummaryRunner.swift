@@ -34,6 +34,10 @@ public struct SummaryRunner: Sendable {
     let customTemplateDirectory: URL?
     /// Injectable for tests; production default constructs a real client via `ProviderFactory`.
     let clientFactory: @Sendable (ProviderConfig) throws -> any LLMClient
+    /// The F9 series-ledger reducer (docs/plans/glittery-humming-truffle.md Part 5) — folded
+    /// fire-and-forget after a successful summary persist, below. `nil` disables auto-fold (e.g.
+    /// in tests that don't care about series), never blocking or failing the summary itself.
+    let ledgerReducer: SeriesLedgerReducer?
 
     /// Cap on the linked event's `notes` snippet folded into `calendarContextString` (← plan
     /// `docs/plans/summary-pipeline-completion.md` Gap 1's "~200 chars" bound).
@@ -47,7 +51,8 @@ public struct SummaryRunner: Sendable {
         customTemplateDirectory: URL? = nil,
         clientFactory: @escaping @Sendable (ProviderConfig) throws -> any LLMClient = {
             try ProviderFactory.make(config: $0)
-        }
+        },
+        ledgerReducer: SeriesLedgerReducer? = nil
     ) {
         self.database = database
         self.settings = settings
@@ -55,6 +60,7 @@ public struct SummaryRunner: Sendable {
         self.summaryService = summaryService
         self.customTemplateDirectory = customTemplateDirectory
         self.clientFactory = clientFactory
+        self.ledgerReducer = ledgerReducer
     }
 
     /// The transcript text to summarize: speaker-labeled ("Name: text") when at least one speaker
@@ -190,6 +196,23 @@ public struct SummaryRunner: Sendable {
             Self.log.info(
                 "Summary generated for meeting \(meetingId.rawValue, privacy: .public) in \(elapsed.formatted(), privacy: .public) (\(summary.bodyMarkdown.count, privacy: .public) chars)."
             )
+
+            // F9 auto-fold (full parity with the frozen Rust app's fire-and-forget
+            // `series_update_ledger` on summary completion): fold this meeting's fresh summary
+            // into its series ledger, if any. Detached + best-effort — logged, never surfaced to
+            // the caller, and must never block returning the summary the user is waiting on.
+            if let ledgerReducer {
+                Task.detached(priority: .utility) {
+                    do {
+                        try await ledgerReducer.foldMeeting(meetingId: meetingId)
+                    } catch {
+                        Self.log.error(
+                            "Series ledger auto-fold FAILED for meeting \(meetingId.rawValue, privacy: .public): \(String(describing: error), privacy: .public)"
+                        )
+                    }
+                }
+            }
+
             return summary
         } catch {
             let elapsed = clock.now - started
