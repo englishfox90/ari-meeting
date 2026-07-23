@@ -59,6 +59,46 @@ struct MeetingsListViewModelTests {
         #expect(!message.isEmpty)
     }
 
+    @Test("rename updates the row via the live observation")
+    func renameUpdatesRow() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let meeting = MeetingsListViewModelTests.makeMeeting(id: "meeting-1", createdAt: 1_700_000_000)
+        try await database.meetings.upsert(meeting)
+
+        let viewModel = MeetingsListViewModel(database: database)
+        await viewModel.observe()
+        try await viewModel.rename(meeting, to: "Renamed")
+
+        // Read through the repository directly — deterministic (no waiting on the async stream).
+        let reloaded = try #require(try await database.meetings.find(meeting.id))
+        #expect(reloaded.title == "Renamed")
+    }
+
+    @Test("blank rename is a no-op")
+    func blankRenameIsNoOp() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let meeting = MeetingsListViewModelTests.makeMeeting(id: "meeting-1", createdAt: 1_700_000_000)
+        try await database.meetings.upsert(meeting)
+
+        let viewModel = MeetingsListViewModel(database: database)
+        try await viewModel.rename(meeting, to: "   ")
+
+        let reloaded = try #require(try await database.meetings.find(meeting.id))
+        #expect(reloaded.title == meeting.title)
+    }
+
+    @Test("delete tombstones the meeting out of the listing")
+    func deleteTombstones() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let meeting = MeetingsListViewModelTests.makeMeeting(id: "meeting-1", createdAt: 1_700_000_000)
+        try await database.meetings.upsert(meeting)
+
+        let viewModel = MeetingsListViewModel(database: database)
+        try await viewModel.delete(meeting)
+
+        #expect(try await database.meetings.all().isEmpty)
+    }
+
     private static func makeMeeting(id: String, createdAt: TimeInterval) -> Meeting {
         Meeting(
             id: MeetingID(id),

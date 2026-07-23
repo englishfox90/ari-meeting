@@ -66,6 +66,14 @@ struct MeetingDetailView: View {
     /// writing the VM in the same transaction rendered the sheet against the pre-write state
     /// snapshot — the "Speaker identification isn't available" fallback on a healthy meeting.
     @State private var identifyContext: IdentifySpeakersContext?
+    /// Drives the rename alert; the pending text lives in `renameText`.
+    @State private var showingRename = false
+    @State private var renameText = ""
+    /// Drives the delete confirmation dialog.
+    @State private var showingDeleteConfirm = false
+    /// Honest surfacing of a real rename/delete write failure (No-Fake-State — never a silent
+    /// success).
+    @State private var actionError: String?
 
     private struct IdentifySpeakersContext: Identifiable {
         let id = UUID()
@@ -75,6 +83,9 @@ struct MeetingDetailView: View {
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
+    /// Pops the detail screen off the navigation stack after a delete (the list refreshes itself
+    /// via its own observation).
+    @Environment(\.dismiss) private var dismiss
 
     init(database: AppDatabase, meetingId: MeetingID, initialSeek: Double? = nil) {
         self.database = database
@@ -133,8 +144,29 @@ struct MeetingDetailView: View {
                 }
             }
             summaryToolbar
+            manageToolbar
         }
         .navigationTitle(viewModel.meeting.value?.title ?? "Meeting")
+        .alert("Rename meeting", isPresented: $showingRename) {
+            TextField("Meeting name", text: $renameText)
+            Button("Cancel", role: .cancel) {}
+            Button("Rename") { commitRename() }
+        }
+        .confirmationDialog(
+            "Delete this meeting?",
+            isPresented: $showingDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { commitDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It will be removed from your saved meetings. This can't be undone here.")
+        }
+        .alert("Couldn't complete that", isPresented: actionErrorPresented) {
+            Button("OK", role: .cancel) { actionError = nil }
+        } message: {
+            Text(actionError ?? "")
+        }
         .task(id: meetingId) {
             // Reset first: the detail view is REUSED across meetings in the split detail column
             // (no per-meeting `.id`), so a previous meeting's player must be stopped before the
@@ -529,6 +561,59 @@ struct MeetingDetailView: View {
     /// control shows while `AppEnvironment.bootstrap()` is still constructing `summaryRunner`
     /// (No-Fake-State). Reads `summaryViewModel` directly — never mutates `@State` during content
     /// building (the lazy build runs only from `.task` or a button action).
+    /// Rename / delete for the whole meeting, in an overflow menu. Shown only once the meeting has
+    /// loaded — no dead control while `viewModel.load` is in flight (No-Fake-State).
+    @ToolbarContentBuilder
+    private var manageToolbar: some ToolbarContent {
+        if let meeting = viewModel.meeting.value {
+            ToolbarItem(placement: .automatic) {
+                Menu {
+                    Button {
+                        renameText = meeting.title
+                        showingRename = true
+                    } label: {
+                        Label("Rename\u{2026}", systemImage: "pencil")
+                    }
+                    Button(role: .destructive) {
+                        showingDeleteConfirm = true
+                    } label: {
+                        Label("Delete\u{2026}", systemImage: "trash")
+                    }
+                } label: {
+                    Label("Manage meeting", systemImage: "ellipsis.circle")
+                }
+                .help("Rename or delete this meeting")
+            }
+        }
+    }
+
+    private var actionErrorPresented: Binding<Bool> {
+        Binding(get: { actionError != nil }, set: {
+            if !$0 {
+                actionError = nil
+            }
+        })
+    }
+
+    private func commitRename() {
+        let newTitle = renameText
+        Task {
+            do { try await viewModel.rename(meetingId, to: newTitle) }
+            catch { actionError = String(describing: error) }
+        }
+    }
+
+    private func commitDelete() {
+        Task {
+            do {
+                try await viewModel.delete(meetingId)
+                dismiss()
+            } catch {
+                actionError = String(describing: error)
+            }
+        }
+    }
+
     @ToolbarContentBuilder
     private var summaryToolbar: some ToolbarContent {
         if let summaryVM = summaryViewModel, !isNarrowLayout || narrowSection == .summary {

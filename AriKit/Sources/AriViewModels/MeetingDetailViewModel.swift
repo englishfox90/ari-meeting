@@ -71,6 +71,26 @@ public final class MeetingDetailViewModel {
         }
     }
 
+    /// Renames the meeting and reflects the new title locally. The detail screen does one-shot
+    /// reads (no live observation), so we patch the loaded `meeting` in place — otherwise the
+    /// header/navigation title would keep the stale title until the next `load`. A blank title, or
+    /// a call before the meeting has loaded, is a no-op. Throws on a real write failure.
+    public func rename(_ id: MeetingID, to newTitle: String) async throws {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard case let .loaded(current) = meeting, !trimmed.isEmpty, trimmed != current.title else { return }
+        try await database.meetings.rename(id, to: trimmed, at: Date())
+        var updated = current
+        updated.title = trimmed
+        meeting = .loaded(updated)
+    }
+
+    /// Soft-deletes (tombstones) the meeting. The caller is responsible for dismissing the detail
+    /// screen afterward (the list refreshes itself via its own observation). Throws on a real
+    /// write failure.
+    public func delete(_ id: MeetingID) async throws {
+        try await database.meetings.softDelete(id, at: Date())
+    }
+
     /// The resolved display name for a transcript segment's speaker, or `nil` if none could
     /// be resolved (honest — never a fabricated placeholder).
     public func displayName(for speakerId: SpeakerID?) -> String? {

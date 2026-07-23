@@ -50,4 +50,22 @@ public final class MeetingsListViewModel {
             }
         }
     }
+
+    /// Renames a meeting. The live `observeAll()` stream (started in `observe()`) re-emits the
+    /// updated list, so this view model never mutates `state` by hand — the row refreshes itself.
+    /// A blank/whitespace-only title is rejected (kept as a no-op) so the list can't show an
+    /// empty row. Throws on a real write failure so the caller can surface it (No-Fake-State:
+    /// never a silent success).
+    public func rename(_ meeting: Meeting, to newTitle: String) async throws {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != meeting.title else { return }
+        try await database.meetings.rename(meeting.id, to: trimmed, at: Date())
+    }
+
+    /// Soft-deletes (tombstones) a meeting — it disappears from every list but stays recoverable
+    /// in the DB. The live `observeAll()` stream drops the tombstoned row automatically. Throws on
+    /// a real write failure so the caller can surface it.
+    public func delete(_ meeting: Meeting) async throws {
+        try await database.meetings.softDelete(meeting.id, at: Date())
+    }
 }
