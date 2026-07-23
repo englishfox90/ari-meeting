@@ -133,6 +133,50 @@ public struct RecallTools: Sendable {
         try await summaries.forMeeting(meetingId) != nil
     }
 
+    // MARK: - Calendar-aware lookup (2026-07-23 fix: "do I have a meeting with X today" must
+
+    // consult the calendar directly, not only the `persons` table — a very recently invited
+    // attendee may have no `Person` record yet, which used to silently degrade to a confident-
+    // sounding "No" instead of an honest "nothing recorded, but here's what's on the calendar.")
+
+    /// Real calendar events happening TODAY (device-local calendar day — `Calendar.current.
+    /// isDateInToday`, never a UTC-naive comparison) whose attendees include a case-insensitive
+    /// substring match on `nameQuery`. Independent of whether a `Person` record exists yet or
+    /// whether the event is linked to a recorded `Meeting` — answers "is this on my calendar
+    /// today," which is a DIFFERENT question from "do I have a saved/recorded meeting" (plan
+    /// decision, 2026-07-23: calendar events and recorded meetings are related but never
+    /// conflated — a calendar hit here does NOT mean anything was recorded or discussed).
+    ///
+    /// Ambiguity-safe, matching `findPerson`/`findMeeting`/`findSeries`'s discipline: if today's
+    /// matching events name MORE THAN ONE distinct attendee (a case-insensitive-normalized name)
+    /// containing `nameQuery`, that's ambiguous — return `[]` rather than guessing which person
+    /// was meant. A single matching attendee across one or more of today's events resolves
+    /// normally (sorted by `startTime`, oldest first).
+    public func calendarEventsToday(matchingAttendeeName nameQuery: String) async throws -> [CalendarEvent] {
+        let needle = Self.normalized(nameQuery)
+        guard !needle.isEmpty else { return [] }
+        let all = try await calendarEvents.all()
+        let todays = all.filter { Calendar.current.isDateInToday($0.startTime) }
+
+        var matchedDistinctNames: Set<String> = []
+        var matches: [CalendarEvent] = []
+        for event in todays {
+            let attendeeMatches = event.attendees.filter { attendee in
+                guard let name = attendee.name else { return false }
+                return Self.normalized(name).contains(needle)
+            }
+            guard !attendeeMatches.isEmpty else { continue }
+            matches.append(event)
+            for attendee in attendeeMatches {
+                if let name = attendee.name {
+                    matchedDistinctNames.insert(Self.normalized(name))
+                }
+            }
+        }
+        guard matchedDistinctNames.count <= 1, !matches.isEmpty else { return [] }
+        return matches.sorted { $0.startTime < $1.startTime }
+    }
+
     // MARK: - Helpers
 
     private static func normalized(_ text: String) -> String {

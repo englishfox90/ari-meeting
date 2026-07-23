@@ -55,7 +55,7 @@ extension RecallEngineError: LocalizedError {
         case .questionTooLong:
             "Questions must be 1,000 characters or fewer."
         case .unsupportedQuestion:
-            "Ask Meetings can answer only from saved local Ari Meeting transcripts. It cannot access calendars, email, accounts, internet search, or files outside Ari Meeting."
+            "Ask Meetings can answer only from saved local Ari Meeting transcripts, plus real calendar scheduling facts (event times and attendees) when supplied — a calendar entry means something is scheduled, never that it was recorded or discussed. It cannot access email, accounts, internet search, or files outside Ari Meeting."
         case let .modelNotConfigured(message):
             message
         case .loopbackViolation:

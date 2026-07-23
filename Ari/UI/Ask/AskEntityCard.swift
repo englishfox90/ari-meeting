@@ -21,6 +21,8 @@ struct AskEntityCard: View {
             AskPersonCard(payload: payload, onOpenPerson: onOpenPerson)
         case let .series(payload):
             AskSeriesCard(payload: payload, onOpenSeries: onOpenSeries)
+        case let .calendarEvent(payload):
+            AskCalendarEventCard(payload: payload)
         }
     }
 }

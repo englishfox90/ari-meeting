@@ -43,7 +43,70 @@ extension RecallEngine {
         nameQuery: String,
         tools: RecallTools
     ) async throws -> ResolvedEntity? {
-        guard let person = try await tools.findPerson(nameContaining: nameQuery) else { return nil }
+        // Calendar-aware lookup (2026-07-23 fix): consult real calendar scheduling FIRST and
+        // INDEPENDENTLY of whether a `Person` record exists — a very recently invited attendee may
+        // have no `Person` row yet, and `findPerson` alone used to silently degrade "is this on my
+        // calendar today" into a confident-sounding "No". `calendarEventsToday` already returns `[]`
+        // for zero OR ambiguous (>1 distinct attendee name) matches — same ambiguity-safe discipline
+        // as `findPerson`.
+        let todaysEvents = try await tools.calendarEventsToday(matchingAttendeeName: nameQuery)
+        let person = try await tools.findPerson(nameContaining: nameQuery)
+
+        if let event = todaysEvents.first {
+            return try await resolveCalendarEventToday(event: event, person: person, tools: tools)
+        }
+
+        guard let person else { return nil }
+        return try await resolvePersonHistory(person: person, tools: tools)
+    }
+
+    /// Calendar precedence: a "today" question is most directly answered by what's actually
+    /// scheduled today. This is a DIFFERENT fact from "recorded meetings" — a calendar entry means
+    /// "scheduled," never "happened" or "discussed" (plan decision, 2026-07-23). When a `Person`
+    /// record ALSO resolves, both real facts are stated, clearly separated, never merged into one
+    /// sentence that could imply the calendar event was recorded/discussed.
+    private static func resolveCalendarEventToday(
+        event: CalendarEvent,
+        person: Person?,
+        tools: RecallTools
+    ) async throws -> ResolvedEntity {
+        let attendeeNames = event.attendees.compactMap(\.name)
+        let startTimeRFC3339 = RFC3339.string(from: event.startTime)
+        let payload = CalendarEventCardPayload(
+            eventId: event.id.rawValue,
+            title: event.title,
+            startTime: startTimeRFC3339,
+            attendeeNames: attendeeNames,
+            isLinkedToRecordedMeeting: event.meetingId != nil
+        )
+
+        let localTime = RecallCardDisplay.friendlyDate(startTimeRFC3339)
+        let withLabel = attendeeNames.isEmpty ? "" : " with \(attendeeNames.joined(separator: ", "))"
+        let calendarFact = "Calendar: an event \"\(event.title)\" today"
+            + (localTime.map { " at \($0)" } ?? "") + "\(withLabel)."
+
+        var recordedFact = ""
+        if let person {
+            let meetings = try await tools.meetings(withPerson: person.id)
+            let lastMeetingDate = meetings.first.map { RFC3339.string(from: $0.createdAt) }
+            let relativeLabel = meetings.first.flatMap { relativeDayAnnotation(for: $0.createdAt) } ?? ""
+            let dateNote = RecallCardDisplay.friendlyDayOnly(lastMeetingDate).map {
+                ", last met \($0)\(relativeLabel)"
+            } ?? ""
+            recordedFact = " Recorded meetings: \(meetings.count) meeting(s) involving "
+                + "\(person.displayName)\(dateNote)."
+        }
+
+        let contextLine = truncateCardContext("\(calendarFact)\(recordedFact)")
+        return ResolvedEntity(card: .calendarEvent(payload), contextLine: contextLine)
+    }
+
+    /// The pre-existing recorded-meetings-history person card (unchanged behavior) — used when no
+    /// calendar event resolves today for this name, but a `Person` record does.
+    private static func resolvePersonHistory(
+        person: Person,
+        tools: RecallTools
+    ) async throws -> ResolvedEntity {
         let meetings = try await tools.meetings(withPerson: person.id)
         let lastMeetingDate = meetings.first.map { RFC3339.string(from: $0.createdAt) }
         let payload = PersonCardPayload(

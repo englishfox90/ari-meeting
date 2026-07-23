@@ -276,6 +276,151 @@ struct RecallToolsTests {
         #expect(result.isEmpty)
     }
 
+    // MARK: - calendarEventsToday(matchingAttendeeName:) — real, ambiguity-safe, timezone-honest
+
+    @Test("calendarEventsToday returns a real match for an attendee on a genuinely-today event")
+    func calendarEventsTodayReturnsRealMatch() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = Date()
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-today"),
+            calendarId: "cal-1",
+            title: "James sync",
+            startTime: now,
+            endTime: now.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "James Nance", email: "james@example.com")]
+        ))
+
+        let tools = makeTools(db)
+        let result = try await tools.calendarEventsToday(matchingAttendeeName: "James Nance")
+        #expect(result.map(\.id) == [CalendarEventID("event-today")])
+    }
+
+    @Test("calendarEventsToday is empty (never fabricated) when no attendee matches")
+    func calendarEventsTodayEmptyForNoMatch() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = Date()
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-today"),
+            calendarId: "cal-1",
+            title: "Someone else's sync",
+            startTime: now,
+            endTime: now.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "Someone Else", email: "someone@example.com")]
+        ))
+
+        let tools = makeTools(db)
+        let result = try await tools.calendarEventsToday(matchingAttendeeName: "James Nance")
+        #expect(result.isEmpty)
+    }
+
+    @Test("calendarEventsToday excludes an attendee match on a PAST (non-today) event")
+    func calendarEventsTodayExcludesPastEvent() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let yesterday = try #require(Calendar.current.date(byAdding: .day, value: -1, to: Date()))
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-yesterday"),
+            calendarId: "cal-1",
+            title: "James sync",
+            startTime: yesterday,
+            endTime: yesterday.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "James Nance", email: "james@example.com")]
+        ))
+
+        let tools = makeTools(db)
+        let result = try await tools.calendarEventsToday(matchingAttendeeName: "James Nance")
+        #expect(result.isEmpty)
+    }
+
+    @Test("calendarEventsToday excludes an attendee match on a FUTURE (non-today) event")
+    func calendarEventsTodayExcludesFutureEvent() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let tomorrow = try #require(Calendar.current.date(byAdding: .day, value: 1, to: Date()))
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-tomorrow"),
+            calendarId: "cal-1",
+            title: "James sync",
+            startTime: tomorrow,
+            endTime: tomorrow.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "James Nance", email: "james@example.com")]
+        ))
+
+        let tools = makeTools(db)
+        let result = try await tools.calendarEventsToday(matchingAttendeeName: "James Nance")
+        #expect(result.isEmpty)
+    }
+
+    @Test(
+        "calendarEventsToday is empty (ambiguity is never guessed) when today's matches name more than one distinct attendee"
+    )
+    func calendarEventsTodayEmptyForAmbiguousAttendeeNames() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = Date()
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-sarah-ammon"),
+            calendarId: "cal-1",
+            title: "Sarah A sync",
+            startTime: now,
+            endTime: now.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "Sarah Ammon", email: "sarah.a@example.com")]
+        ))
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-sarah-chen"),
+            calendarId: "cal-1",
+            title: "Sarah C sync",
+            startTime: now,
+            endTime: now.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "Sarah Chen", email: "sarah.c@example.com")]
+        ))
+
+        let tools = makeTools(db)
+        let result = try await tools.calendarEventsToday(matchingAttendeeName: "Sarah")
+        #expect(result.isEmpty)
+    }
+
+    @Test("calendarEventsToday resolves multiple today's events for the SAME matched attendee, sorted by start time")
+    func calendarEventsTodaySortsMultipleEventsForSameAttendee() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = Date()
+        let later = now.addingTimeInterval(3600)
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-later"),
+            calendarId: "cal-1",
+            title: "James later",
+            startTime: later,
+            endTime: later.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "James Nance", email: "james@example.com")]
+        ))
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-earlier"),
+            calendarId: "cal-1",
+            title: "James earlier",
+            startTime: now,
+            endTime: now.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "James Nance", email: "james@example.com")]
+        ))
+
+        let tools = makeTools(db)
+        let result = try await tools.calendarEventsToday(matchingAttendeeName: "James")
+        #expect(result.map(\.id) == [CalendarEventID("event-earlier"), CalendarEventID("event-later")])
+    }
+
+    @Test("calendarEventsToday is empty for an empty query")
+    func calendarEventsTodayEmptyForEmptyQuery() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let tools = makeTools(db)
+        let result = try await tools.calendarEventsToday(matchingAttendeeName: "   ")
+        #expect(result.isEmpty)
+    }
+
     // MARK: - hasSummary: real, never fabricated
 
     @Test("hasSummary is true only when a real summary row exists for the meeting")

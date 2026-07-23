@@ -95,6 +95,7 @@ public enum RecallCardPayload: Codable, Hashable, Sendable {
     case meeting(MeetingCardPayload)
     case person(PersonCardPayload)
     case series(SeriesCardPayload)
+    case calendarEvent(CalendarEventCardPayload)
 }
 
 public struct MeetingCardPayload: Codable, Hashable, Sendable {
@@ -137,6 +138,37 @@ public struct PersonCardPayload: Codable, Hashable, Sendable {
         self.organization = organization
         self.lastMeetingDate = lastMeetingDate
         self.meetingCount = meetingCount
+    }
+}
+
+/// A real, SCHEDULED calendar event (never a recorded/saved meeting — those are `MeetingCardPayload`,
+/// a deliberately separate case). Populated only from `CalendarEventRepository`/`RecallTools.
+/// calendarEventsToday(matchingAttendeeName:)` — a real DB row, never a placeholder (No-Fake-State).
+/// A calendar entry means "scheduled," never "happened" or "discussed" — card UI (Slice C follow-up,
+/// out of scope here) must render this distinctly from a recorded-meeting card.
+public struct CalendarEventCardPayload: Codable, Hashable, Sendable {
+    public var eventId: String
+    public var title: String
+    /// RFC3339, same convention as the other card payloads.
+    public var startTime: String
+    public var attendeeNames: [String]
+    /// Real, not fabricated — `true` only when this calendar event is actually linked to a saved
+    /// `Meeting` (a non-nil `meetingId` on the `CalendarEvent` row). Drives whether card UI offers
+    /// to open the recorded meeting vs. just showing it's scheduled.
+    public var isLinkedToRecordedMeeting: Bool
+
+    public init(
+        eventId: String,
+        title: String,
+        startTime: String,
+        attendeeNames: [String],
+        isLinkedToRecordedMeeting: Bool
+    ) {
+        self.eventId = eventId
+        self.title = title
+        self.startTime = startTime
+        self.attendeeNames = attendeeNames
+        self.isLinkedToRecordedMeeting = isLinkedToRecordedMeeting
     }
 }
 

@@ -765,6 +765,122 @@ struct RecallEngineTests {
         let calls = await client.generateCallCount
         #expect(calls == 0)
     }
+
+    // MARK: - 11. Calendar-aware lookup (2026-07-23 fix, ask-meetings-tools-and-cards.md follow-on)
+
+    @Test(
+        "A global-scope ask for a person with a REAL calendar event today but NO Person record yet attaches a .calendarEvent card, not a .person card, and states only the calendar fact"
+    )
+    func calendarEventTodayWithNoPersonRecordAttachesCalendarCard() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = Date()
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-james"),
+            calendarId: "cal-1",
+            title: "James sync",
+            startTime: now,
+            endTime: now.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "James Nance", email: "james@example.com")]
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Yes.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(
+            question: "Do I have a meeting with James Nance today?"
+        )
+
+        let card = try #require(response.card)
+        guard case let .calendarEvent(payload) = card else {
+            Issue.record("expected a .calendarEvent card")
+            return
+        }
+        #expect(payload.eventId == "event-james")
+        #expect(payload.isLinkedToRecordedMeeting == false)
+
+        let prompt = try #require(await client.lastUserPrompt)
+        #expect(prompt.contains("Calendar:"))
+        #expect(prompt.contains("James sync"))
+        // No recorded-meetings language — no Person record exists, so nothing to state about it.
+        #expect(!prompt.contains("Recorded meetings:"))
+    }
+
+    @Test(
+        "A global-scope ask for a person with BOTH a calendar event today AND recorded-meeting history attaches the .calendarEvent card, and the context line clearly separates both real facts"
+    )
+    func calendarEventTodayAndPersonHistoryBothStatedSeparately() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = try await seedMeetingWithTranscripts(
+            db,
+            id: "meeting-james-past",
+            title: "Prior James sync",
+            segments: [(timestamp: "00:00", text: "Caught up with James last time.", start: 0)]
+        )
+        let person = Person(
+            id: PersonID("person-james"),
+            email: "james@example.com",
+            displayName: "James Nance",
+            isOwner: false,
+            createdAt: meeting.createdAt,
+            updatedAt: meeting.createdAt
+        )
+        try await db.persons.upsert(person)
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-james-past"),
+            calendarId: "cal-1",
+            title: "Prior James sync",
+            startTime: meeting.createdAt,
+            endTime: meeting.createdAt.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "James Nance", email: "james@example.com")],
+            meetingId: meeting.id,
+            linkSource: .calendar
+        ))
+
+        let now = Date()
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-james-today"),
+            calendarId: "cal-1",
+            title: "James sync today",
+            startTime: now,
+            endTime: now.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "James Nance", email: "james@example.com")]
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Yes.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(
+            question: "Do I have a meeting with James Nance today?"
+        )
+
+        let card = try #require(response.card)
+        guard case let .calendarEvent(payload) = card else {
+            Issue.record("expected a .calendarEvent card (calendar precedence over the .person card)")
+            return
+        }
+        #expect(payload.eventId == "event-james-today")
+
+        let prompt = try #require(await client.lastUserPrompt)
+        #expect(prompt.contains("Calendar:"))
+        #expect(prompt.contains("James sync today"))
+        #expect(prompt.contains("Recorded meetings:"))
+        #expect(prompt.contains("1 meeting(s) involving James Nance"))
+    }
+
+    // MARK: - 12. Resolved-fact priority over RAG excerpts (2026-07-23 fix)
+
+    @Test(
+        "The system prompt instructs the model to trust a Resolved:/Calendar: fact over a conflicting retrieved excerpt"
+    )
+    func systemPromptStatesResolvedFactPriorityOverExcerpts() {
+        let prompt = Recall.systemPrompt(isMeetingScoped: false)
+        #expect(prompt.contains("\"Resolved:\""))
+        #expect(prompt.contains("verified ground truth"))
+        #expect(prompt.lowercased().contains("trust it over"))
+    }
 }
 
 // MARK: - Test double

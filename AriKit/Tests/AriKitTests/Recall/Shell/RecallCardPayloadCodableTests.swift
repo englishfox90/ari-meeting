@@ -59,6 +59,22 @@ struct RecallCardPayloadCodableTests {
         #expect(decoded == payload)
     }
 
+    @Test("CalendarEventCardPayload round-trips through the RecallCardPayload.calendarEvent case")
+    func calendarEventCardRoundTrips() throws {
+        let payload = RecallCardPayload.calendarEvent(
+            CalendarEventCardPayload(
+                eventId: "e1",
+                title: "James sync",
+                startTime: "2026-07-23T18:00:00Z",
+                attendeeNames: ["James Nance"],
+                isLinkedToRecordedMeeting: false
+            )
+        )
+        let data = try encoder.encode(payload)
+        let decoded = try decoder.decode(RecallCardPayload.self, from: data)
+        #expect(decoded == payload)
+    }
+
     @Test("A RecallResponse with a card round-trips through Codable")
     func recallResponseWithCardRoundTrips() throws {
         let response = RecallResponse(
