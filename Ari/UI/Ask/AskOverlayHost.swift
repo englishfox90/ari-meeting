@@ -27,6 +27,8 @@ struct AskOverlayHost: View {
     let navKey: AskNavKey
     let isRecordingActive: Bool
     let onOpenMeeting: (MeetingID) -> Void
+    let onOpenPerson: (PersonID) -> Void
+    let onOpenSeries: (SeriesID) -> Void
     let onOpenSettings: () -> Void
 
     @Environment(\.colorScheme) private var scheme
@@ -87,6 +89,14 @@ struct AskOverlayHost: View {
                     onOpenMeeting: { meetingId in
                         isExpanded = false
                         onOpenMeeting(MeetingID(rawValue: meetingId))
+                    },
+                    onOpenPerson: { personId in
+                        isExpanded = false
+                        onOpenPerson(PersonID(rawValue: personId))
+                    },
+                    onOpenSeries: { seriesId in
+                        isExpanded = false
+                        onOpenSeries(SeriesID(rawValue: seriesId))
                     },
                     onOpenSettings: {
                         isExpanded = false

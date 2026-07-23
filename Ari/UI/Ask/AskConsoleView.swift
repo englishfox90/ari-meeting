@@ -12,6 +12,8 @@ import SwiftUI
 struct AskConsoleView: View {
     @Bindable var viewModel: AskViewModel
     let onOpenMeeting: (String) -> Void
+    let onOpenPerson: (String) -> Void
+    let onOpenSeries: (String) -> Void
     let onOpenSettings: () -> Void
     @Environment(\.colorScheme) private var scheme
 
@@ -65,8 +67,8 @@ struct AskConsoleView: View {
         switch item.kind {
         case let .user(text):
             userRow(text)
-        case let .assistant(text, sources, streaming):
-            assistantRow(text: text, sources: sources, streaming: streaming)
+        case let .assistant(text, sources, streaming, card):
+            assistantRow(text: text, sources: sources, streaming: streaming, card: card)
         case .thinking:
             AskThinkingRow()
         case let .error(message, showSettings):
@@ -88,23 +90,37 @@ struct AskConsoleView: View {
     }
 
     @ViewBuilder
-    private func assistantRow(text: String, sources: [RecallSource], streaming: Bool) -> some View {
+    private func assistantRow(
+        text: String, sources: [RecallSource], streaming: Bool, card: RecallCardPayload?
+    ) -> some View {
         // While the placeholder is still empty (deltas haven't arrived yet), the separate
         // `.thinking` row already conveys progress — an empty card here would be a hollow,
         // fake-looking box (No-Fake-State).
         if text.isEmpty, streaming {
             EmptyView()
         } else {
-            AskAnswerText(text: text, sources: sources, onOpenMeeting: onOpenMeeting)
-                .padding(MarginaliaSpacing.sm.value)
-                .background {
-                    RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
-                        .fill(Color.marginalia(.surface, in: scheme))
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
+                // The resolved entity card, when present, is the direct structured answer — it
+                // renders ABOVE the prose, inside the same bordered container (plan §5.2).
+                if let card {
+                    AskEntityCard(
+                        card: card,
+                        onOpenMeeting: onOpenMeeting,
+                        onOpenPerson: onOpenPerson,
+                        onOpenSeries: onOpenSeries
+                    )
                 }
-                .overlay {
-                    RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
-                        .strokeBorder(Color.marginalia(.hairline, in: scheme), lineWidth: 1)
-                }
+                AskAnswerText(text: text, sources: sources, onOpenMeeting: onOpenMeeting)
+            }
+            .padding(MarginaliaSpacing.sm.value)
+            .background {
+                RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
+                    .fill(Color.marginalia(.surface, in: scheme))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
+                    .strokeBorder(Color.marginalia(.hairline, in: scheme), lineWidth: 1)
+            }
         }
     }
 

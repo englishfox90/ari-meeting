@@ -53,6 +53,7 @@ private func waitUntil(
 @Suite("AskViewModel")
 @MainActor
 struct AskViewModelTests {
+
     // MARK: - Fixtures
 
     private func makeSource(meetingId: String = "meeting-1", speakers: [String] = []) -> RecallSource {
@@ -97,10 +98,10 @@ struct AskViewModelTests {
                 title: title, createdAt: "now", updatedAt: "now"
             )
         },
-        appendMessage: @escaping AskViewModel.AppendMessageOperation = { conversationId, role, content, sources in
+        appendMessage: @escaping AskViewModel.AppendMessageOperation = { conversationId, role, content, sources, card in
             AskMessage(
                 id: AskMessageID(UUID().uuidString), conversationId: conversationId, role: role,
-                content: content, sources: sources, createdAt: "now"
+                content: content, sources: sources, card: card, createdAt: "now"
             )
         },
         deleteConversation: @escaping AskViewModel.DeleteConversationOperation = { _ in }
@@ -129,26 +130,42 @@ struct AskViewModelTests {
 
         controllable.continuation.yield(.delta("Hello"))
         await waitUntil {
-            if case let .assistant(text, _, _)? = viewModel.items.first(where: { if case .assistant = $0.kind { true } else { false } })?.kind {
+            if case let .assistant(text, _, _, _)? = viewModel.items
+                .first(where: {
+                    if case .assistant = $0.kind {
+                        true
+                    } else {
+                        false
+                    }
+                })?.kind {
                 return text == "Hello"
             }
             return false
         }
 
         let assistantMidStream = try #require(viewModel.items.first { item in
-            if case .assistant = item.kind { return true }
+            if case .assistant = item.kind {
+                return true
+            }
             return false
         })
-        guard case let .assistant(text, sources, streaming) = assistantMidStream.kind else {
+        guard case let .assistant(text, sources, streaming, card) = assistantMidStream.kind else {
             Issue.record("expected an assistant row")
             return
         }
         #expect(text == "Hello")
+        #expect(card == nil)
         #expect(sources.isEmpty)
         #expect(streaming)
         #expect(viewModel.isStreaming)
         // The "thinking" placeholder is dropped once the first delta arrives.
-        #expect(!viewModel.items.contains { if case .thinking = $0.kind { true } else { false } })
+        #expect(!viewModel.items.contains {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
 
         controllable.continuation.yield(.delta(", world"))
         controllable.continuation.yield(.done(RecallResponse(answer: "Hello, world (final)", sources: [])))
@@ -172,7 +189,7 @@ struct AskViewModelTests {
         await viewModel.streamTask?.value
 
         let assistantItem = try #require(viewModel.items.last)
-        guard case let .assistant(text, sources, streaming) = assistantItem.kind else {
+        guard case let .assistant(text, sources, streaming, card) = assistantItem.kind else {
             Issue.record("expected an assistant row")
             return
         }
@@ -180,6 +197,7 @@ struct AskViewModelTests {
         #expect(text != "raw partial chunks")
         #expect(sources == response.sources)
         #expect(!streaming)
+        #expect(card == nil)
     }
 
     // MARK: - Test 3: sources attach only from .done; no person tags when speakers:[]
@@ -195,11 +213,22 @@ struct AskViewModelTests {
         viewModel.send()
         controllable.continuation.yield(.delta("partial"))
         await waitUntil {
-            viewModel.items.contains { if case .assistant = $0.kind { true } else { false } }
+            viewModel.items.contains {
+                if case .assistant = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }
         }
 
-        let midStream = try #require(viewModel.items.first { if case .assistant = $0.kind { return true }; return false })
-        guard case let .assistant(_, midSources, _) = midStream.kind else {
+        let midStream = try #require(viewModel.items
+            .first {
+                if case .assistant = $0.kind {
+                    return true
+                }; return false
+            })
+        guard case let .assistant(_, midSources, _, _) = midStream.kind else {
             Issue.record("expected an assistant row")
             return
         }
@@ -210,17 +239,24 @@ struct AskViewModelTests {
         await viewModel.streamTask?.value
 
         let finalItem = try #require(viewModel.items.last)
-        guard case let .assistant(_, finalSources, _) = finalItem.kind else {
+        guard case let .assistant(_, finalSources, _, _) = finalItem.kind else {
             Issue.record("expected an assistant row")
             return
         }
         #expect(finalSources == [source])
-        #expect(finalSources.allSatisfy { $0.speakers.isEmpty })
+        // A key path here makes `#expect`'s macro expansion of `allSatisfy` ambiguous between
+        // throwing/non-throwing overloads (a real Swift Testing macro limitation, not a style
+        // preference) and fails to build — keep this as an explicit closure.
+        // swiftformat:disable:next preferKeyPath
+        let allSpeakersEmpty = finalSources.allSatisfy { source in source.speakers.isEmpty }
+        #expect(allSpeakersEmpty)
     }
 
     // MARK: - Test 4: error surfacing verbatim + settings flag
 
-    @Test("a thrown error drops the placeholder and appends the error verbatim, with showSettings for modelNotConfigured")
+    @Test(
+        "a thrown error drops the placeholder and appends the error verbatim, with showSettings for modelNotConfigured"
+    )
     func errorSurfacesVerbatimWithSettingsFlagForModelNotConfigured() async throws {
         let error = RecallEngineError.modelNotConfigured("Configure Built-in AI or Ollama before asking meetings.")
         let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in throwingStream(error) })
@@ -229,8 +265,20 @@ struct AskViewModelTests {
         viewModel.send()
         await viewModel.streamTask?.value
 
-        #expect(!viewModel.items.contains { if case .assistant = $0.kind { true } else { false } })
-        #expect(!viewModel.items.contains { if case .thinking = $0.kind { true } else { false } })
+        #expect(!viewModel.items.contains {
+            if case .assistant = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+        #expect(!viewModel.items.contains {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
         let errorItem = try #require(viewModel.items.last)
         guard case let .error(message, showSettings) = errorItem.kind else {
             Issue.record("expected an error row")
@@ -312,7 +360,7 @@ struct AskViewModelTests {
     // MARK: - Test 8: scope override cancels in-flight + drops placeholder + clears thread
 
     @Test("setScope cancels an in-flight ask, drops its placeholder, and clears the active thread")
-    func scopeOverrideCancelsInFlightAndClearsThread() async throws {
+    func scopeOverrideCancelsInFlightAndClearsThread() async {
         let controllable = makeControllableStream()
         let createCallCount = Mutex<Int>(0)
         let viewModel = makeViewModel(
@@ -374,9 +422,15 @@ struct AskViewModelTests {
         await viewModel.streamTask?.value
         firstControllable.continuation.finish()
 
-        #expect(viewModel.items.contains { if case .user("Second question") = $0.kind { true } else { false } })
+        #expect(viewModel.items.contains {
+            if case .user("Second question") = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
         let lastAssistant = try #require(viewModel.items.last)
-        guard case let .assistant(text, _, _) = lastAssistant.kind else {
+        guard case let .assistant(text, _, _, _) = lastAssistant.kind else {
             Issue.record("expected an assistant row"); return
         }
         #expect(text == "Second answer")
@@ -395,15 +449,23 @@ struct AskViewModelTests {
         let role: String
         let content: String
         let sources: [RecallSource]
+        let card: RecallCardPayload?
     }
 
     @Test("the conversation is created once (first message), then user then assistant-with-sources are appended")
-    func conversationPersistsCreateOnceThenAppendsUserAndAssistant() async throws {
+    func conversationPersistsCreateOnceThenAppendsUserAndAssistant() async {
         let createCalls = Mutex<[CreateCall]>([])
         let appendCalls = Mutex<[AppendCall]>([])
         let source = makeSource()
+        let card = RecallCardPayload.person(
+            PersonCardPayload(personId: "p1", displayName: "Sarah Ammon", meetingCount: 3)
+        )
         let viewModel = makeViewModel(
-            streamAnswer: { _, _, _, _ in scriptedStream([.done(RecallResponse(answer: "Answer one", sources: [source]))]) },
+            streamAnswer: { _, _, _, _ in scriptedStream([.done(RecallResponse(
+                answer: "Answer one",
+                sources: [source],
+                card: card
+            ))]) },
             createConversation: { meetingId, seriesId, title in
                 createCalls.withLock { $0.append(CreateCall(meetingId: meetingId, seriesId: seriesId, title: title)) }
                 return AskConversation(
@@ -411,13 +473,19 @@ struct AskViewModelTests {
                     title: title, createdAt: "now", updatedAt: "now"
                 )
             },
-            appendMessage: { conversationId, role, content, sources in
+            appendMessage: { conversationId, role, content, sources, appendedCard in
                 appendCalls.withLock {
-                    $0.append(AppendCall(conversationId: conversationId, role: role, content: content, sources: sources))
+                    $0.append(AppendCall(
+                        conversationId: conversationId,
+                        role: role,
+                        content: content,
+                        sources: sources,
+                        card: appendedCard
+                    ))
                 }
                 return AskMessage(
                     id: AskMessageID(UUID().uuidString), conversationId: conversationId, role: role,
-                    content: content, sources: sources, createdAt: "now"
+                    content: content, sources: sources, card: appendedCard, createdAt: "now"
                 )
             }
         )
@@ -435,7 +503,8 @@ struct AskViewModelTests {
         let appendSnapshot = appendCalls.withLock { $0 }
 
         #expect(createSnapshot.count == 1)
-        #expect(createSnapshot[0].title == String("What did we decide about launch timing, exactly, in detail?".prefix(40)))
+        #expect(createSnapshot[0]
+            .title == String("What did we decide about launch timing, exactly, in detail?".prefix(40)))
 
         #expect(appendSnapshot.count == 4)
         #expect(appendSnapshot[0].role == "user")
@@ -443,16 +512,28 @@ struct AskViewModelTests {
         #expect(appendSnapshot[1].role == "assistant")
         #expect(appendSnapshot[1].content == "Answer one")
         #expect(appendSnapshot[1].sources == [source])
+        // The resolved card threads through to the persisted assistant message, verbatim — never
+        // a fabricated/estimated re-derivation (No-Fake-State).
+        #expect(appendSnapshot[1].card == card)
+        // The user turn's append call never carries a card (only the entity-resolved assistant
+        // turn can).
+        #expect(appendSnapshot[0].card == nil)
         #expect(appendSnapshot[2].role == "user")
         #expect(appendSnapshot[2].content == "Follow-up question")
         #expect(appendSnapshot[0].conversationId == "conversation-1")
         #expect(appendSnapshot[2].conversationId == "conversation-1")
+
+        // The in-memory transcript item also carries the same card (plan §5.2 wiring).
+        guard case let .assistant(_, _, _, itemCard) = viewModel.items[1].kind else {
+            Issue.record("expected an assistant row"); return
+        }
+        #expect(itemCard == card)
     }
 
     // MARK: - Test 11: conversation load hydration in order, incl. sources
 
     @Test("load(_:) hydrates items from the conversation detail in order, sources included")
-    func loadHydratesItemsInOrderWithSources() async throws {
+    func loadHydratesItemsInOrderWithSources() async {
         let source = makeSource()
         let conversationId = AskConversationID("conversation-1")
         let detail = AskConversationDetail(
@@ -460,7 +541,13 @@ struct AskViewModelTests {
                 id: conversationId, meetingId: nil, title: "Saved", createdAt: "t0", updatedAt: "t1"
             ),
             messages: [
-                AskMessage(id: "m1", conversationId: conversationId, role: "user", content: "First question", createdAt: "t0"),
+                AskMessage(
+                    id: "m1",
+                    conversationId: conversationId,
+                    role: "user",
+                    content: "First question",
+                    createdAt: "t0"
+                ),
                 AskMessage(
                     id: "m2", conversationId: conversationId, role: "assistant", content: "First answer",
                     sources: [source], createdAt: "t1"
@@ -477,12 +564,44 @@ struct AskViewModelTests {
             Issue.record("expected a user row first"); return
         }
         #expect(firstText == "First question")
-        guard case let .assistant(text, sources, streaming) = viewModel.items[1].kind else {
+        guard case let .assistant(text, sources, streaming, card) = viewModel.items[1].kind else {
             Issue.record("expected an assistant row second"); return
         }
         #expect(text == "First answer")
         #expect(sources == [source])
         #expect(!streaming)
+        #expect(card == nil)
+    }
+
+    @Test("load(_:) hydrates a persisted assistant message's card verbatim (Slice C)")
+    func loadHydratesAssistantCard() async {
+        let conversationId = AskConversationID("conversation-2")
+        let card = RecallCardPayload.series(
+            SeriesCardPayload(seriesId: "s1", title: "Design sync", meetingCount: 4, lastMeetingDate: "2026-07-01")
+        )
+        let detail = AskConversationDetail(
+            conversation: AskConversation(
+                id: conversationId, seriesId: "s1", title: "Saved", createdAt: "t0", updatedAt: "t1"
+            ),
+            messages: [
+                AskMessage(
+                    id: "m1", conversationId: conversationId, role: "user",
+                    content: "When did the design sync meet?", createdAt: "t0"
+                ),
+                AskMessage(
+                    id: "m2", conversationId: conversationId, role: "assistant", content: "It met 4 times.",
+                    card: card, createdAt: "t1"
+                )
+            ]
+        )
+        let viewModel = makeViewModel(loadConversation: { id in id == conversationId ? detail : nil })
+
+        await viewModel.load(conversationId)
+
+        guard case let .assistant(_, _, _, hydratedCard) = viewModel.items[1].kind else {
+            Issue.record("expected an assistant row second"); return
+        }
+        #expect(hydratedCard == card)
     }
 
     // MARK: - Test 12: recent list keyed to scope (nil for global)
@@ -493,7 +612,7 @@ struct AskViewModelTests {
     }
 
     @Test("loadRecent() keys the list request to the CURRENT scope (nil/nil for global)")
-    func recentListIsKeyedToScope() async throws {
+    func recentListIsKeyedToScope() async {
         let capturedKeys = Mutex<[ScopeKey]>([])
         let globalVM = makeViewModel(scope: .global, listConversations: { meetingId, seriesId in
             capturedKeys.withLock { $0.append(ScopeKey(meetingId: meetingId, seriesId: seriesId)) }

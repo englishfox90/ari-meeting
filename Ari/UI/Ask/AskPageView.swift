@@ -10,6 +10,8 @@ struct AskPageView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
     let onOpenMeeting: (MeetingID) -> Void
+    let onOpenPerson: (PersonID) -> Void
+    let onOpenSeries: (SeriesID) -> Void
     let onOpenSettings: () -> Void
 
     @State private var viewModel: AskViewModel?
@@ -21,6 +23,8 @@ struct AskPageView: View {
                 AskConsoleView(
                     viewModel: viewModel,
                     onOpenMeeting: { meetingId in onOpenMeeting(MeetingID(rawValue: meetingId)) },
+                    onOpenPerson: { personId in onOpenPerson(PersonID(rawValue: personId)) },
+                    onOpenSeries: { seriesId in onOpenSeries(SeriesID(rawValue: seriesId)) },
                     onOpenSettings: onOpenSettings
                 )
             } else {

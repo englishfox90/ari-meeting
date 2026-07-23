@@ -64,25 +64,11 @@ struct AskSourceCard: View {
     }
 
     /// The meeting date rendered in a human format ("Jul 22, 2026, 3:45 PM") instead of the raw
-    /// RFC3339/ISO-8601 string the recall engine carries on the wire. Parsing is tolerant of both
-    /// fractional and whole-second forms; if the value isn't a parseable instant (other scopes may
-    /// supply a different shape), fall back to the raw string rather than dropping it — never a
-    /// fabricated or blanked date (No-Fake-State).
+    /// RFC3339/ISO-8601 string the recall engine carries on the wire — the shared
+    /// `RecallCardDisplay.friendlyDate` helper (also used by the Slice C entity cards) owns the
+    /// parsing/fallback discipline (No-Fake-State: never a fabricated or blanked date).
     private var friendlyDate: String? {
-        guard let raw = source.meetingDate, !raw.isEmpty else { return nil }
-        guard let date = Self.parseISO(raw) else { return raw }
-        return date.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    private static func parseISO(_ string: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: string) {
-            return date
-        }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return plain.date(from: string)
+        RecallCardDisplay.friendlyDate(source.meetingDate)
     }
 
     private var personTags: some View {

@@ -16,8 +16,11 @@ public enum AskTranscriptItemKind: Sendable, Equatable {
     case user(String)
     /// An assistant answer. `streaming == true` while deltas are still arriving — the accumulated
     /// text so far; `false` once the terminal `.done` has replaced it with the reconciled answer.
-    /// `sources` is `[]` until `.done` lands (No-Fake-State — never attach sources early).
-    case assistant(text: String, sources: [RecallSource], streaming: Bool)
+    /// `sources` is `[]` until `.done` lands (No-Fake-State — never attach sources early). `card`
+    /// is likewise `nil` until `.done` lands: a deterministically-resolved entity card (plan §5.1,
+    /// `ask-meetings-tools-and-cards.md`), `nil` unless Slice B's entity resolution found exactly
+    /// one real, unambiguous row.
+    case assistant(text: String, sources: [RecallSource], streaming: Bool, card: RecallCardPayload?)
     /// The honest "searching local meeting excerpts…" placeholder shown before the first delta.
     case thinking
     /// A surfaced `RecallEngineError.localizedDescription`, verbatim — never paraphrased or

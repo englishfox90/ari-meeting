@@ -132,6 +132,8 @@ struct RootSplitView: View {
                 navKey: askNavKey,
                 isRecordingActive: environment.recordingSession?.isActive ?? false,
                 onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
+                onOpenPerson: { path.append($0); askNavStack.append(.none) },
+                onOpenSeries: { path.append($0); askNavStack.append(.series($0)) },
                 onOpenSettings: { selectedSection = .settings }
             )
         }
@@ -276,6 +278,8 @@ struct RootSplitView: View {
         case .ask:
             AskPageView(
                 onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
+                onOpenPerson: { path.append($0); askNavStack.append(.none) },
+                onOpenSeries: { path.append($0); askNavStack.append(.series($0)) },
                 onOpenSettings: { selectedSection = .settings }
             )
         case .calendar:

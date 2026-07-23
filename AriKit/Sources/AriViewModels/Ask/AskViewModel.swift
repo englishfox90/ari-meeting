@@ -20,6 +20,7 @@ import Observation
 @MainActor
 @Observable
 public final class AskViewModel {
+
     // MARK: - State (honest, no fabricated defaults)
 
     public private(set) var scope: AskScope
@@ -61,7 +62,8 @@ public final class AskViewModel {
         _ conversationId: AskConversationID,
         _ role: String,
         _ content: String,
-        _ sources: [RecallSource]
+        _ sources: [RecallSource],
+        _ card: RecallCardPayload?
     ) async throws -> AskMessage
 
     public typealias DeleteConversationOperation = @Sendable (
@@ -114,9 +116,9 @@ public final class AskViewModel {
             createConversation: { meetingId, seriesId, title in
                 try await conversationStore.create(meetingId: meetingId, seriesId: seriesId, title: title)
             },
-            appendMessage: { conversationId, role, content, sources in
+            appendMessage: { conversationId, role, content, sources, card in
                 try await conversationStore.appendMessage(
-                    conversationId: conversationId, role: role, content: content, sources: sources
+                    conversationId: conversationId, role: role, content: content, sources: sources, card: card
                 )
             },
             deleteConversation: { id in
@@ -182,7 +184,9 @@ public final class AskViewModel {
         let history = lastHistoryTurns()
         items.append(AskTranscriptItem(kind: .user(question)))
         let placeholderId = UUID().uuidString
-        items.append(AskTranscriptItem(id: placeholderId, kind: .assistant(text: "", sources: [], streaming: true)))
+        items.append(
+            AskTranscriptItem(id: placeholderId, kind: .assistant(text: "", sources: [], streaming: true, card: nil))
+        )
         let thinkingId = UUID().uuidString
         items.append(AskTranscriptItem(id: thinkingId, kind: .thinking))
         isStreaming = true
@@ -193,53 +197,57 @@ public final class AskViewModel {
         streamTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let conversationId = try await self.ensureConversation(
+                let conversationId = try await ensureConversation(
                     meetingId: persistenceKey.meetingId,
                     seriesId: persistenceKey.seriesId,
                     firstQuestion: question,
                     generation: generation
                 )
-                _ = try await self.appendMessageOp(conversationId, "user", question, [])
+                _ = try await appendMessageOp(conversationId, "user", question, [], nil)
 
                 var accumulated = ""
                 var sawFirstDelta = false
-                let stream = self.streamAnswerOp(question, scopeKey.meetingId, scopeKey.seriesId, history)
+                let stream = streamAnswerOp(question, scopeKey.meetingId, scopeKey.seriesId, history)
                 for try await event in stream {
-                    guard self.streamGeneration == generation else { return }
+                    guard streamGeneration == generation else { return }
                     switch event {
                     case let .delta(delta):
                         if !sawFirstDelta {
                             sawFirstDelta = true
-                            self.removeItem(id: thinkingId)
+                            removeItem(id: thinkingId)
                         }
                         accumulated += delta
-                        self.updateAssistant(id: placeholderId, text: accumulated, sources: [], streaming: true)
+                        updateAssistant(id: placeholderId, text: accumulated, sources: [], streaming: true, card: nil)
                     case let .done(response):
-                        self.removeItem(id: thinkingId)
-                        self.updateAssistant(
-                            id: placeholderId, text: response.answer, sources: response.sources, streaming: false
+                        removeItem(id: thinkingId)
+                        updateAssistant(
+                            id: placeholderId, text: response.answer, sources: response.sources,
+                            streaming: false, card: response.card
                         )
-                        _ = try await self.appendMessageOp(
-                            conversationId, "assistant", response.answer, response.sources
+                        _ = try await appendMessageOp(
+                            conversationId, "assistant", response.answer, response.sources, response.card
                         )
                     }
                 }
-                guard self.streamGeneration == generation else { return }
-                self.isStreaming = false
+                guard streamGeneration == generation else { return }
+                isStreaming = false
                 // Surface the just-persisted thread in the recent list now, so it's already present
                 // when the user starts a new conversation and returns to the empty state.
-                await self.loadRecent()
+                await loadRecent()
             } catch is CancellationError {
                 // A user-initiated cancel (new question / scope change) — already handled by
                 // whichever call site bumped `streamGeneration`; nothing further to surface.
             } catch {
-                guard self.streamGeneration == generation else { return }
-                self.removeItem(id: thinkingId)
-                self.removeItem(id: placeholderId)
-                self.items.append(
-                    AskTranscriptItem(kind: .error(error.localizedDescription, showSettings: Self.showSettings(for: error)))
+                guard streamGeneration == generation else { return }
+                removeItem(id: thinkingId)
+                removeItem(id: placeholderId)
+                items.append(
+                    AskTranscriptItem(kind: .error(
+                        error.localizedDescription,
+                        showSettings: Self.showSettings(for: error)
+                    ))
                 )
-                self.isStreaming = false
+                isStreaming = false
             }
         }
     }
@@ -264,18 +272,20 @@ public final class AskViewModel {
         items.removeAll { item in
             switch item.kind {
             case .thinking:
-                return true
-            case let .assistant(text, _, streaming):
-                return streaming && text.isEmpty
+                true
+            case let .assistant(text, _, streaming, _):
+                streaming && text.isEmpty
             case .user, .error:
-                return false
+                false
             }
         }
     }
 
-    private func updateAssistant(id: String, text: String, sources: [RecallSource], streaming: Bool) {
+    private func updateAssistant(
+        id: String, text: String, sources: [RecallSource], streaming: Bool, card: RecallCardPayload?
+    ) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        items[index].kind = .assistant(text: text, sources: sources, streaming: streaming)
+        items[index].kind = .assistant(text: text, sources: sources, streaming: streaming, card: card)
     }
 
     /// Trailing history for the NEXT ask, alternating roles, newest kept (← `RecallBounds.
@@ -286,7 +296,7 @@ public final class AskViewModel {
             switch item.kind {
             case let .user(text):
                 turns.append(RecallTurn(role: "user", content: text))
-            case let .assistant(text, _, streaming):
+            case let .assistant(text, _, streaming, _):
                 guard !streaming, !text.isEmpty else { continue }
                 turns.append(RecallTurn(role: "assistant", content: text))
             case .thinking, .error:
@@ -340,7 +350,7 @@ public final class AskViewModel {
         items = detail.messages.map { message in
             let kind: AskTranscriptItemKind = message.role == "user"
                 ? .user(message.content)
-                : .assistant(text: message.content, sources: message.sources, streaming: false)
+                : .assistant(text: message.content, sources: message.sources, streaming: false, card: message.card)
             return AskTranscriptItem(id: message.id.rawValue, kind: kind)
         }
     }
@@ -348,7 +358,7 @@ public final class AskViewModel {
     /// Refreshes `recentConversations` for the CURRENT scope's persistence key.
     public func loadRecent() async {
         let key = scope.persistenceKey
-        recentConversations = (try? await listConversationsOp(key.meetingId, key.seriesId)) ?? []
+        recentConversations = await (try? listConversationsOp(key.meetingId, key.seriesId)) ?? []
     }
 
     /// Deletes a saved conversation (and its messages). If it was the active thread, starts a
