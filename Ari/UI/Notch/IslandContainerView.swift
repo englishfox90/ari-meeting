@@ -60,6 +60,12 @@ struct IslandShape: Shape {
     var topRadius: CGFloat
     /// Convex rounding at each bottom corner.
     var bottomRadius: CGFloat
+    /// Full-width solid headroom drawn ABOVE the fillets, as part of this same path
+    /// (`IslandGeometry.topBleed`). The host panel extends that far past the physical screen
+    /// edge, so this band is invisible in steady state — but because it is the SAME fill as the
+    /// island body (not a separate layer), there is no seam at the screen's top row that
+    /// fractional-pixel animation frames can crack open into hairlines.
+    var bleed: CGFloat = 0
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(topRadius, bottomRadius) }
@@ -70,18 +76,25 @@ struct IslandShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
+        // The island body (fillets and below) occupies the rect BELOW the bleed band.
+        let bleed = max(0, min(self.bleed, rect.height))
+        let bodyTop = rect.minY + bleed
+        let bodyHeight = rect.height - bleed
         // Clamp so the two arcs on each side can't overrun the geometry on a narrow/short
         // island (the fallback pill is only 30pt tall).
-        let top = max(0, min(topRadius, min(rect.width / 2.0, rect.height)))
-        let bottom = max(0, min(bottomRadius, min(rect.width / 2.0 - top, rect.height - top)))
+        let top = max(0, min(topRadius, min(rect.width / 2.0, bodyHeight)))
+        let bottom = max(0, min(bottomRadius, min(rect.width / 2.0 - top, bodyHeight - top)))
 
         var path = Path()
 
-        // Top-left corner: from the very top-left, curve DOWN-and-IN (concave).
+        // From the very top-left of the bleed band, straight down its left edge to where the
+        // island body begins (the physical screen's top edge)…
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX, y: bodyTop))
+        // …then the top-left corner: curve DOWN-and-IN (concave).
         path.addQuadCurve(
-            to: CGPoint(x: rect.minX + top, y: rect.minY + top),
-            control: CGPoint(x: rect.minX + top, y: rect.minY)
+            to: CGPoint(x: rect.minX + top, y: bodyTop + top),
+            control: CGPoint(x: rect.minX + top, y: bodyTop)
         )
 
         // Left side down to where the bottom rounding begins.
@@ -103,15 +116,16 @@ struct IslandShape: Shape {
         )
 
         // Right side back up to the top concave fillet.
-        path.addLine(to: CGPoint(x: rect.maxX - top, y: rect.minY + top))
+        path.addLine(to: CGPoint(x: rect.maxX - top, y: bodyTop + top))
 
-        // Top-right corner: curve UP-and-OUT to the very top-right (concave).
+        // Top-right corner: curve UP-and-OUT to where the bleed band begins (concave).
         path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.minY),
-            control: CGPoint(x: rect.maxX - top, y: rect.minY)
+            to: CGPoint(x: rect.maxX, y: bodyTop),
+            control: CGPoint(x: rect.maxX - top, y: bodyTop)
         )
 
-        // Close along the flush top edge.
+        // Straight up the bleed band's right edge, then close along its top.
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
 
         return path
@@ -200,25 +214,25 @@ struct IslandContainerView: View {
             // nested than the bouncy one below, so it wins for content's own geometry; the
             // corner-radius spring below still gets its bounce.
             .animation(.spring(response: 0.34, dampingFraction: 1.0), value: presentation)
-            .background(IslandShape(topRadius: topRadius, bottomRadius: bottomRadius).fill(chrome))
-            .clipShape(IslandShape(topRadius: topRadius, bottomRadius: bottomRadius))
+            // Top bleed: the extra headroom the host panel reserves ABOVE the physical screen
+            // edge (`IslandGeometry.topBleed`) is padded in here and drawn by the SAME
+            // `IslandShape` fill as the island body (its `bleed` band). One path, one fill —
+            // there is no layer seam at the screen's top row for a fractional-pixel animation
+            // frame to crack open into visible hairlines.
+            .padding(.top, IslandGeometry.topBleed)
+            .background(
+                IslandShape(topRadius: topRadius, bottomRadius: bottomRadius,
+                            bleed: IslandGeometry.topBleed).fill(chrome))
+            .clipShape(
+                IslandShape(topRadius: topRadius, bottomRadius: bottomRadius,
+                            bleed: IslandGeometry.topBleed))
             // Spring the corner-radius morph on the state change. Purely a clip effect — it
             // doesn't feed `sizeReporter`/the panel's geometry — so its overshoot is cosmetic
             // only and can never reveal the physical top edge.
             .animation(.snappy(duration: 0.34, extraBounce: 0.12), value: presentation)
             .animation(.snappy(duration: 0.34, extraBounce: 0.12), value: environment.notchSize)
             .background(sizeReporter)
-            .padding(.top, IslandGeometry.topBleed)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            // Top bleed: paints the extra headroom the host panel now reserves ABOVE the
-            // visible island (`IslandGeometry.topBleed`) solid black. Invisible in steady state
-            // (it sits past the screen's physical top edge, `.padding` above keeps the visible
-            // shape's own top exactly where it was before this fix) — it exists purely so a
-            // stray out-of-sync animation frame during the expand/collapse bounce still shows
-            // chrome, never bare desktop, at the seam with the physical notch.
-            .background(alignment: .top) {
-                chrome.frame(height: IslandGeometry.topBleed)
-            }
             // Belt-and-suspenders with the host's `safeAreaRegions = []`: whichever macOS
             // honors, the island must extend into the menu-bar/notch safe area so its square
             // top sits FLUSH against the physical top edge rather than floating a notch-height
@@ -266,12 +280,19 @@ struct IslandContainerView: View {
         }
     }
 
-    /// Invisible probe that reports the island's rendered size to the host.
+    /// Invisible probe that reports the island's rendered size to the host. It measures the
+    /// bleed-padded chrome, but `IslandGeometry.islandFrame` reserves the bleed itself — so
+    /// report the VISIBLE content size (bleed subtracted) to keep the host's contract unchanged.
     private var sizeReporter: some View {
         GeometryReader { proxy in
             Color.clear
-                .onAppear { onResize(proxy.size) }
-                .onChange(of: proxy.size) { _, newSize in onResize(newSize) }
+                .onAppear { onResize(visibleSize(of: proxy.size)) }
+                .onChange(of: proxy.size) { _, newSize in onResize(visibleSize(of: newSize)) }
         }
+    }
+
+    private func visibleSize(of measured: CGSize) -> CGSize {
+        CGSize(width: measured.width,
+               height: max(0, measured.height - IslandGeometry.topBleed))
     }
 }
