@@ -1,5 +1,15 @@
 # ari-notch
 
+> **Status (2026-07-22): absorbed natively.** The island UI *and* its
+> upcoming-meeting scheduler brain have been ported into the native Swift app —
+> `Ari/UI/Notch/` (panel host + chrome) and
+> `AriKit/Sources/AriViewModels/Notch/` (model, presentation, planner,
+> scheduler), bound directly to `RecordingSession`/calendar state with **no
+> NDJSON layer** and re-themed onto Marginalia (see
+> `docs/plans/notch-panel-absorption.md`). This sidecar now serves **only the
+> frozen Rust/Tauri app** and receives no new features; deletion is a Phase 5
+> cleanup.
+
 The **Ari Notch** sidecar — a standalone Swift/SwiftUI executable that renders a
 **custom simulated Dynamic Island** at the top-center of the active screen for the
 Ari Meeting app. It is bundled by Tauri as an `externalBin` sidecar and driven over

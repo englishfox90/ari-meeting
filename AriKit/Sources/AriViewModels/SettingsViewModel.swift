@@ -31,7 +31,6 @@ public enum TranscriptionModelInstall: Sendable, Equatable {
 public final class SettingsViewModel {
     /// Honest default constants — applied only when the store has no row for that key yet.
     public enum Defaults {
-        public static let showNotch = false
         public static let recordingAlerts = true
         /// Calendar meeting reminders (F5) default ON — the ported feature is enabled out of the
         /// box, though nothing actually fires until the OS grants notification authorization.
@@ -61,7 +60,6 @@ public final class SettingsViewModel {
 
     // MARK: - General
 
-    public private(set) var showNotch: Bool = Defaults.showNotch
     public private(set) var recordingAlerts: Bool = Defaults.recordingAlerts
 
     /// Menu-bar visibility is a device-local UI preference read at app-scene scope (it gates the
@@ -70,9 +68,16 @@ public final class SettingsViewModel {
     /// via `@AppStorage` (docs/plans/menu-bar-item.md).
     public let menuBar: MenuBarVisibilityStore
 
-    public let notchAvailability: Availability = .disabled(
-        reason: "The meeting notch runs in the frozen Rust app; the Swift shell doesn't drive it yet."
-    )
+    /// The in-process notch overlay's visibility (docs/plans/notch-panel-absorption.md §6) — a
+    /// device-local `UserDefaults` preference (not the `setting` table). This is the LIVE toggle
+    /// for the native Swift overlay, gating `NotchOverlayCoordinator` the same way `menuBar` gates
+    /// the `MenuBarExtra` scene.
+    public let notchOverlay: NotchVisibilityStore
+
+    /// LIVE — the in-process Swift notch overlay (docs/plans/notch-panel-absorption.md) is wired.
+    /// Visibility is the `notchOverlay` store above; there is no honest-disabled reason to
+    /// surface for it.
+    public let notchOverlayAvailability: Availability = .live
     /// LIVE — the Swift `MenuBarExtra` is wired (docs/plans/menu-bar-item.md). Visibility is the
     /// `menuBar` store above; there is no honest-disabled reason to surface anymore.
     public let menuBarAvailability: Availability = .live
@@ -191,6 +196,7 @@ public final class SettingsViewModel {
         secrets: SecretsStoring,
         appearance: AppearanceStore,
         menuBar: MenuBarVisibilityStore = MenuBarVisibilityStore(),
+        notchOverlay: NotchVisibilityStore = NotchVisibilityStore(),
         speechAssets: SpeechAssetProviding = SpeechAssetManager(),
         audioDevices: AudioDeviceProviding = CoreAudioDeviceEnumerator(),
         notifications: (any NotificationAuthorizing)? = nil,
@@ -200,6 +206,7 @@ public final class SettingsViewModel {
         self.secrets = secrets
         self.appearance = appearance
         self.menuBar = menuBar
+        self.notchOverlay = notchOverlay
         self.speechAssets = speechAssets
         self.audioDevices = audioDevices
         self.notifications = notifications
@@ -215,7 +222,6 @@ public final class SettingsViewModel {
     public func load() async {
         let settings = database.settings
 
-        showNotch = await (try? settings.bool(forKey: .generalShowNotch)) ?? Defaults.showNotch
         // `menuBar` visibility is UserDefaults-backed (like `appearance`), not read here.
         recordingAlerts = await (try? settings.bool(forKey: .generalRecordingAlerts))
             ?? Defaults.recordingAlerts
@@ -266,11 +272,6 @@ public final class SettingsViewModel {
     }
 
     // MARK: - General setters
-
-    public func setShowNotch(_ value: Bool) async throws {
-        try await database.settings.setBool(value, forKey: .generalShowNotch)
-        showNotch = value
-    }
 
     public func setRecordingAlerts(_ value: Bool) async throws {
         try await database.settings.setBool(value, forKey: .generalRecordingAlerts)

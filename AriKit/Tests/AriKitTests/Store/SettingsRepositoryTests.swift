@@ -40,7 +40,7 @@ struct SettingsRepositoryTests {
     func unknownKeyReturnsNil() async throws {
         let db = try AppDatabase.makeInMemory()
         let stringValue = try await db.settings.string(forKey: .transcriptionProvider)
-        let boolValue = try await db.settings.bool(forKey: .generalShowNotch)
+        let boolValue = try await db.settings.bool(forKey: .generalRecordingAlerts)
         let intValue = try await db.settings.int(forKey: .summaryAutomatic)
         #expect(stringValue == nil)
         #expect(boolValue == nil)

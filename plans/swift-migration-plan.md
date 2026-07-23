@@ -18,8 +18,8 @@ A staged migration of Ari from its Rust/Tauri + Next.js stack to a **100% Swift,
 | ⬜ | **Onboarding flow** | No first-run setup, permission-request sequence, or model-download flow exists anywhere in `Ari/` or `AriKit/`. Zero code hits for "onboarding." |
 | ⬜ | **Block/rich-text editor** | Meeting notes use a plain `MarginaliaTextEditor` (themed `TextEditor` wrapper, no formatting/blocks). No BlockNote equivalent — drag handles, slash menus, `@ref` badge decorations all absent. Scheduled last in Phase 4 by design; still genuinely not started. |
 | 🟡 | **Diarization close-out (D10)** | Core port (D1–D9b) is landed and live. Matcher-threshold calibration and the `docs/plans/arikit-diarization.md` §8 human-verification checklist (one hand-confirmed 3+ speaker recording, TCC-free confirm, sign-off) are **all still unchecked**. Not blocking normal use; blocking a confident "diarization is done" call. |
-| ⬜ | **Notch panel absorption** | The Settings toggle for it exists but is hardcoded disabled with the message "the meeting notch runs in the frozen Rust app; the Swift shell doesn't drive it yet." Nothing in `Ari/` or `AriKit/` ports the `ari-notch` sidecar. |
-| ⬜ | **Settings full parity audit** | Broad coverage exists (Appearance, Notifications, Recordings, Calendar, Transcription/Summary provider+model, meeting-search/embedder). No diarization threshold/tuning UI. Notch setting is present but inert. Needs a dedicated side-by-side pass against the Rust settings surface before calling it done. |
+| ✅ | **Notch panel absorption** | Done 2026-07-22 (`docs/plans/notch-panel-absorption.md`): panel + chrome + HUD ported in-process (`Ari/UI/Notch/`, pure layer in `AriViewModels/Notch/`), bound directly to `RecordingSession` (no NDJSON), re-themed to Marginalia. **The scheduler brain was pulled forward** (Amendment A — was slated to port with the engine) as `NotchUpcomingPlanner`/`NotchUpcomingScheduler`, so the upcoming-meeting island prompt is live too. Toggle: `showNotchOverlay` (UserDefaults, default off). Human visual pass on a notched display still pending. |
+| ⬜ | **Settings full parity audit** | Broad coverage exists (Appearance, Notifications, Recordings, Calendar, Transcription/Summary provider+model, meeting-search/embedder). No diarization threshold/tuning UI. Notch overlay toggle is now live (2026-07-22; the legacy inert DB-backed "show notch" row needs reconciling in this audit). Needs a dedicated side-by-side pass against the Rust settings surface before calling it done. |
 
 ### Not blocking cutover, but open
 
@@ -121,7 +121,7 @@ D10 calibration sweep + `docs/plans/arikit-diarization.md` §8 human-verificatio
 - **Wire Recall into the app** (the actual next priority — the engine is done, the UI isn't).
 - **Onboarding flow** — first-run setup, permission sequencing, model-download UX.
 - **Block editor** — native rebuild on `TextEditor`/`AttributedString`, or accept a scoped WebView for this one panel (decision still open, was deferred to "decide on evidence").
-- **Notch panel absorption.**
+- ~~**Notch panel absorption.**~~ ✅ Done 2026-07-22, including the scheduler brain pulled forward (`docs/plans/notch-panel-absorption.md`).
 - **MCP server (F8)** — build once against `AriKit.Store`/`Recall`.
 - **Settings parity audit** — diarization tuning UI, notch setting reactivation, full side-by-side vs. the Rust settings surface.
 
@@ -155,7 +155,7 @@ Starts only after Phase 5.5 is proven. Full engine reuse via `AriKit`, minus spe
 | EventKit calendar sync | Native (was already objc2-native) | ✅ Done |
 | Notifications + F5 record prompt | UserNotifications | ✅ Done |
 | `apple-helper` | Absorbed in-process | ✅ Done |
-| `ari-notch` UI | — | ⬜ Not started |
+| `ari-notch` UI + scheduler | Absorbed in-process (`Ari/UI/Notch/` + `AriViewModels/Notch/`) | ✅ Done (2026-07-22, incl. scheduler pulled forward) |
 | Onboarding | — | ⬜ Not started |
 | Block editor | — | ⬜ Not started |
 | MCP server (F8) | — | ⬜ Not started |

@@ -23,7 +23,6 @@ public enum SettingKey: String, Sendable, CaseIterable {
     case recallEmbedder
 
     // General
-    case generalShowNotch
     case generalRecordingAlerts
     // NOTE: `.generalShowInMenuBar` was retired (docs/plans/menu-bar-item.md) — menu-bar
     // visibility is a device-local UI preference read at app-scene scope to gate the

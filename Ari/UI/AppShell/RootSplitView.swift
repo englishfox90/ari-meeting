@@ -19,6 +19,7 @@ import SwiftUI
 struct RootSplitView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.openWindow) private var openWindow
 
     @State private var selectedSection: SidebarSection = .home
     @State private var path = NavigationPath()
@@ -35,6 +36,11 @@ struct RootSplitView: View {
         }
         .tint(Color.marginalia(.accent, in: scheme))
         .task { await environment.bootstrap() }
+        // Capture the scene-backed `OpenWindowAction` (docs/plans/notch-panel-absorption.md §11
+        // R4) — `AppEnvironment.activateApp()` uses it to reopen the main window when every
+        // window has been closed (a plain `NSHostingView`, like the notch panel, has none of its
+        // own).
+        .onAppear { environment.registerOpenWindowAction(openWindow) }
     }
 
     private func readyShell(database: AppDatabase) -> some View {

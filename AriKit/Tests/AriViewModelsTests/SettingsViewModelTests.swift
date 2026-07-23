@@ -30,7 +30,6 @@ struct SettingsViewModelTests {
         let viewModel = makeViewModel(database: database)
         await viewModel.load()
 
-        #expect(viewModel.showNotch == SettingsViewModel.Defaults.showNotch)
         #expect(viewModel.saveAudioRecordings == SettingsViewModel.Defaults.saveAudioRecordings)
         #expect(viewModel.transcriptionLanguage == SettingsViewModel.Defaults.transcriptionLanguage)
         #expect(viewModel.summaryProvider == SettingsViewModel.Defaults.summaryProvider)
@@ -87,7 +86,6 @@ struct SettingsViewModelTests {
         let viewModel = makeViewModel(database: database)
 
         let groups: [Availability] = [
-            viewModel.notchAvailability,
             viewModel.recordingAlertsAvailability,
             viewModel.recordingStartNotificationAvailability
         ]

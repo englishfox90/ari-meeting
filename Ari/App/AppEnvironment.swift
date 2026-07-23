@@ -9,6 +9,7 @@
 //  the frozen Tauri app's data dir (`com.meetily.ai`). The repository-backed screens (S6) then
 //  render real meetings. The legacy dir is only ever read — never written, never deleted.
 //
+import AppKit
 import AriCapture
 import AriKit
 import AriKitDiarizationFluidAudio
@@ -16,6 +17,7 @@ import AriKitEngineMLX
 import AriViewModels
 import Foundation
 import Observation
+import SwiftUI
 
 @MainActor
 @Observable
@@ -108,6 +110,16 @@ final class AppEnvironment {
     /// `consumePendingNavigation()`. `nil` when there's nothing pending.
     private(set) var pendingNavigation: PendingNavigation?
 
+    /// The in-process notch overlay's lifecycle owner (docs/plans/notch-panel-absorption.md §2) —
+    /// observes the `showNotchOverlay` preference and inserts/removes the `NotchPanelController`
+    /// live. `nil` until `bootstrap()` succeeds, exactly like `recordingSession`.
+    private(set) var notchOverlay: NotchOverlayCoordinator?
+
+    /// The main window's `OpenWindowAction`, captured from the root view's `onAppear` (plan §11
+    /// R4) — the "Open Ari" fallback `activateApp()` uses when no window is currently open. `nil`
+    /// until the root view has appeared at least once.
+    private var openWindowAction: OpenWindowAction?
+
     enum PendingNavigation: Equatable {
         case section(SidebarSection)
         case meeting(MeetingID)
@@ -168,6 +180,24 @@ final class AppEnvironment {
                 },
                 transcription: SpeechLiveTranscriptionService()
             )
+
+            // The in-process notch overlay (docs/plans/notch-panel-absorption.md §2, Amendment A)
+            // — built now that `recordingSession` exists, since the model reads it directly via
+            // Observation. `onRecordEvent` reuses the SAME prime-and-start path a meeting reminder
+            // uses (`startRecordingFromReminder`), so the island's Record affordance and the
+            // reminder notification action can never diverge. The coordinator constructs its own
+            // `NotchUpcomingScheduler` (the ported `notch/scheduler.rs` brain) when the overlay
+            // turns on, so the upcoming-meeting alert is live.
+            if let session = recordingSession {
+                notchOverlay = NotchOverlayCoordinator(
+                    session: session,
+                    database: db,
+                    onOpenApp: { [weak self] in self?.activateApp() },
+                    onRecordEvent: { [weak self] eventId in
+                        Task { await self?.startRecordingFromReminder(eventId: eventId) }
+                    }
+                )
+            }
 
             // Import an existing audio file as a meeting (docs/plans/audio-import.md). Shares the
             // recordings root with live capture, but uses the file-transcription provider directly
@@ -389,6 +419,30 @@ final class AppEnvironment {
     /// applying it).
     func consumePendingNavigation() {
         pendingNavigation = nil
+    }
+
+    /// Captures the main window's `OpenWindowAction`, called once from `RootSplitView`'s
+    /// `onAppear` (docs/plans/notch-panel-absorption.md §11 R4) — a plain `NSHostingView` (the
+    /// notch panel) has no scene-backed `openWindow` of its own, so `activateApp()` borrows the
+    /// one captured here.
+    func registerOpenWindowAction(_ action: OpenWindowAction) {
+        openWindowAction = action
+    }
+
+    /// Bring the app forward — hoisted from `MenuBarContentView`'s former private `activateApp()`
+    /// (docs/plans/notch-panel-absorption.md §2, §11 R4) so the notch overlay's "Open Ari"
+    /// affordance and the menu bar's "Open Ari" row share ONE implementation and can never
+    /// diverge. Fronts an existing main-capable window if one exists; else opens a fresh one via
+    /// the stored `OpenWindowAction` (menu-bar-only state, zero windows open). If neither is
+    /// available (pathological — before the root view has ever appeared), falls back to
+    /// `NSApp.activate` only (accepted, R4).
+    func activateApp() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
+            window.makeKeyAndOrderFront(nil)
+        } else if let openWindowAction {
+            openWindowAction(id: AriApp.mainWindowID)
+        }
     }
 
     /// `~/Library/Application Support/com.arivo.ari/ari.sqlite`, creating the directory if needed.

@@ -19,7 +19,6 @@ import SwiftUI
 
 struct MenuBarContentView: View {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var scheme
 
     /// Built once the shell is `.ready` (a real `database` exists). Local-DB-first like Home's
@@ -175,12 +174,7 @@ struct MenuBarContentView: View {
     /// windows are closed (menu-bar-only state). Activating also moves focus off the popover, which
     /// dismisses it — no manual dismiss plumbing needed.
     private func activateApp() {
-        NSApp.activate(ignoringOtherApps: true)
-        if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            openWindow(id: AriApp.mainWindowID)
-        }
+        environment.activateApp()
     }
 
     private func loadBrief() async {
