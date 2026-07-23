@@ -89,7 +89,11 @@ struct ImportMeetingSheet: View {
         .frame(minWidth: 460)
         .fileImporter(
             isPresented: $showFileImporter,
-            allowedContentTypes: [.audio],
+            // `.audio` alone excludes MPEG-4/QuickTime containers (an `.mp4`/`.mov` is typed
+            // `public.mpeg-4`/`.movie`, not audio) — yet those are what the app records into and
+            // what the old importer accepted. Include the movie containers too; the `AudioFileProbe`
+            // below still honestly rejects anything `AVAudioFile` can't open as audio.
+            allowedContentTypes: [.audio, .movie, .mpeg4Movie, .quickTimeMovie],
             allowsMultipleSelection: false
         ) { result in
             handleFileImport(result)

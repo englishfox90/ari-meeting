@@ -52,11 +52,13 @@ public final class MeetingImportSession {
         if case .importing = phase { true } else { false }
     }
 
-    /// The container extensions accepted for import. Restricted to formats `AVAudioFile` (and thus
-    /// SpeechAnalyzer) opens reliably — deliberately excludes video containers, which the file
-    /// transcriber cannot read (an honest limit, not a silent failure).
+    /// The container extensions accepted for import. Covers the audio formats `AVAudioFile` (and
+    /// thus SpeechAnalyzer) opens reliably, including the MPEG-4/QuickTime containers the app
+    /// records into and the old Rust importer accepted (`mp4`/`m4a`/`mov`): `AVAudioFile` reads
+    /// their audio track. A file that can't actually be decoded is still rejected honestly by the
+    /// pick-time `AudioFileProbe` and, at import, by `audioDecodeFailed` — not silently dropped.
     public static let supportedExtensions: Set<String> = [
-        "mp3", "m4a", "wav", "aac", "aiff", "aif", "caf", "flac",
+        "mp3", "m4a", "mp4", "mov", "wav", "aac", "aiff", "aif", "caf", "flac",
     ]
 
     /// Human-readable list of `supportedExtensions` for error copy (e.g. "AAC, AIFF, …").
