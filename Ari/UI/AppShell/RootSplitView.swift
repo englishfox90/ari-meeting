@@ -63,64 +63,64 @@ struct RootSplitView: View {
             )
             .navigationSplitViewColumnWidth(min: 236, ideal: 252, max: 300)
         } detail: {
-            // The FAB is a ZStack SIBLING of the NavigationStack (not a `.overlay` ON it): an
-            // overlay applied to a NavigationStack gets occluded by pushed destinations on macOS,
-            // so the FAB vanished on meeting/series detail. As a sibling painted after the stack it
-            // stays top-most in every navigation state — still confined to the detail column, so it
-            // never covers the sidebar rail.
-            ZStack(alignment: .bottomTrailing) {
-                NavigationStack(path: $path) {
-                    rootContent(database: database)
-                        .navigationDestination(for: MeetingID.self) { meetingId in
-                            MeetingDetailView(database: database, meetingId: meetingId)
-                        }
-                        // The persistent live-capture pill (plan §4.4): visible from every section
-                        // and pushed detail screen while recording — EXCEPT the recording page,
-                        // which already carries the Signal (one red glass element per screen).
-                        .safeAreaInset(edge: .bottom, alignment: .leading) {
-                            if let session = environment.recordingSession,
-                               session.isActive, selectedSection != .newMeeting {
-                                RecordingIndicator(session: session) {
-                                    selectedSection = .newMeeting
-                                }
-                                .padding(.horizontal, MarginaliaSpacing.md.value)
-                                .padding(.bottom, MarginaliaSpacing.sm.value)
+            NavigationStack(path: $path) {
+                rootContent(database: database)
+                    .navigationDestination(for: MeetingID.self) { meetingId in
+                        MeetingDetailView(database: database, meetingId: meetingId)
+                    }
+                    // The persistent live-capture pill (plan §4.4): visible from every section
+                    // and pushed detail screen while recording — EXCEPT the recording page,
+                    // which already carries the Signal (one red glass element per screen).
+                    .safeAreaInset(edge: .bottom, alignment: .leading) {
+                        if let session = environment.recordingSession,
+                           session.isActive, selectedSection != .newMeeting {
+                            RecordingIndicator(session: session) {
+                                selectedSection = .newMeeting
                             }
+                            .padding(.horizontal, MarginaliaSpacing.md.value)
+                            .padding(.bottom, MarginaliaSpacing.sm.value)
                         }
-                        .navigationDestination(for: MeetingMoment.self) { moment in
-                            MeetingDetailView(
+                    }
+                    .navigationDestination(for: MeetingMoment.self) { moment in
+                        MeetingDetailView(
+                            database: database,
+                            meetingId: moment.meetingId,
+                            initialSeek: moment.seconds
+                        )
+                    }
+                    .navigationDestination(for: PersonID.self) { personId in
+                        PersonDetailView(database: database, personId: personId)
+                    }
+                    .navigationDestination(for: SeriesID.self) { seriesId in
+                        if let ledgerReducer = environment.seriesLedgerReducer {
+                            SeriesDetailView(
                                 database: database,
-                                meetingId: moment.meetingId,
-                                initialSeek: moment.seconds
+                                seriesId: seriesId,
+                                ledgerReducer: ledgerReducer,
+                                onOpenMeetingMoment: { meetingId, seconds in
+                                    path.append(MeetingMoment(meetingId: meetingId, seconds: seconds))
+                                    askNavStack.append(.meeting(meetingId))
+                                }
                             )
                         }
-                        .navigationDestination(for: PersonID.self) { personId in
-                            PersonDetailView(database: database, personId: personId)
-                        }
-                        .navigationDestination(for: SeriesID.self) { seriesId in
-                            if let ledgerReducer = environment.seriesLedgerReducer {
-                                SeriesDetailView(
-                                    database: database,
-                                    seriesId: seriesId,
-                                    ledgerReducer: ledgerReducer,
-                                    onOpenMeetingMoment: { meetingId, seconds in
-                                        path.append(MeetingMoment(meetingId: meetingId, seconds: seconds))
-                                        askNavStack.append(.meeting(meetingId))
-                                    }
-                                )
-                            }
-                        }
-                }
-                AskOverlayHost(
-                    database: database,
-                    recallEngine: environment.recallEngine,
-                    selectedSection: selectedSection,
-                    navKey: askNavKey,
-                    isRecordingActive: environment.recordingSession?.isActive ?? false,
-                    onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
-                    onOpenSettings: { selectedSection = .settings }
-                )
+                    }
             }
+        }
+        // The app-wide "Ask" FAB is overlaid on the WHOLE split view, not inside the detail
+        // column: on macOS a NavigationStack hosts pushed destinations (meeting/series detail) in a
+        // layer that escapes SwiftUI overlays/ZStacks placed inside the detail closure, so the FAB
+        // vanished there. At the split-view level it stays top-most in every navigation state, and
+        // bottom-trailing is the detail area, so it still never covers the sidebar rail.
+        .overlay(alignment: .bottomTrailing) {
+            AskOverlayHost(
+                database: database,
+                recallEngine: environment.recallEngine,
+                selectedSection: selectedSection,
+                navKey: askNavKey,
+                isRecordingActive: environment.recordingSession?.isActive ?? false,
+                onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
+                onOpenSettings: { selectedSection = .settings }
+            )
         }
         .onChange(of: selectedSection) { _, _ in
             path = NavigationPath()
