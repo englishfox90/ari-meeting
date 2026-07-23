@@ -182,7 +182,9 @@ struct RecallIndexSchemaFidelityTests {
             ExpectedColumn(name: "role", type: "TEXT", notNull: true),
             ExpectedColumn(name: "content", type: "TEXT", notNull: true),
             ExpectedColumn(name: "sourcesJson", type: "TEXT", notNull: false),
-            ExpectedColumn(name: "createdAt", type: "TEXT", notNull: true)
+            ExpectedColumn(name: "createdAt", type: "TEXT", notNull: true),
+            // v3_ask_message_card (`ask-meetings-tools-and-cards.md` §5.1/§7) — additive, nullable.
+            ExpectedColumn(name: "cardJson", type: "TEXT", notNull: false)
         ], table: "askMessage")
 
         let actions = try onDeleteActions(

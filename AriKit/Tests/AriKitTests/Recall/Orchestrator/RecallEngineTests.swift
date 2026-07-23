@@ -285,6 +285,7 @@ struct RecallEngineTests {
     }
 
     // MARK: - 7. LLM-first: an empty retrieval still runs the model (retrieve-augment-always).
+
     // The model always answers — conversationally when nothing matched — instead of the old hard
     // `noSavedMatch` gate. Sources stay empty (DB-built), preserving never-invent-citations.
 
@@ -421,6 +422,180 @@ struct RecallEngineTests {
         #expect(response.answer.hasPrefix("Per [S1], and the invented"))
         #expect(response.answer.hasSuffix("we decided this."))
         #expect(response.sources.count == 2)
+    }
+
+    // MARK: - 10. Slice B structured tools (`ask-meetings-tools-and-cards.md` §4/§8) — the single
+
+    // most important guarantee: this addition can only ever ADD a card, never regress today's
+    // behavior.
+
+    @Test(
+        "A global-scope ask matching a recognized entity shape with real, unambiguous data attaches a card and preserves the existing sources/citation guarantees"
+    )
+    func globalScopeResolvesUnambiguousPersonEntityAndAttachesCard() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = try await seedMeetingWithTranscripts(
+            db,
+            id: "meeting-sarah",
+            title: "Budget review",
+            segments: [(timestamp: "00:00", text: "We reviewed the Q3 budget with Sarah.", start: 0)]
+        )
+        let person = Person(
+            id: PersonID("person-sarah"),
+            email: "sarah@example.com",
+            displayName: "Sarah Ammon",
+            role: "PM",
+            organization: "Arivo",
+            isOwner: false,
+            createdAt: meeting.createdAt,
+            updatedAt: meeting.createdAt
+        )
+        try await db.persons.upsert(person)
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("event-sarah"),
+            calendarId: "cal-1",
+            title: "Budget review",
+            startTime: meeting.createdAt,
+            endTime: meeting.createdAt.addingTimeInterval(1800),
+            isAllDay: false,
+            attendees: [Attendee(name: "Sarah Ammon", email: "sarah@example.com")],
+            meetingId: meeting.id,
+            linkSource: .calendar
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Per [S1], you last met Sarah for the budget.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(question: "meetings with Sarah")
+
+        let card = try #require(response.card)
+        guard case let .person(payload) = card else {
+            Issue.record("expected a .person card")
+            return
+        }
+        #expect(payload.personId == person.id.rawValue)
+        #expect(payload.displayName == "Sarah Ammon")
+        #expect(payload.meetingCount == 1)
+
+        // Sources/citation reconciliation are UNCHANGED by this addition.
+        #expect(response.answer.contains("[S1]"))
+        #expect(response.sources.count == 1)
+        #expect(response.sources.first?.meetingId == meeting.id.rawValue)
+    }
+
+    @Test("A meeting-scoped ask with the same question text never attempts entity resolution (no card)")
+    func meetingScopedAskNeverAttemptsEntityResolution() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = try await seedMeetingWithTranscripts(
+            db,
+            id: "meeting-scoped-sarah",
+            title: "Budget review",
+            segments: [(timestamp: "00:00", text: "We reviewed the Q3 budget with Sarah.", start: 0)]
+        )
+        try await db.persons.upsert(Person(
+            id: PersonID("person-sarah"),
+            email: "sarah@example.com",
+            displayName: "Sarah Ammon",
+            isOwner: false,
+            createdAt: meeting.createdAt,
+            updatedAt: meeting.createdAt
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Fine.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(
+            question: "meetings with Sarah",
+            meetingId: meeting.id
+        )
+        #expect(response.card == nil)
+    }
+
+    @Test("An ambiguous name (two people match) resolves to card == nil, byte-identical to pre-Slice-B behavior")
+    func ambiguousNameFallsThroughSafely() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await seedMeetingWithTranscripts(
+            db,
+            id: "meeting-ambiguous",
+            title: "Design sync",
+            segments: [(timestamp: "00:00", text: "The design team discussed the roadmap.", start: 0)]
+        )
+        try await db.persons.upsert(Person(
+            id: PersonID("sarah-1"),
+            displayName: "Sarah Ammon",
+            isOwner: false,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        ))
+        try await db.persons.upsert(Person(
+            id: PersonID("sarah-2"),
+            displayName: "Sarah Chen",
+            isOwner: false,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        ))
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "I couldn't find anything specific.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(question: "meetings with Sarah")
+        #expect(response.card == nil)
+        #expect(response.answer == "I couldn't find anything specific.")
+    }
+
+    @Test("An unresolved name (zero matches) resolves to card == nil, byte-identical to pre-Slice-B behavior")
+    func unresolvedNameFallsThroughSafely() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await seedMeetingWithTranscripts(db)
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "I don't have anything on that.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(question: "meetings with Nobody")
+        #expect(response.card == nil)
+    }
+
+    @Test("A question that never classifies as entity-shaped resolves to card == nil")
+    func nonEntityQuestionNeverAttachesCard() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await seedMeetingWithTranscripts(db)
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "We decided to keep it local.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(question: "What did we decide?")
+        #expect(response.card == nil)
+    }
+
+    @Test("A resolved series entity attaches a .series card with real, bounded meeting counts")
+    func globalScopeResolvesUnambiguousSeriesEntityAndAttachesCard() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let series = Series(
+            id: SeriesID("series-design"),
+            title: "Design team sync",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try await db.series.upsert(series)
+        let meeting = try await seedMeetingWithTranscripts(
+            db,
+            id: "meeting-design-1",
+            title: "Design sync #1",
+            segments: [(timestamp: "00:00", text: "Reviewed the roadmap.", start: 0)]
+        )
+        try await db.series.addMember(seriesId: series.id, meetingId: meeting.id)
+
+        let client = RecordingLLMClient(kind: .ollama, cannedResponse: "Noted.")
+        let engine = makeEngine(db, client: client)
+
+        let response = try await engine.answerMeetingsLocally(question: "meetings in the design team sync series")
+        let card = try #require(response.card)
+        guard case let .series(payload) = card else {
+            Issue.record("expected a .series card")
+            return
+        }
+        #expect(payload.seriesId == series.id.rawValue)
+        #expect(payload.meetingCount == 1)
     }
 
     @Test("Streaming honors the loopback gate too — no deltas, an error, before any generation")

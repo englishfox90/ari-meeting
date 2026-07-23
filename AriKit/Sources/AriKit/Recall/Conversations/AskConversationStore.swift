@@ -139,7 +139,8 @@ public struct AskConversationStore: Sendable {
         conversationId: AskConversationID,
         role: String,
         content: String,
-        sources: [RecallSource]
+        sources: [RecallSource],
+        card: RecallCardPayload? = nil
     ) async throws -> AskMessage {
         guard role == "user" || role == "assistant" else {
             throw StoreError.unsupportedRole(role)
@@ -151,6 +152,7 @@ public struct AskConversationStore: Sendable {
             role: role,
             content: content,
             sources: sources,
+            card: card,
             createdAt: now
         )
         let record = try AskMessageRecord(message)

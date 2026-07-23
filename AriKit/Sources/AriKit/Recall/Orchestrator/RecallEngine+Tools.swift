@@ -1,0 +1,94 @@
+//
+//  RecallEngine+Tools.swift — the Slice B structured-tool entity-resolution pre-step for
+//  `RecallEngine.prepare` (plan §4.3, `docs/plans/ask-meetings-tools-and-cards.md`). Split into its
+//  own file (mirroring `RecallStream.swift`'s precedent of extending `RecallEngine` from a sibling
+//  file, same module) purely to keep `RecallEngine.swift` itself from growing past a reasonable
+//  file/function length — no behavior here is separate from `prepare`'s call site.
+//
+import Foundation
+
+extension RecallEngine {
+    struct ResolvedEntity {
+        var card: RecallCardPayload
+        var contextLine: String
+    }
+
+    /// Global-scope-only entry point for the Slice B pre-step: classify, then resolve, swallowing
+    /// any classifier miss / ambiguous match / DB hiccup into a plain `nil` (byte-identical
+    /// fall-through to pre-Slice-B behavior — never a thrown ask failure).
+    static func resolveGlobalScopeEntity(question: String, tools: RecallTools) async -> ResolvedEntity? {
+        guard let intent = RecallIntentClassifier.classify(question) else { return nil }
+        return try? await resolveEntity(intent, tools: tools)
+    }
+
+    /// Resolves a classified `Intent` to a real, unambiguous card via `RecallTools`. Returns `nil`
+    /// (never a partial/best-guess card) when the extracted candidate doesn't resolve to exactly
+    /// one row, or when its follow-up roster read comes back empty — the caller swallows this via
+    /// `try?`, so any DB hiccup here degrades to "no card," never a thrown ask failure.
+    static func resolveEntity(
+        _ intent: RecallIntentClassifier.Intent,
+        tools: RecallTools
+    ) async throws -> ResolvedEntity? {
+        switch intent {
+        case let .personMeetings(nameQuery):
+            try await resolvePersonMeetings(nameQuery: nameQuery, tools: tools)
+        case let .seriesMeetings(titleQuery):
+            try await resolveSeriesMeetings(titleQuery: titleQuery, tools: tools)
+        }
+    }
+
+    private static func resolvePersonMeetings(
+        nameQuery: String,
+        tools: RecallTools
+    ) async throws -> ResolvedEntity? {
+        guard let person = try await tools.findPerson(nameContaining: nameQuery) else { return nil }
+        let meetings = try await tools.meetings(withPerson: person.id)
+        let lastMeetingDate = meetings.first.map { RFC3339.string(from: $0.createdAt) }
+        let payload = PersonCardPayload(
+            personId: person.id.rawValue,
+            displayName: person.displayName,
+            role: person.role,
+            organization: person.organization,
+            lastMeetingDate: lastMeetingDate,
+            meetingCount: meetings.count
+        )
+        let dateNote = lastMeetingDate.map { " Last met (via calendar) \(String($0.prefix(10)))." } ?? ""
+        let contextLine = truncateCardContext(
+            "Resolved: \(person.displayName) — \(meetings.count) meeting(s) involving them "
+                + "(via calendar).\(dateNote)"
+        )
+        return ResolvedEntity(card: .person(payload), contextLine: contextLine)
+    }
+
+    private static func resolveSeriesMeetings(
+        titleQuery: String,
+        tools: RecallTools
+    ) async throws -> ResolvedEntity? {
+        guard let series = try await tools.findSeries(titleContaining: titleQuery) else { return nil }
+        let meetings = try await tools.meetings(inSeries: series.id, limit: RecallBounds.maxCardSeriesMeetings)
+        // The real total, NOT `meetings.count` — that array is capped at `maxCardSeriesMeetings` for
+        // bounded context, so `.count`-ing it would silently under-report a series with more members
+        // than the cap (a No-Fake-State violation, not an honest bound).
+        let totalCount = try await tools.meetingCount(inSeries: series.id)
+        let lastMeetingDate = meetings.first.map { RFC3339.string(from: $0.createdAt) }
+        let payload = SeriesCardPayload(
+            seriesId: series.id.rawValue,
+            title: series.title,
+            meetingCount: totalCount,
+            lastMeetingDate: lastMeetingDate
+        )
+        let contextLine = truncateCardContext(
+            "Resolved: the \"\(series.title)\" series — \(totalCount) meeting(s) recorded."
+        )
+        return ResolvedEntity(card: .series(payload), contextLine: contextLine)
+    }
+
+    /// Bounded-context truncation for the tool-resolved fact line (mirrors `PeopleContext`'s own
+    /// `truncateChars` — plan §9, "at most one short, terse real-fact block").
+    private static func truncateCardContext(_ text: String) -> String {
+        let scalars = Recall.scalars(text)
+        guard scalars.count > RecallBounds.maxCardContextChars else { return text }
+        let head = Recall.string(fromScalars: scalars.prefix(RecallBounds.maxCardContextChars))
+        return "\(head)…"
+    }
+}

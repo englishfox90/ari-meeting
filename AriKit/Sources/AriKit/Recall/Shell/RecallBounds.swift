@@ -52,4 +52,13 @@ public enum RecallBounds {
     public static let maxFactChars = 160
     /// Truncation budget for a calendar event's notes line (← `MAX_NOTE_CHARS`).
     public static let maxNoteChars = 300
+
+    // MARK: - Structured-tools caps (Slice B, ← ask-meetings-tools-and-cards.md §4/§9)
+
+    /// Bound on how many of a series' newest meetings `RecallTools.meetings(inSeries:limit:)`
+    /// reads for a resolved series card — a real, bounded count, never an unbounded scan.
+    public static let maxCardSeriesMeetings = 50
+    /// Truncation budget for the terse "Resolved: …" fact line folded into the prompt when a
+    /// tool resolves a real entity (mirrors `PeopleContext`'s bounded-block pattern).
+    public static let maxCardContextChars = 240
 }

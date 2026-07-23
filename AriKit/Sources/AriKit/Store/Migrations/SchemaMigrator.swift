@@ -457,6 +457,16 @@ enum SchemaMigrator {
             }
         }
 
+        // v3 (docs/plans/ask-meetings-tools-and-cards.md §5.1/§7) — additive-only, `v1_baseline`
+        // AND `v2_recall_chunk_source_kind` both stay frozen. A nullable JSON column carrying the
+        // Slice-B-resolved `RecallCardPayload` for a persisted assistant message, mirroring
+        // `sourcesJson`'s exact shape (nil = "no card," never a fabricated placeholder).
+        migrator.registerMigration("v3_ask_message_card") { db in
+            try db.alter(table: "askMessage") { t in
+                t.add(column: "cardJson", .text)
+            }
+        }
+
         return migrator
     }
 }

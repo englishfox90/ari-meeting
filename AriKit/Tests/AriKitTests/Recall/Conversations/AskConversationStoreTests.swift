@@ -351,4 +351,64 @@ struct AskConversationStoreTests {
         let readBack = try #require(detail.messages.first { $0.id == userMessage.id })
         #expect(readBack.sources.isEmpty)
     }
+
+    // MARK: - Test 7 (Slice B, `ask-meetings-tools-and-cards.md` §5.1/§8): cardJson round-trip
+
+    @Test("a card round-trips through cardJson with full equality")
+    func cardRoundTripsThroughCardJson() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let conversation = try await db.askConversations.create(meetingId: nil, title: nil)
+        let card = RecallCardPayload.person(
+            PersonCardPayload(
+                personId: "person-1",
+                displayName: "Sarah Ammon",
+                role: "PM",
+                organization: "Arivo",
+                lastMeetingDate: "2026-07-10T00:00:00Z",
+                meetingCount: 3
+            )
+        )
+
+        let appended = try await db.askConversations.appendMessage(
+            conversationId: conversation.id,
+            role: "assistant",
+            content: "Here is what I found about Sarah.",
+            sources: [],
+            card: card
+        )
+        #expect(appended.card == card)
+
+        let detail = try #require(await db.askConversations.get(conversation.id))
+        let readBack = try #require(detail.messages.first { $0.id == appended.id })
+        #expect(readBack.card == card)
+    }
+
+    @Test("a nil card never round-trips as a fabricated empty-object placeholder")
+    func nilCardNeverRoundTripsAsPlaceholder() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let conversation = try await db.askConversations.create(meetingId: nil, title: nil)
+
+        let appended = try await db.askConversations.appendMessage(
+            conversationId: conversation.id,
+            role: "assistant",
+            content: "No entity resolved here.",
+            sources: []
+        )
+        #expect(appended.card == nil)
+
+        let detail = try #require(await db.askConversations.get(conversation.id))
+        let readBack = try #require(detail.messages.first { $0.id == appended.id })
+        #expect(readBack.card == nil)
+
+        // The raw column itself is NULL, not a serialized empty object.
+        let rawCardJson: String? = try await db.dbWriter.read { rawDb in
+            let row = try Row.fetchOne(
+                rawDb,
+                sql: "SELECT cardJson FROM askMessage WHERE id = ?",
+                arguments: [appended.id.rawValue]
+            )
+            return row?["cardJson"]
+        }
+        #expect(rawCardJson == nil)
+    }
 }

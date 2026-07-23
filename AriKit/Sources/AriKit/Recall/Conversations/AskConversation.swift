@@ -55,6 +55,10 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
     public var role: String
     public var content: String
     public var sources: [RecallSource]
+    /// A deterministically-resolved entity card (`ask-meetings-tools-and-cards.md` §5.1), additive.
+    /// `nil` for every message except an assistant turn whose ask resolved exactly one real entity
+    /// — never a partial match, never a placeholder (No-Fake-State).
+    public var card: RecallCardPayload?
     public var createdAt: String
 
     public init(
@@ -63,6 +67,7 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
         role: String,
         content: String,
         sources: [RecallSource] = [],
+        card: RecallCardPayload? = nil,
         createdAt: String
     ) {
         self.id = id
@@ -70,6 +75,7 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
         self.role = role
         self.content = content
         self.sources = sources
+        self.card = card
         self.createdAt = createdAt
     }
 }

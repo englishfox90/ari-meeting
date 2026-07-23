@@ -68,10 +68,89 @@ extension RecallSource {
 public struct RecallResponse: Codable, Hashable, Sendable {
     public var answer: String
     public var sources: [RecallSource]
+    /// A deterministically-resolved entity card (plan §5.1, `ask-meetings-tools-and-cards.md`),
+    /// additive to the wire shape. `nil` unless Slice B's global-scope entity resolution found
+    /// EXACTLY ONE real, unambiguous row — never a partial match, never a placeholder
+    /// (No-Fake-State). Swift's synthesized `Codable` already treats an `Optional` stored property
+    /// as `decodeIfPresent` (defaulting to `nil` on a missing key), so this decodes any
+    /// already-persisted response with no `card` key as `nil` — forward/backward compatible with
+    /// zero custom coding code, mirroring `RecallSource.speakers`'s own default-on-missing-key
+    /// intent (that one needs a custom decoder only because `[String]` isn't itself `Optional`).
+    public var card: RecallCardPayload?
 
-    public init(answer: String, sources: [RecallSource]) {
+    public init(answer: String, sources: [RecallSource], card: RecallCardPayload? = nil) {
         self.answer = answer
         self.sources = sources
+        self.card = card
+    }
+}
+
+// MARK: - Inline entity cards (plan §5.1, Slice C wire contract — populated by Slice B, rendered
+
+// by a later Slice C)
+
+/// A deterministically-resolved entity, ready to render as an inline card in the Ask chat (Slice C,
+/// out of scope for this change — only the wire contract + real data population land here).
+public enum RecallCardPayload: Codable, Hashable, Sendable {
+    case meeting(MeetingCardPayload)
+    case person(PersonCardPayload)
+    case series(SeriesCardPayload)
+}
+
+public struct MeetingCardPayload: Codable, Hashable, Sendable {
+    public var meetingId: String
+    public var title: String
+    /// RFC3339, same convention as `RecallSource.meetingDate`.
+    public var meetingDate: String?
+    /// Real, not fabricated — drives whether a future card UI shows a summary snippet.
+    public var hasSummary: Bool
+
+    public init(meetingId: String, title: String, meetingDate: String? = nil, hasSummary: Bool) {
+        self.meetingId = meetingId
+        self.title = title
+        self.meetingDate = meetingDate
+        self.hasSummary = hasSummary
+    }
+}
+
+public struct PersonCardPayload: Codable, Hashable, Sendable {
+    public var personId: String
+    public var displayName: String
+    public var role: String?
+    public var organization: String?
+    /// From `RecallTools.meetings(withPerson:).first`, real or `nil` — never estimated.
+    public var lastMeetingDate: String?
+    /// Real count from the same query that produced `lastMeetingDate` — never estimated.
+    public var meetingCount: Int
+
+    public init(
+        personId: String,
+        displayName: String,
+        role: String? = nil,
+        organization: String? = nil,
+        lastMeetingDate: String? = nil,
+        meetingCount: Int
+    ) {
+        self.personId = personId
+        self.displayName = displayName
+        self.role = role
+        self.organization = organization
+        self.lastMeetingDate = lastMeetingDate
+        self.meetingCount = meetingCount
+    }
+}
+
+public struct SeriesCardPayload: Codable, Hashable, Sendable {
+    public var seriesId: String
+    public var title: String
+    public var meetingCount: Int
+    public var lastMeetingDate: String?
+
+    public init(seriesId: String, title: String, meetingCount: Int, lastMeetingDate: String? = nil) {
+        self.seriesId = seriesId
+        self.title = title
+        self.meetingCount = meetingCount
+        self.lastMeetingDate = lastMeetingDate
     }
 }
 

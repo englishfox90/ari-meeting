@@ -67,7 +67,9 @@ public extension RecallEngine {
                         sources: prepared.sources,
                         isMeetingScoped: prepared.isMeetingScoped
                     )
-                    continuation.yield(.done(RecallResponse(answer: reconciled, sources: prepared.sources)))
+                    continuation.yield(
+                        .done(RecallResponse(answer: reconciled, sources: prepared.sources, card: prepared.card))
+                    )
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)

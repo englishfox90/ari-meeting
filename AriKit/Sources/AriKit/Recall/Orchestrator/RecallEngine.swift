@@ -131,7 +131,7 @@ public struct RecallEngine: Sendable {
             sources: prepared.sources,
             isMeetingScoped: prepared.isMeetingScoped
         )
-        return RecallResponse(answer: reconciled, sources: prepared.sources)
+        return RecallResponse(answer: reconciled, sources: prepared.sources, card: prepared.card)
     }
 
     // TODO(follow-on): port `recall/agent.rs`'s Claude-only agentic tool-use loop
@@ -150,6 +150,19 @@ public struct RecallEngine: Sendable {
         var sources: [RecallSource]
         var isMeetingScoped: Bool
         var config: ProviderConfig
+        var card: RecallCardPayload?
+    }
+
+    /// `RecallTools` over this engine's own repository handles (plan §4.2) — built fresh per call
+    /// rather than stored, mirroring how `hybridSearch`/`peopleContext` are injected once but this
+    /// one is cheap value construction over the same `db`.
+    private var recallTools: RecallTools {
+        RecallTools(
+            meetings: db.meetings,
+            persons: db.persons,
+            series: db.series,
+            calendarEvents: db.calendarEvents
+        )
     }
 
     func prepare(
@@ -210,6 +223,17 @@ public struct RecallEngine: Sendable {
             seriesLedgerMarkdown = nil
         }
 
+        // Slice B structured tools (plan §4.3, `ask-meetings-tools-and-cards.md`): a STRICTLY
+        // ADDITIVE, global-scope-only pre-step. Hybrid RAG below is NEVER skipped or replaced —
+        // this only ever attaches a `card` to the eventual response and, when resolved, folds a
+        // couple of terse real facts into the prompt. A classifier miss, an ambiguous match, or a
+        // zero match all degrade to exactly today's behavior (no card, byte-identical prompt).
+        let resolvedEntity = meetingId == nil && seriesId == nil
+            ? await Self.resolveGlobalScopeEntity(question: question, tools: recallTools)
+            : nil
+        let resolvedCard = resolvedEntity?.card
+        let resolvedContextLine = resolvedEntity?.contextLine
+
         let matches: [TranscriptSearchResult]
         if let meetingId {
             matches = try await meetingTranscriptSearchResults(meetingId)
@@ -252,8 +276,9 @@ public struct RecallEngine: Sendable {
         let seriesSection = seriesLedgerMarkdown.map {
             "### Series ledger (running context for this series)\n\($0)\n\n"
         } ?? ""
-        let userPrompt =
-            "\(priorConversation)\(peopleSection)\(seriesSection)Question: \(question)\n\nAuthoritative local meeting sources:\n\(context)"
+        let toolSection = resolvedContextLine.map { "\($0)\n\n" } ?? ""
+        let userPrompt = "\(priorConversation)\(peopleSection)\(seriesSection)\(toolSection)"
+            + "Question: \(question)\n\nAuthoritative local meeting sources:\n\(context)"
 
         let config = ProviderConfig(
             kind: providerKind,
@@ -267,7 +292,8 @@ public struct RecallEngine: Sendable {
             userPrompt: userPrompt,
             sources: sources,
             isMeetingScoped: isMeetingScoped,
-            config: config
+            config: config,
+            card: resolvedCard
         )
     }
 
