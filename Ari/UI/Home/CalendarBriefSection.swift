@@ -22,13 +22,33 @@ struct CalendarBriefSection: View {
     /// `false` while the shared session is missing (pre-bootstrap) or already recording — the
     /// Record buttons stay honestly disabled rather than pretending a second start is possible.
     let canRecord: Bool
+    /// The menu-bar popover reuses this section verbatim but at a much tighter scale: a smaller
+    /// uppercase-eyebrow header, tighter row type/spacing, and a compact Record button, so the
+    /// brief matches the native menu density instead of the roomy Home window. Off = Home scale.
+    var compact = false
     let onRecord: (CalendarEvent) -> Void
+
+    private var sectionSpacing: CGFloat {
+        compact ? MarginaliaSpacing.sm.value : MarginaliaSpacing.md.value
+    }
+
+    private var rowSpacing: CGFloat {
+        compact ? MarginaliaSpacing.sm.value : MarginaliaSpacing.md.value
+    }
+
+    private var titleStyle: MarginaliaTextStyle {
+        compact ? .subheadline : .headline
+    }
+
+    private var headerStyle: MarginaliaTextStyle {
+        compact ? .caption : .title2
+    }
 
     var body: some View {
         if !viewModel.events.isEmpty {
-            VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+            VStack(alignment: .leading, spacing: sectionSpacing) {
                 Text("From your calendar")
-                    .marginaliaTextStyle(.title2, in: scheme)
+                    .marginaliaTextStyle(headerStyle, in: scheme)
                 card
             }
         }
@@ -56,10 +76,10 @@ struct CalendarBriefSection: View {
     }
 
     private func row(_ event: CalendarEvent) -> some View {
-        HStack(alignment: .center, spacing: MarginaliaSpacing.md.value) {
+        HStack(alignment: .center, spacing: rowSpacing) {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
                 Text(event.title)
-                    .marginaliaTextStyle(.headline, in: scheme)
+                    .marginaliaTextStyle(titleStyle, in: scheme)
                     .lineLimit(1)
                 timing(event)
             }
@@ -72,7 +92,7 @@ struct CalendarBriefSection: View {
             .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
             .disabled(!canRecord)
         }
-        .padding(MarginaliaSpacing.md.value)
+        .padding(rowSpacing)
     }
 
     /// The sub-line: a live "Now" badge for an in-progress meeting, otherwise the start time; then

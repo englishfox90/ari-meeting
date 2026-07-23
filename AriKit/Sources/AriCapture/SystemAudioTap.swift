@@ -22,6 +22,7 @@
 #if os(macOS)
     import AriKit
     import CoreAudio
+    import CoreGraphics
     import Foundation
     import os
 
@@ -57,13 +58,21 @@
             teardown()
         }
 
-        /// Honest readiness. CoreAudio has no pre-flight "is audio-capture allowed" query — the
-        /// TCC prompt fires on first tap creation, and denial simply yields silence at the tap
-        /// (mirrors `permissions.rs:18-24`). `.notDetermined` is therefore the only honest
-        /// static answer before a `start()` attempt; the real outcome (including denial-shaped
-        /// creation failures) surfaces from `start()` itself via `.unavailable(reason:)`.
+        /// Honest readiness. CoreAudio itself has no "is audio-capture allowed" query, but on
+        /// modern macOS the process tap is gated on the same Screen & System-Audio Recording TCC
+        /// grant as screen capture — tap creation (core_audio.rs:91) yields silence without it,
+        /// and the app resets it via `tccutil reset ScreenCapture` (build-and-run.md). So we
+        /// pre-flight that grant with `CGPreflightScreenCaptureAccess()`, a side-effect-free
+        /// status query (no prompt), which lets the idle screen show `.ready` once the grant
+        /// exists instead of forever claiming "not yet determined". A false answer covers both
+        /// "denied" and "never asked" (indistinguishable here), so it reads as `.notDetermined` —
+        /// the grant is still requested on first `start()`, and any denial-shaped creation failure
+        /// surfaces from `start()` via `.unavailable(reason:)`.
         public func availability() -> CaptureAvailability {
-            isRunning ? .ready : .notDetermined
+            if isRunning {
+                return .ready
+            }
+            return CGPreflightScreenCaptureAccess() ? .ready : .notDetermined
         }
 
         // MARK: - Graph construction (core_audio.rs:56-296 port)
@@ -102,7 +111,10 @@
             ]
 
             var newAggregateID = AudioObjectID(kAudioObjectUnknown)
-            let aggregateStatus = AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &newAggregateID)
+            let aggregateStatus = AudioHardwareCreateAggregateDevice(
+                aggregateDescription as CFDictionary,
+                &newAggregateID
+            )
             guard aggregateStatus == noErr else {
                 throw SystemAudioTapError.aggregateDeviceCreationFailed(aggregateStatus)
             }

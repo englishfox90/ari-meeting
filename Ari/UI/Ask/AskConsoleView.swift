@@ -279,6 +279,12 @@ private struct AskThinkingRow: View {
     private static let bounceHeight: CGFloat = 3
     /// Per-dot start offset, so the three dots read as one travelling wave rather than a blink.
     private static let stagger = 0.14
+    /// One dot's rise/fall duration — deliberately ~2× the Marginalia `.standard` (260ms) step,
+    /// i.e. "half speed", so the wave reads as a calm thinking pulse rather than a fast blink.
+    private static let travel = 0.5
+    /// A beat of stillness after each full wave: the dots settle, hold, then travel again — a
+    /// gentle breathing cadence instead of a relentless loop.
+    private static let restBetweenCycles = 0.55
 
     var body: some View {
         HStack(spacing: MarginaliaSpacing.sm.value) {
@@ -298,16 +304,27 @@ private struct AskThinkingRow: View {
             Text("Searching local meeting excerpts…")
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
         }
-        .onAppear {
+        // Drive the wave by hand rather than `.repeatForever`: rise, fall, then hold still for a
+        // beat before the next wave. `repeatForever(autoreverses:)` can do neither the pause nor a
+        // clean settle, which is exactly the too-fast, never-resting loop we're replacing. Each
+        // dot's own `.animation(for:)` (with its stagger) shapes the motion; the toggle just paces
+        // the cadence. The task cancels with the view, so it stops the moment the answer arrives.
+        .task {
             guard !reduceMotion else { return }
-            bounce = true
+            let waveSpan = Self.travel + Double(Self.dotCount - 1) * Self.stagger
+            while !Task.isCancelled {
+                bounce = true
+                try? await Task.sleep(for: .seconds(waveSpan))
+                bounce = false
+                try? await Task.sleep(for: .seconds(waveSpan + Self.restBetweenCycles))
+            }
         }
     }
 
     private func animation(for index: Int) -> Animation? {
         guard !reduceMotion else { return nil }
         return MarginaliaMotion.animation(.standard)
-            .repeatForever(autoreverses: true)
+            .speed(MarginaliaDuration.standard.seconds / Self.travel)
             .delay(Double(index) * Self.stagger)
     }
 }

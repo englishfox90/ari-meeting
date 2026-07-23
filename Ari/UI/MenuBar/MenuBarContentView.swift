@@ -54,6 +54,7 @@ struct MenuBarContentView: View {
                         viewModel: brief,
                         scheme: scheme,
                         canRecord: canRecord,
+                        compact: true,
                         onRecord: { record(event: $0) }
                     )
                 }
