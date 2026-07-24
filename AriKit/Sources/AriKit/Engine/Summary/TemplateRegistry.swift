@@ -84,11 +84,6 @@ public enum TemplateRegistry {
       "description": "One-on-one between a manager and a team member: check-in, discussion, feedback, growth, and follow-ups.",
       "sections": [
         {
-          "title": "Participant Roles",
-          "instruction": "Extract each participant's role or title (e.g. manager and team member) only if explicitly stated in the transcript; otherwise leave blank. Do not restate the participants' names or the meeting date, which are already shown elsewhere",
-          "format": "string"
-        },
-        {
           "title": "Check-in",
           "instruction": "Summarize the opening check-in: how the person said they are doing and any mood, workload, or wellbeing signals they explicitly expressed. Capture only what was actually said, not inferred",
           "format": "paragraph"
@@ -142,16 +137,6 @@ public enum TemplateRegistry {
       "name": "Project Sync / Status Update",
       "description": "Weekly or bi-weekly project status meeting focusing on milestones and risks.",
       "sections": [
-        {
-          "title": "Facilitator",
-          "instruction": "Extract the meeting facilitator's name only if explicitly stated in the transcript; otherwise leave blank. Do not restate the meeting date or the full attendee list, which are already shown elsewhere.",
-          "format": "string"
-        },
-        {
-          "title": "Attendee Roles",
-          "instruction": "List each attendee's role, only for attendees whose role was explicitly stated in the transcript. Omit attendees with no stated role rather than relisting the full attendee list.",
-          "format": "list"
-        },
         {
           "title": "Milestones & Status",
           "instruction": "List each project milestone discussed, with its current status and estimated completion date, using only what was stated.",
@@ -242,16 +227,6 @@ public enum TemplateRegistry {
       "description": "Capture client goals, deliverables, and next steps.",
       "sections": [
         {
-          "title": "Meeting Details",
-          "instruction": "Extract the meeting location/modality and account manager name only if explicitly stated in the transcript; otherwise leave blank. Do not restate the meeting date, which is already shown elsewhere",
-          "format": "string"
-        },
-        {
-          "title": "Attendee Roles",
-          "instruction": "List each client or vendor attendee's role, only for attendees whose role was explicitly stated in the transcript. Omit attendees with no stated role rather than relisting the full attendee list",
-          "format": "list"
-        },
-        {
           "title": "Client Goals & Success Criteria",
           "instruction": "Summarize what the client said they want to achieve and how they said success will be measured, based only on what was stated",
           "format": "paragraph"
@@ -293,11 +268,6 @@ public enum TemplateRegistry {
           "title": "Summary",
           "instruction": "Provide a brief, one-paragraph executive summary of the meeting and its main outcomes",
           "format": "paragraph"
-        },
-        {
-          "title": "Attendee Roles",
-          "instruction": "List each participant's role, only for participants whose role was explicitly stated in the transcript. Omit participants with no stated role rather than relisting the full attendee list",
-          "format": "list"
         },
         {
           "title": "Agenda & Topics Discussed",
