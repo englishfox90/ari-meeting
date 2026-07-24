@@ -9,6 +9,17 @@
 //  the frozen Tauri app's data dir (`com.meetily.ai`). The repository-backed screens (S6) then
 //  render real meetings. The legacy dir is only ever read — never written, never deleted.
 //
+//  Migration safety, Layer 3 (docs/plans/robust-migration-and-backup.md §5): immediately before
+//  `AppDatabase.makeShared` opens the Store, `bootstrap()` runs a best-effort pre-migration
+//  snapshot via `StoreBackup` (`VACUUM INTO`, off the main actor) into a rolling 3-day
+//  `backups/` directory sibling to `ari.sqlite`. Skipped when the DB is absent (fresh install) or
+//  empty (nothing to protect — never snapshot/retain an empty DB). A failure here is logged and
+//  swallowed; it must never block launch or itself cause a wipe. `ARI_RESET_STORE=1` in the
+//  process environment is the ONLY sanctioned way to pass `eraseDatabaseOnSchemaChange: true` to
+//  `makeShared` — set it in the Xcode scheme's environment for a deliberate clean-slate dev reset;
+//  it must never be set for a normal launch.
+//
+import AppKit
 import AriCapture
 import AriKit
 import AriKitDiarizationFluidAudio
@@ -16,6 +27,8 @@ import AriKitEngineMLX
 import AriViewModels
 import Foundation
 import Observation
+import os
+import SwiftUI
 
 @MainActor
 @Observable
@@ -64,6 +77,11 @@ final class AppEnvironment {
     /// same protocol without touching this wiring.
     private(set) var speakerCountHintProvider: (any SpeakerCountHintProviding)?
 
+    /// The first-run model-install/education flow (docs/plans/onboarding-install-flow.md) — gated
+    /// in `RootSplitView` behind `.onboardingCompleted` not yet being `true`. `nil` until
+    /// `bootstrap()` succeeds, exactly like `diarizationService`/`summaryRunner`.
+    private(set) var onboardingViewModel: OnboardingViewModel?
+
     /// The summary generation service (docs/plans/swift-meeting-generation-flow.md, Track 1 "App
     /// wiring") — `SummaryRunner`'s persistence delegate. `nil` until `bootstrap()` succeeds,
     /// exactly like `diarizationService`.
@@ -83,6 +101,11 @@ final class AppEnvironment {
     /// `bootstrap()` succeeds, exactly like `summaryRunner`. `AskConversationStore` needs no
     /// separate property — it's already `db.askConversations`.
     private(set) var recallEngine: RecallEngine?
+
+    /// The single, gated recall-index trigger (docs/plans/ask-meetings-tools-and-cards.md §3.1) —
+    /// wired into `summaryService` (index-after-summary) and handed to the meeting list/detail
+    /// view models (purge-on-delete). `nil` until `bootstrap()` succeeds.
+    private(set) var recallIndexTrigger: RecallIndexTrigger?
 
     /// The post-recording pipeline (docs/plans/swift-meeting-generation-flow.md, Track 2) —
     /// speaker identification → template selection → summary, mount-independent like
@@ -114,10 +137,22 @@ final class AppEnvironment {
     /// `consumePendingNavigation()`. `nil` when there's nothing pending.
     private(set) var pendingNavigation: PendingNavigation?
 
+    /// The in-process notch overlay's lifecycle owner (docs/plans/notch-panel-absorption.md §2) —
+    /// observes the `showNotchOverlay` preference and inserts/removes the `NotchPanelController`
+    /// live. `nil` until `bootstrap()` succeeds, exactly like `recordingSession`.
+    private(set) var notchOverlay: NotchOverlayCoordinator?
+
+    /// The main window's `OpenWindowAction`, captured from the root view's `onAppear` (plan §11
+    /// R4) — the "Open Ari" fallback `activateApp()` uses when no window is currently open. `nil`
+    /// until the root view has appeared at least once.
+    private var openWindowAction: OpenWindowAction?
+
     enum PendingNavigation: Equatable {
         case section(SidebarSection)
         case meeting(MeetingID)
     }
+
+    private static let logger = Logger(subsystem: "com.arivo.ari", category: "store.backup")
 
     /// Bundle identifier decided 2026-07-20 (arikit-native-shell.md §9): the fresh Swift app.
     static let bundleIdentifier = "com.arivo.ari"
@@ -130,7 +165,19 @@ final class AppEnvironment {
         guard database == nil else { return }
         do {
             let url = try Self.databaseURL()
-            let db = try AppDatabase.makeShared(at: url)
+
+            // Layer 3 (docs/plans/robust-migration-and-backup.md §5): best-effort pre-migration
+            // snapshot, strictly BEFORE `AppDatabase.makeShared` opens the pool — so at no instant
+            // do two writers/live connections coexist on `ari.sqlite` (single-owner, principle 3
+            // preserved by sequencing, not by a second simultaneous owner). Never fatal: any
+            // failure here is logged and swallowed, falling through to the real store open.
+            await Self.runPreMigrationBackup(sourceURL: url)
+
+            // Layer 2 (same plan, §5): `ARI_RESET_STORE=1` is the only sanctioned way to pass
+            // `eraseDatabaseOnSchemaChange: true` — a deliberate dev-only clean-slate opt-in, never
+            // set in a normal launch. Read here (the composition root), never inside the Store.
+            let allowReset = ProcessInfo.processInfo.environment["ARI_RESET_STORE"] == "1"
+            let db = try AppDatabase.makeShared(at: url, eraseDatabaseOnSchemaChange: allowReset)
             database = db
 
             // First-run import: gated on a persisted completion MARKER, not on row count. A
@@ -175,6 +222,31 @@ final class AppEnvironment {
                 transcription: SpeechLiveTranscriptionService()
             )
 
+            // Consent-before-record is a persisted preference (default OFF — the Record tap is
+            // itself the explicit action). Seed it onto the session before the UI can start a
+            // recording; the Settings toggle keeps it live thereafter via
+            // `onRecordingRequireConsentChanged` (SettingsView → SettingsViewModel).
+            recordingSession?.requireConsent = await (try? db.settings.bool(forKey: .recordingsRequireConsent))
+                ?? SettingsViewModel.Defaults.recordingRequireConsent
+
+            // The in-process notch overlay (docs/plans/notch-panel-absorption.md §2, Amendment A)
+            // — built now that `recordingSession` exists, since the model reads it directly via
+            // Observation. `onRecordEvent` reuses the SAME prime-and-start path a meeting reminder
+            // uses (`startRecordingFromReminder`), so the island's Record affordance and the
+            // reminder notification action can never diverge. The coordinator constructs its own
+            // `NotchUpcomingScheduler` (the ported `notch/scheduler.rs` brain) when the overlay
+            // turns on, so the upcoming-meeting alert is live.
+            if let session = recordingSession {
+                notchOverlay = NotchOverlayCoordinator(
+                    session: session,
+                    database: db,
+                    onOpenApp: { [weak self] in self?.activateApp() },
+                    onRecordEvent: { [weak self] eventId in
+                        Task { await self?.startRecordingFromReminder(eventId: eventId) }
+                    }
+                )
+            }
+
             // Import an existing audio file as a meeting (docs/plans/audio-import.md). Shares the
             // recordings root with live capture, but uses the file-transcription provider directly
             // (`SpeechTranscriberProvider`'s whole-file `transcribe(fileURL:)`), not the live
@@ -190,9 +262,15 @@ final class AppEnvironment {
             // wiring further down can capture them directly — they're Sendable value
             // types/actors, unlike `self`/`AppEnvironment`, which the coordinator's `@Sendable`
             // closures must never capture.
+            // Constructed as its own `let` (not inline) so the SAME actor instance is also
+            // handed to `onboardingViewModel` below (docs/plans/onboarding-install-flow.md §2.2)
+            // — onboarding's `ensureReady()` then warms this exact provider's in-actor
+            // `loadedModels` cache, not just FluidAudio's on-disk model cache, so a real-meeting
+            // diarization run right after onboarding never re-loads the CoreML models.
+            let diarizationProvider = FluidAudioDiarizationProvider()
             let diarizationService = DiarizationService(
                 database: db,
-                provider: FluidAudioDiarizationProvider(),
+                provider: diarizationProvider,
                 audioLoader: DiarizationAudioLoader()
             )
             self.diarizationService = diarizationService
@@ -218,12 +296,31 @@ final class AppEnvironment {
             let clientFactory: @Sendable (ProviderConfig) throws -> any LLMClient = {
                 try ProviderFactory.make(config: $0, mlxClientProvider: mlxClientProvider)
             }
+
+            // docs/plans/ask-meetings-tools-and-cards.md §3.1: the single, gated recall-index
+            // trigger. Constructed BEFORE `summaryService` so it can be threaded into it directly
+            // — `indexAfterSummary` is the ONLY place indexing fires outside the manual "Rebuild
+            // index" Settings button. `embedder` is also handed to `hybridSearch` below (built
+            // just after) — one embedder instance, not two independently-warmed caches.
+            let embedder = AppleContextualEmbedder()
+            let indexer = Indexer(
+                recallIndex: db.recallIndex,
+                transcripts: db.transcripts,
+                meetings: db.meetings,
+                summaries: db.summaries,
+                embedder: embedder,
+                coordinator: ReindexCoordinator()
+            )
+            let indexTrigger = RecallIndexTrigger(indexer: indexer, recallIndex: db.recallIndex)
+            recallIndexTrigger = indexTrigger
+
             let summaryService = SummaryService(
                 db: db,
                 settings: settingsReader,
                 secrets: summarySecrets,
                 cancellation: TaskCancellationCoordinator(),
-                clientFactory: clientFactory
+                clientFactory: clientFactory,
+                recallIndexTrigger: indexTrigger
             )
             self.summaryService = summaryService
             let ledgerReducer = SeriesLedgerReducer(
@@ -237,8 +334,8 @@ final class AppEnvironment {
             // docs/plans/ari-ask-ui.md §6: the "Ask" recall engine. Reuses the SAME MLX-aware
             // `clientFactory` above — the default `RecallEngine.init` factory omits MLX and a
             // `.mlx` config would throw "MLX client not registered", exactly like the summary
-            // stack's own note above.
-            let embedder = AppleContextualEmbedder()
+            // stack's own note above. `embedder` is the SAME instance built above for `indexer`
+            // (ask-meetings-tools-and-cards.md §3.1) — one embedder, one warmed cache.
             let hybridSearch = HybridSearch(
                 recallIndex: db.recallIndex,
                 meetings: db.meetings,
@@ -251,6 +348,19 @@ final class AppEnvironment {
                 profileFacts: db.profileFacts,
                 calendarEvents: db.calendarEvents
             )
+            // docs/plans/onboarding-install-flow.md, §6 "App wiring": the first-run install flow
+            // composes the SAME three provider instances the app's real pipelines use —
+            // `diarizationProvider` (above), a fresh `MLXModelInstaller` (its default `host: .shared`
+            // is the same `ModelHost` singleton `mlxClientProvider`/`MLXClient` resolve against),
+            // and `embedder` (constructed just above, also handed to `hybridSearch`) — so
+            // onboarding's downloads genuinely warm the caches the rest of the app reads, never a
+            // separate, wasted download path.
+            let onboardingViewModel = OnboardingViewModel(
+                components: [diarizationProvider, MLXModelInstaller(), embedder],
+                settings: db.settings
+            )
+            self.onboardingViewModel = onboardingViewModel
+
             recallEngine = RecallEngine(
                 db: db,
                 hybridSearch: hybridSearch,
@@ -433,6 +543,30 @@ final class AppEnvironment {
         pendingNavigation = nil
     }
 
+    /// Captures the main window's `OpenWindowAction`, called once from `RootSplitView`'s
+    /// `onAppear` (docs/plans/notch-panel-absorption.md §11 R4) — a plain `NSHostingView` (the
+    /// notch panel) has no scene-backed `openWindow` of its own, so `activateApp()` borrows the
+    /// one captured here.
+    func registerOpenWindowAction(_ action: OpenWindowAction) {
+        openWindowAction = action
+    }
+
+    /// Bring the app forward — hoisted from `MenuBarContentView`'s former private `activateApp()`
+    /// (docs/plans/notch-panel-absorption.md §2, §11 R4) so the notch overlay's "Open Ari"
+    /// affordance and the menu bar's "Open Ari" row share ONE implementation and can never
+    /// diverge. Fronts an existing main-capable window if one exists; else opens a fresh one via
+    /// the stored `OpenWindowAction` (menu-bar-only state, zero windows open). If neither is
+    /// available (pathological — before the root view has ever appeared), falls back to
+    /// `NSApp.activate` only (accepted, R4).
+    func activateApp() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
+            window.makeKeyAndOrderFront(nil)
+        } else if let openWindowAction {
+            openWindowAction(id: AriApp.mainWindowID)
+        }
+    }
+
     /// `~/Library/Application Support/com.arivo.ari/ari.sqlite`, creating the directory if needed.
     /// The app resolves the path; the Store never touches FileManager (arikit-store.md §2.2).
     private static func databaseURL() throws -> URL {
@@ -445,6 +579,109 @@ final class AppEnvironment {
         let dir = support.appendingPathComponent(bundleIdentifier, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("ari.sqlite", isDirectory: false)
+    }
+
+    /// `~/Library/Application Support/com.arivo.ari/backups`, creating the directory if needed
+    /// (docs/plans/robust-migration-and-backup.md §5 — a new sibling of `ari.sqlite`, resolved
+    /// here alongside `databaseURL()`/`recordingsRootURL()`; `StoreBackup` never touches
+    /// FileManager itself).
+    private static func backupsDirURL() throws -> URL {
+        let support = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let dir = support
+            .appendingPathComponent(bundleIdentifier, isDirectory: true)
+            .appendingPathComponent("backups", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Layer 3 (docs/plans/robust-migration-and-backup.md §5): snapshot `ari.sqlite` to a
+    /// uniquely-timestamped file under `backups/` before the migrator can run, then prune to a
+    /// rolling 3-day retention window. Best-effort and non-fatal by construction — every step is
+    /// wrapped so a failure here logs and simply skips straight through to `makeShared`; it must
+    /// never block launch or itself risk data loss.
+    private static func runPreMigrationBackup(sourceURL: URL) async {
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            // Genuine fresh first launch — nothing to protect.
+            return
+        }
+
+        let meetingCount: Int
+        do {
+            meetingCount = try await Task.detached {
+                try StoreBackup.meetingCount(at: sourceURL)
+            }.value
+        } catch {
+            logger
+                .error(
+                    "pre-migration backup: could not read meetingCount, skipping: \(String(describing: error), privacy: .public)"
+                )
+            return
+        }
+        guard meetingCount > 0 else {
+            // Empty/already-wiped DB — never snapshot or retain an empty DB (plan §5 step 2: this
+            // single guard is what keeps every file ever written into `backups/` non-empty).
+            return
+        }
+
+        do {
+            let dir = try backupsDirURL()
+            let formatter = DateFormatter()
+            // Fixed-format formatter → pin POSIX locale so a non-Gregorian/non-Latin-digit user
+            // locale can't inject unexpected years or digits into the backup filename.
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            formatter.timeZone = .current
+            let destination = dir.appendingPathComponent("ari-\(formatter.string(from: Date())).sqlite")
+
+            let capturedCount = try await Task.detached {
+                try StoreBackup.snapshot(from: sourceURL, to: destination)
+            }.value
+
+            if capturedCount == 0 {
+                // Defensive verify: a snapshot that somehow captured nothing is worse than none —
+                // never leave an empty file in the backups directory.
+                try? FileManager.default.removeItem(at: destination)
+                logger.error("pre-migration backup: snapshot captured 0 meetings, discarding")
+                return
+            }
+
+            try pruneOldBackups(in: dir)
+        } catch {
+            logger
+                .error(
+                    "pre-migration backup failed (non-fatal, continuing to open the store): \(String(describing: error), privacy: .public)"
+                )
+        }
+    }
+
+    /// Enumerates `backups/`, asks the pure `StoreBackup.snapshotsToPrune` policy which files are
+    /// past the 3-day rolling retention window (always keeping the single most-recent
+    /// regardless of age), and deletes those via FileManager — the only place in this flow that
+    /// touches the filesystem for enumeration/deletion (`StoreBackup` itself never does).
+    private static func pruneOldBackups(in dir: URL) throws {
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )
+        let existing: [(url: URL, date: Date)] = entries.compactMap { url in
+            guard let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+            else { return nil }
+            return (url, date)
+        }
+        let toPrune = StoreBackup.snapshotsToPrune(
+            existing: existing,
+            now: Date(),
+            keepWithin: 3 * 24 * 3600
+        )
+        for url in toPrune {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     /// `~/Library/Application Support/com.arivo.ari/recordings`, creating the directory if

@@ -37,9 +37,14 @@ public final class MeetingDetailViewModel {
     public private(set) var referencedMoments: [Double] = []
 
     private let database: AppDatabase
+    /// Fires the recall-index purge on delete (docs/plans/ask-meetings-tools-and-cards.md §3.1.1)
+    /// — `nil` in contexts that don't wire recall indexing (e.g. narrower tests), in which case a
+    /// delete simply doesn't purge anything (the meeting is still tombstoned either way).
+    private let recallIndexTrigger: RecallIndexTrigger?
 
-    public init(database: AppDatabase) {
+    public init(database: AppDatabase, recallIndexTrigger: RecallIndexTrigger? = nil) {
         self.database = database
+        self.recallIndexTrigger = recallIndexTrigger
     }
 
     public func load(_ id: MeetingID) async {
@@ -69,6 +74,29 @@ public final class MeetingDetailViewModel {
         } catch {
             meeting = .failed(String(describing: error))
         }
+    }
+
+    /// Renames the meeting and reflects the new title locally. The detail screen does one-shot
+    /// reads (no live observation), so we patch the loaded `meeting` in place — otherwise the
+    /// header/navigation title would keep the stale title until the next `load`. A blank title, or
+    /// a call before the meeting has loaded, is a no-op. Throws on a real write failure.
+    public func rename(_ id: MeetingID, to newTitle: String) async throws {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard case let .loaded(current) = meeting, !trimmed.isEmpty, trimmed != current.title else { return }
+        try await database.meetings.rename(id, to: trimmed, at: Date())
+        var updated = current
+        updated.title = trimmed
+        meeting = .loaded(updated)
+    }
+
+    /// Soft-deletes (tombstones) the meeting. The caller is responsible for dismissing the detail
+    /// screen afterward (the list refreshes itself via its own observation). Throws on a real
+    /// write failure.
+    public func delete(_ id: MeetingID) async throws {
+        try await database.meetings.softDelete(id, at: Date())
+        // Fire-and-forget purge of any indexed recall chunks (§3.1.1) — never blocks the delete,
+        // never surfaces its own failure to the caller.
+        recallIndexTrigger?.purgeOnDelete(id)
     }
 
     /// The resolved display name for a transcript segment's speaker, or `nil` if none could

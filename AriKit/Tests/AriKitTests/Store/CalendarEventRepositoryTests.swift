@@ -178,7 +178,8 @@ struct CalendarEventRepositoryTests {
         )
         try await db.calendarEvents.softDelete("ev-dead", at: base)
 
-        let events = try await db.calendarEvents.events(startingIn: start.addingTimeInterval(-60) ... end.addingTimeInterval(60))
+        let events = try await db.calendarEvents
+            .events(startingIn: start.addingTimeInterval(-60) ... end.addingTimeInterval(60))
         #expect(events.map(\.id) == ["ev-live"])
     }
 
@@ -262,8 +263,8 @@ struct CalendarEventRepositoryTests {
         #expect(event.linkSource == .manual)
     }
 
-    @Test("unlinkMeeting clears both meetingId and linkSource")
-    func unlinkMeetingClearsBothFields() async throws {
+    @Test("unlinkMeeting clears meetingId and records the durable .unlinked sentinel")
+    func unlinkMeetingClearsMeetingAndMarksUnlinked() async throws {
         let db = try AppDatabase.makeInMemory()
         let meetingId: MeetingID = "meeting-1"
         try await db.meetings.upsert(meeting(id: meetingId, createdAt: base))
@@ -276,7 +277,64 @@ struct CalendarEventRepositoryTests {
 
         let event = try #require(try await db.calendarEvents.find("ev-1"))
         #expect(event.meetingId == nil)
-        #expect(event.linkSource == nil)
+        #expect(event.linkSource == .unlinked)
+    }
+
+    // MARK: - Durable unlink (regression: unlink must survive the next auto-match pass)
+
+    @Test("an unlinked event is not an auto-match candidate")
+    func unlinkedEventIsExcludedFromAutoMatchCandidates() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meetingId: MeetingID = "meeting-1"
+        try await db.meetings.upsert(meeting(id: meetingId, createdAt: base))
+        let start = base
+        let end = base.addingTimeInterval(1800)
+        try await db.calendarEvents.syncUpsert(
+            [calendarEvent(id: "ev-1", start: start, end: end)], at: base
+        )
+        try await db.calendarEvents.setAutoLink(eventId: "ev-1", meetingId: meetingId)
+        try await db.calendarEvents.unlinkMeeting(eventId: "ev-1")
+
+        let candidates = try await db.calendarEvents.autoLinkableEvents(
+            startingIn: start.addingTimeInterval(-60) ... end.addingTimeInterval(60)
+        )
+        #expect(candidates.isEmpty)
+    }
+
+    @Test("setAutoLink is a no-op against an unlinked event (unlink survives re-matching)")
+    func setAutoLinkGuardsAgainstUnlinkedEvent() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meetingId: MeetingID = "meeting-1"
+        try await db.meetings.upsert(meeting(id: meetingId, createdAt: base))
+        try await db.calendarEvents.syncUpsert(
+            [calendarEvent(id: "ev-1", start: base, end: base.addingTimeInterval(1800))], at: base
+        )
+        try await db.calendarEvents.setManualLink(eventId: "ev-1", meetingId: meetingId)
+        try await db.calendarEvents.unlinkMeeting(eventId: "ev-1")
+
+        // A stale candidate set could still call setAutoLink directly — it must refuse.
+        try await db.calendarEvents.setAutoLink(eventId: "ev-1", meetingId: meetingId)
+
+        let event = try #require(try await db.calendarEvents.find("ev-1"))
+        #expect(event.meetingId == nil)
+        #expect(event.linkSource == .unlinked)
+    }
+
+    @Test("a manual re-link overrides the .unlinked sentinel")
+    func manualLinkOverridesUnlinkedSentinel() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meetingId: MeetingID = "meeting-1"
+        try await db.meetings.upsert(meeting(id: meetingId, createdAt: base))
+        try await db.calendarEvents.syncUpsert(
+            [calendarEvent(id: "ev-1", start: base, end: base.addingTimeInterval(1800))], at: base
+        )
+        try await db.calendarEvents.unlinkMeeting(eventId: "ev-1")
+
+        try await db.calendarEvents.setManualLink(eventId: "ev-1", meetingId: meetingId)
+
+        let event = try #require(try await db.calendarEvents.find("ev-1"))
+        #expect(event.meetingId == meetingId)
+        #expect(event.linkSource == .manual)
     }
 
     // MARK: - selectedCalendarIds / setSelectedCalendars

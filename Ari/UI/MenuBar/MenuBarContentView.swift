@@ -19,7 +19,6 @@ import SwiftUI
 
 struct MenuBarContentView: View {
     @Environment(AppEnvironment.self) private var environment
-    @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var scheme
 
     /// Built once the shell is `.ready` (a real `database` exists). Local-DB-first like Home's
@@ -55,6 +54,7 @@ struct MenuBarContentView: View {
                         viewModel: brief,
                         scheme: scheme,
                         canRecord: canRecord,
+                        compact: true,
                         onRecord: { record(event: $0) }
                     )
                 }
@@ -66,7 +66,7 @@ struct MenuBarContentView: View {
             footer
         }
         .padding(MarginaliaSpacing.sm.value)
-        .frame(width: 260)
+        .frame(width: 360)
         // Bootstrap even when no main window is open (menu-bar-only state) — idempotent-guarded, so
         // a no-op when the window already ran it at launch.
         .task { await environment.bootstrap() }
@@ -95,7 +95,7 @@ struct MenuBarContentView: View {
                 .aspectRatio(96.0 / 64.0, contentMode: .fit)
                 .frame(width: 16)
                 .foregroundStyle(Color.marginalia(.accent, in: scheme))
-            Text("Ari")
+            Text("Ari Meetings")
                 .marginaliaTextStyle(.subheadline, in: scheme)
             Spacer(minLength: MarginaliaSpacing.sm.value)
             if recordingSession?.isActive == true {
@@ -175,12 +175,7 @@ struct MenuBarContentView: View {
     /// windows are closed (menu-bar-only state). Activating also moves focus off the popover, which
     /// dismisses it — no manual dismiss plumbing needed.
     private func activateApp() {
-        NSApp.activate(ignoringOtherApps: true)
-        if let window = NSApp.windows.first(where: { $0.canBecomeMain }) {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            openWindow(id: AriApp.mainWindowID)
-        }
+        environment.activateApp()
     }
 
     private func loadBrief() async {

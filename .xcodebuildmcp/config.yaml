@@ -1,0 +1,17 @@
+schemaVersion: 1
+
+# Ari is macOS-only (see .claude/rules/platform-and-deps.md) and builds two things:
+# the Ari.xcodeproj app target and the AriKit / sidecar SwiftPM packages.
+# Simulator + device workflows are irrelevant here, so they are left off.
+enabledWorkflows:
+  - macos
+  - swift-package
+  - project-discovery
+  - utilities
+  - ui-automation
+
+incrementalBuildsEnabled: true
+
+setupPreferences:
+  platforms:
+    - macOS

@@ -53,8 +53,9 @@ struct CalendarPageViewModelTests {
         )
 
         let weekStart = CalendarWeekLayout.weekDays(containing: fixedNow, calendar: calendar)[0]
-        let thisWeekTime = calendar.date(byAdding: .day, value: 1, to: weekStart)!.addingTimeInterval(3600)
-        let nextWeekTime = calendar.date(byAdding: .weekOfYear, value: 1, to: thisWeekTime)!
+        let thisWeekTime = try #require(calendar.date(byAdding: .day, value: 1, to: weekStart)?
+            .addingTimeInterval(3600))
+        let nextWeekTime = try #require(calendar.date(byAdding: .weekOfYear, value: 1, to: thisWeekTime))
 
         try await db.calendarEvents.syncUpsert(
             [
@@ -237,7 +238,9 @@ struct CalendarPageViewModelTests {
         await viewModel.unlink(eventId: "ev-1")
         let unlinked = try #require(try await db.calendarEvents.find("ev-1"))
         #expect(unlinked.meetingId == nil)
-        #expect(unlinked.linkSource == nil)
+        // unlink() sets the durable `.unlinked` sentinel (not nil) so a later auto-match
+        // sync can't silently re-link this event — see CalendarEventRepository.unlinkMeeting().
+        #expect(unlinked.linkSource == .unlinked)
         #expect(viewModel.linkedMeetingTitles[meetingId] == nil)
     }
 }

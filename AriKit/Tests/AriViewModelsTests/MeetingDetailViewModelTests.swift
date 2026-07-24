@@ -139,7 +139,7 @@ struct MeetingDetailViewModelTests {
             SpeakerSegment(
                 id: "segment-2", meetingId: meetingId, speakerId: labelOnlySpeaker.id,
                 clusterKey: "S2", startTime: 3, endTime: 5, source: .system, createdAt: meeting.createdAt
-            ),
+            )
         ])
 
         let viewModel = MeetingDetailViewModel(database: database)
@@ -148,5 +148,64 @@ struct MeetingDetailViewModelTests {
         #expect(viewModel.displayName(for: identifiedSpeaker.id) == "Ada Lovelace")
         #expect(viewModel.displayName(for: labelOnlySpeaker.id) == "Guest")
         #expect(viewModel.displayName(for: nil) == nil)
+    }
+
+    @Test("rename persists and updates the loaded meeting in place")
+    func renameUpdatesLoadedMeeting() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let meetingId: MeetingID = "meeting-rename"
+        let meeting = Meeting(
+            id: meetingId, title: "Old title",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try await database.meetings.upsert(meeting)
+
+        let viewModel = MeetingDetailViewModel(database: database)
+        await viewModel.load(meetingId)
+        try await viewModel.rename(meetingId, to: "New title")
+
+        // Local state patched (no re-load) …
+        #expect(viewModel.meeting.value?.title == "New title")
+        // … and persisted.
+        #expect(try await database.meetings.find(meetingId)?.title == "New title")
+    }
+
+    @Test("blank rename is a no-op")
+    func blankRenameIsNoOp() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let meetingId: MeetingID = "meeting-rename-blank"
+        let meeting = Meeting(
+            id: meetingId, title: "Keep me",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try await database.meetings.upsert(meeting)
+
+        let viewModel = MeetingDetailViewModel(database: database)
+        await viewModel.load(meetingId)
+        try await viewModel.rename(meetingId, to: "   ")
+
+        #expect(viewModel.meeting.value?.title == "Keep me")
+    }
+
+    @Test("delete tombstones the meeting")
+    func deleteTombstones() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let meetingId: MeetingID = "meeting-delete"
+        let meeting = Meeting(
+            id: meetingId, title: "Bye",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try await database.meetings.upsert(meeting)
+
+        let viewModel = MeetingDetailViewModel(database: database)
+        await viewModel.load(meetingId)
+        try await viewModel.delete(meetingId)
+
+        // `find` still returns the tombstoned row (it doesn't filter isDeleted); the listing is
+        // what drops it.
+        #expect(try await database.meetings.all().isEmpty)
     }
 }

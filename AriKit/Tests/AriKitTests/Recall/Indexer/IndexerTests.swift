@@ -105,6 +105,7 @@ struct IndexerTests {
             recallIndex: db.recallIndex,
             transcripts: db.transcripts,
             meetings: db.meetings,
+            summaries: db.summaries,
             embedder: embedder,
             coordinator: ReindexCoordinator()
         )
@@ -150,6 +151,7 @@ struct IndexerTests {
             recallIndex: db.recallIndex,
             transcripts: db.transcripts,
             meetings: db.meetings,
+            summaries: db.summaries,
             embedder: ThrowingEmbedder(),
             coordinator: ReindexCoordinator()
         )
@@ -165,6 +167,7 @@ struct IndexerTests {
             recallIndex: db.recallIndex,
             transcripts: db.transcripts,
             meetings: db.meetings,
+            summaries: db.summaries,
             embedder: workingEmbedder,
             coordinator: ReindexCoordinator()
         )
@@ -198,6 +201,7 @@ struct IndexerTests {
             recallIndex: db.recallIndex,
             transcripts: db.transcripts,
             meetings: db.meetings,
+            summaries: db.summaries,
             embedder: embedder,
             coordinator: ReindexCoordinator()
         )
@@ -238,6 +242,7 @@ struct IndexerTests {
             recallIndex: db.recallIndex,
             transcripts: db.transcripts,
             meetings: db.meetings,
+            summaries: db.summaries,
             embedder: CountingEmbedder(),
             coordinator: coordinator
         )
@@ -265,6 +270,7 @@ struct IndexerTests {
             recallIndex: db.recallIndex,
             transcripts: db.transcripts,
             meetings: db.meetings,
+            summaries: db.summaries,
             embedder: SlowEmbedder(delayNanoseconds: 200_000_000),
             coordinator: coordinator
         )
@@ -297,6 +303,7 @@ struct IndexerTests {
             recallIndex: db.recallIndex,
             transcripts: db.transcripts,
             meetings: db.meetings,
+            summaries: db.summaries,
             embedder: CountingEmbedder(),
             coordinator: ReindexCoordinator()
         )
@@ -317,6 +324,7 @@ struct IndexerTests {
             recallIndex: db.recallIndex,
             transcripts: db.transcripts,
             meetings: db.meetings,
+            summaries: db.summaries,
             embedder: CountingEmbedder(),
             coordinator: ReindexCoordinator()
         )
@@ -344,6 +352,7 @@ struct IndexerTests {
             recallIndex: db.recallIndex,
             transcripts: db.transcripts,
             meetings: db.meetings,
+            summaries: db.summaries,
             embedder: embedder,
             coordinator: ReindexCoordinator()
         )

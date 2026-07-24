@@ -17,10 +17,31 @@
 //
 import AriKit
 import Foundation
+import MLX
 import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
 import os
+
+/// Bounds MLX's GPU (Metal) buffer cache, run exactly once process-wide before the first
+/// generation. MLX's cache limit *defaults to its memory limit* — 1.5× the device's recommended
+/// max working-set size (`mlx-swift/Source/MLX/GPU+Metal.swift`) — so on a Mac with abundant RAM
+/// the reuse cache is allowed to grow to many GB and never returns memory to the OS. Left
+/// unbounded it drove a real 17 GB `IOAccelerator` footprint and a system application-memory OOM
+/// (2026-07-23). A firm ceiling keeps freed buffers reusable for decode-loop throughput while
+/// capping runaway growth; `MLXClient` additionally `clearCache()`s on the idle transition so the
+/// pool is handed back between summaries. A top-level `let` is a lazily-initialized, thread-safe
+/// once — reference it (`_ = mlxRuntimeConfigured`) at every generation entry point.
+/// Not `private`: `MLXClient+Tools.swift` (the tool-capable `respondWithTools` conformance,
+/// docs/plans/ask-meetings-agentic-tools.md §3.5) installs the same one-time GPU cache-limit
+/// bracket at its own generation entry point, mirroring `generate`/`stream` below.
+let mlxRuntimeConfigured: Bool = {
+    // 512 MB: comfortably above a single decode's transient buffer churn (so reuse still helps),
+    // far below the multi-GB default ceiling. MLX docs note even ~2 MB is often perf-neutral; 512
+    // MB is a conservative pick that keeps growth bounded without risking decode regressions.
+    MLX.Memory.cacheLimit = 512 * 1024 * 1024
+    return true
+}()
 
 /// The on-device MLX conformer for `.mlx` (`ProviderKind.mlx`, `LLMClient.swift:85`). Constructed
 /// via `AriKitEngineMLX.mlxClientProvider` and injected into `ProviderFactory.make(config:
@@ -84,7 +105,43 @@ public final class MLXClient: LLMClient {
 
     public func generate(_ request: LLMRequest) async throws -> String {
         try Task.checkCancellation()
+        _ = mlxRuntimeConfigured // one-time GPU cache-limit install (see the top-level `let`)
 
+        // Registered for the whole GPU-touching span (container resolve → session.respond) — a
+        // crash (2026-07-22) came from the app quitting while this work was still in flight on a
+        // background task; the app's termination handler awaits `MLXActivityTracker.shared.
+        // waitUntilIdle()` before letting `exit()` run, so it never races a live generation the
+        // way the crash did. `begin()`/`end()` bracket the `do`/`catch` directly (not a `defer`,
+        // which cannot `await`) so every exit path — success or throw — decrements exactly once
+        // before this call returns. See MLXActivityTracker.swift for the full root-cause writeup.
+        await MLXActivityTracker.shared.begin()
+        do {
+            let result = try await generateBody(request)
+            await Self.endActivityReclaimingCacheIfIdle()
+            return result
+        } catch {
+            await Self.endActivityReclaimingCacheIfIdle()
+            throw error
+        }
+    }
+
+    /// Decrements the activity ledger and, *only* when that drains it to idle, hands MLX's GPU
+    /// buffer cache back to the OS. `clearCache()` frees just unused cached buffers — never active
+    /// allocations — so even if an overlapping generation begins right after, MLX serializes
+    /// `clearCache()` and `eval` on the same internal `evalLock`, so the worst case is that
+    /// generation loses buffer reuse for one step, never correctness. Paired with the 512 MB
+    /// `cacheLimit` (see `mlxRuntimeConfigured`), this keeps the between-summaries footprint low
+    /// instead of pinning multiple GB of cache resident for the process lifetime.
+    ///
+    /// The reclaim is handed to `end(reclaimingWhenIdle:)` so it runs *inside* the tracker's
+    /// actor-isolated critical section, before the drained-to-idle waiters resume — see that
+    /// method for why that ordering is load-bearing against the process-teardown race.
+    /// Not `private`: shared with `MLXClient+Tools.swift`'s `respondWithTools` bracket.
+    static func endActivityReclaimingCacheIfIdle() async {
+        await MLXActivityTracker.shared.end(reclaimingWhenIdle: { MLX.Memory.clearCache() })
+    }
+
+    private func generateBody(_ request: LLMRequest) async throws -> String {
         let clock = ContinuousClock()
         let containerStart = clock.now
         let container = try await resolveContainer()
@@ -123,23 +180,34 @@ public final class MLXClient: LLMClient {
     /// yields `String` chunks directly, so this overrides the `LLMClient` extension's single-yield
     /// fallback instead of falling back to it, per plan §1.5(a)).
     public func stream(_ request: LLMRequest) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
+        _ = mlxRuntimeConfigured // one-time GPU cache-limit install (see the top-level `let`)
+        return AsyncThrowingStream { continuation in
             let task = Task {
+                // Same `MLXActivityTracker` bracket as `generate` (see there for the full
+                // root-cause writeup) — bracket the whole GPU-touching span, decrement on every
+                // exit path (normal finish, cancellation, or error) before this `Task` completes.
+                // `endActivityReclaimingCacheIfIdle()` also reclaims the GPU cache on the idle
+                // transition (see its doc comment).
+                await MLXActivityTracker.shared.begin()
                 do {
                     try Task.checkCancellation()
                     let container = try await self.resolveContainer()
                     let session = self.makeSession(container: container, request: request)
                     for try await chunk in session.streamResponse(to: request.user) {
                         if Task.isCancelled {
+                            await Self.endActivityReclaimingCacheIfIdle()
                             continuation.finish(throwing: LLMError.cancelled)
                             return
                         }
                         continuation.yield(chunk)
                     }
+                    await Self.endActivityReclaimingCacheIfIdle()
                     continuation.finish()
                 } catch let error as LLMError {
+                    await Self.endActivityReclaimingCacheIfIdle()
                     continuation.finish(throwing: error)
                 } catch {
+                    await Self.endActivityReclaimingCacheIfIdle()
                     continuation.finish(throwing: LLMError.requestFailed("MLX streaming failed: \(error)"))
                 }
             }
@@ -149,7 +217,8 @@ public final class MLXClient: LLMClient {
 
     // MARK: - Internals
 
-    private func resolveContainer() async throws -> ModelContainer {
+    /// Not `private`: shared with `MLXClient+Tools.swift`'s `respondWithTools`.
+    func resolveContainer() async throws -> ModelContainer {
         do {
             return try await host.container(forRepoId: repoId)
         } catch {

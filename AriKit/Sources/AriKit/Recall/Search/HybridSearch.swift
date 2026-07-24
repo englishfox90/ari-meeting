@@ -137,12 +137,32 @@ public struct HybridSearch: Sendable {
             meetingMeta[meeting.id] = (meeting.title, RFC3339.string(from: meeting.createdAt), weight)
         }
 
-        var scoredChunks: [(chunkId: RecallChunkID, score: Double)] = ranks.map { chunkId, score in
-            let weight = chunkMeeting[chunkId].flatMap { meetingMeta[$0]?.weight } ?? 1.0
-            return (chunkId, score * weight)
+        var scoredChunks: [(chunkId: RecallChunkID, score: Double)] = ranks.compactMap { chunkId, score in
+            // Drop chunks whose parent meeting was soft-deleted (tombstoned): its metadata is
+            // absent from `meetingMeta` (built from `meetings.all()`, which excludes deleted rows),
+            // so it would otherwise surface as an "Untitled meeting" with no date and leak deleted
+            // content into Ask. Delete now also purges the index (`RecallIndexTrigger.purgeOnDelete`),
+            // but that purge is a fire-and-forget detached task, so a race window exists between the
+            // tombstone write and the purge completing — this query-time filter is the defense-in-depth
+            // backstop that closes that window, matching the meetings list, `observeAll()`, and the
+            // keyword-fallback's `WHERE m.isDeleted = 0`.
+            guard let meetingId = chunkMeeting[chunkId], let meta = meetingMeta[meetingId] else {
+                return nil
+            }
+            return (chunkId, score * meta.weight)
         }
         scoredChunks.sort { $0.score > $1.score }
         scoredChunks = Array(scoredChunks.prefix(RecallBounds.maxHits))
+
+        if scoredChunks.isEmpty {
+            // Every ranked chunk belonged to a deleted meeting. Mirror the `ranks.isEmpty` path:
+            // global scope may still fall back to the (deleted-filtered) keyword search; scoped
+            // recall returns empty rather than leak chunks outside the series.
+            if allowed != nil {
+                return []
+            }
+            return try await transcripts.searchTranscripts(matching: question)
+        }
 
         // Fetch the chunk rows we kept.
         let chunkRows = try await recallIndex.chunks(byIds: scoredChunks.map(\.chunkId))
@@ -164,11 +184,17 @@ public struct HybridSearch: Sendable {
         for (chunkId, _) in scoredChunks {
             guard let chunk = chunkById[chunkId] else { continue }
             let meta = meetingMeta[chunk.meetingId]
+            // A summary chunk never carries a real transcript timestamp — stamp it explicitly
+            // rather than relying on `timestampLabel` happening to be `nil` (plan
+            // ask-meetings-tools-and-cards.md §3.2).
+            let timestamp: String = chunk.sourceKind == .summary
+                ? "not available"
+                : chunk.timestampLabel ?? "not available"
             results.append(TranscriptSearchResult(
                 id: chunk.meetingId.rawValue,
                 title: meta?.title ?? "Untitled meeting",
                 matchContext: chunk.chunkText,
-                timestamp: chunk.timestampLabel ?? "not available",
+                timestamp: timestamp,
                 meetingDate: meta?.date,
                 summary: summaryByMeeting[chunk.meetingId] ?? nil
             ))

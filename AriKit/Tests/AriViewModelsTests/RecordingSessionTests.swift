@@ -23,13 +23,19 @@ struct RecordingSessionTests {
         clock: @escaping @Sendable () -> Date = { Date(timeIntervalSince1970: 1_700_000_000) }
     ) throws -> RecordingSession {
         let root = try makeRecordingsRoot()
-        return RecordingSession(
+        let session = RecordingSession(
             database: database,
             recordingsRoot: root,
             makeCaptureService: { _ in capture },
             transcription: transcription,
             clock: clock
         )
+        // These cases exercise the CONSENT flow (`requestStart` → `.consentPrompt` →
+        // `confirmConsent`), so opt into the gate explicitly. Production defaults it OFF
+        // (`RecordingSession.requireConsent`); the skip path is covered by
+        // `requestStartSkipsConsentWhenNotRequired` below.
+        session.requireConsent = true
+        return session
     }
 
     // MARK: 1. State machine
@@ -121,6 +127,28 @@ struct RecordingSessionTests {
         // Only confirmConsent() starts capture.
         await session.confirmConsent()
         #expect(await capture.startCallCount == 1)
+    }
+
+    @Test("with consent NOT required (default), requestStart() goes straight to capture — no gate")
+    func requestStartSkipsConsentWhenNotRequired() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let capture = SpyCaptureService()
+        let transcription = StubLiveTranscriptionService(cannedSegments: [])
+        let session = try makeSession(database: database, capture: capture, transcription: transcription)
+        // Production default — the Record tap is itself the explicit consent.
+        session.requireConsent = false
+        await session.readinessProbeTask?.value
+
+        #expect(await capture.startCallCount == 0)
+
+        // No `.consentPrompt` phase: the tap flips straight to `.starting`, then capture runs.
+        session.requestStart()
+        #expect(session.phase != .consentPrompt)
+        await session.startTask?.value
+        #expect(await capture.startCallCount == 1)
+        if case .recording = session.phase {} else {
+            Issue.record("expected .recording after a consent-free requestStart(), got \(session.phase)")
+        }
     }
 
     // MARK: 3. Live accumulation
@@ -411,7 +439,10 @@ struct RecordingSessionTests {
         await session.readinessProbeTask?.value
 
         try await database.calendarEvents.syncUpsert([makeCalendarEvent(id: "event-1")], at: Date())
-        session.pendingCalendarLink = RecordingSession.PendingCalendarLink(eventId: "event-1", eventTitle: "Weekly Sync")
+        session.pendingCalendarLink = RecordingSession.PendingCalendarLink(
+            eventId: "event-1",
+            eventTitle: "Weekly Sync"
+        )
 
         session.requestStart()
         await session.confirmConsent()

@@ -12,6 +12,7 @@
 //  ships honest "isn't built yet" reasons until R3–R6 wire real capture, and the Record button
 //  stays disabled with that reason visible rather than pretending it can start.
 //
+import AppKit
 import AriKit
 import AriViewModels
 import SwiftUI
@@ -129,8 +130,8 @@ struct RecordingView: View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             SectionHeader(title: "SOURCES")
             VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
-                readinessRow(title: "Microphone", availability: session.micStatus)
-                readinessRow(title: "System audio", availability: session.systemStatus)
+                readinessRow(kind: .microphone, availability: session.micStatus)
+                readinessRow(kind: .systemAudio, availability: session.systemStatus)
             }
             .padding(MarginaliaSpacing.md.value)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -145,18 +146,49 @@ struct RecordingView: View {
         }
     }
 
-    private func readinessRow(title: String, availability: CaptureAvailability) -> some View {
+    /// Which capture source a readiness row describes — lets the honest `.notDetermined` copy and
+    /// the remedy affordance differ (the mic genuinely prompts at start; system audio needs a
+    /// Screen & System-Audio Recording grant that only takes effect after a relaunch).
+    private enum SourceKind {
+        case microphone
+        case systemAudio
+
+        var title: String {
+            switch self {
+            case .microphone: "Microphone"
+            case .systemAudio: "System audio"
+            }
+        }
+    }
+
+    private func readinessRow(kind: SourceKind, availability: CaptureAvailability) -> some View {
         HStack(alignment: .top, spacing: MarginaliaSpacing.sm.value) {
             Image(systemName: symbol(for: availability))
                 .foregroundStyle(Color.marginalia(ink(for: availability), in: scheme))
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-                Text(title)
+                Text(kind.title)
                     .marginaliaTextStyle(.body, in: scheme)
-                Text(detail(for: availability))
+                Text(detail(for: availability, kind: kind))
                     .marginaliaTextStyle(.callout, in: scheme, ink: ink(for: availability))
+                // System audio can't self-resolve at record time (a fresh grant needs a relaunch),
+                // so give the honest state an action instead of the misleading "will be requested".
+                if kind == .systemAudio, case .notDetermined = availability {
+                    Button("Open System Settings") { openScreenRecordingSettings() }
+                        .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+                }
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    /// Deep-links to Privacy & Security ▸ Screen & System-Audio Recording (the TCC pane gating the
+    /// Core Audio process tap). Best-effort: falls back to the pane's root if the anchor is stale.
+    private func openScreenRecordingSettings() {
+        let anchored = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        let root = URL(string: "x-apple.systempreferences:com.apple.preference.security")
+        if let url = anchored ?? root {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -176,11 +208,20 @@ struct RecordingView: View {
         }
     }
 
-    private func detail(for availability: CaptureAvailability) -> String {
+    private func detail(for availability: CaptureAvailability, kind: SourceKind) -> String {
         switch availability {
-        case .ready: "Ready"
-        case .notDetermined: "Not yet determined — will be requested when recording starts"
-        case let .unavailable(reason): reason
+        case .ready:
+            "Ready"
+        case .notDetermined:
+            switch kind {
+            case .microphone:
+                "Not yet determined — you'll be asked when recording starts."
+            case .systemAudio:
+                "Not granted yet. Enable Ari under System Settings ▸ Privacy & Security ▸ "
+                    + "Screen & System Audio Recording, then reopen the app."
+            }
+        case let .unavailable(reason):
+            reason
         }
     }
 
@@ -376,6 +417,8 @@ struct RecordingView: View {
                 .marginaliaTextStyle(.title2, in: scheme)
             Text(segmentCountLine)
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
             processingStatusSection(meetingId: meetingId)
             HStack(spacing: MarginaliaSpacing.md.value) {
                 Button("New recording") { session.reset() }
@@ -388,8 +431,14 @@ struct RecordingView: View {
         .padding(MarginaliaSpacing.xl.value)
     }
 
+    /// Honest either way (No-Fake-State): the real segment count, or — when there is none — what
+    /// that actually means, phrased as the observation it is rather than a bare "0 segments".
     private var segmentCountLine: String {
         let count = session.segments.count
+        guard count > 0 else {
+            return "No speech was recognized, so this meeting has no transcript. "
+                + "The audio was still saved — you can open the meeting to play it back."
+        }
         return "\(count) transcript \(count == 1 ? "segment" : "segments") saved."
     }
 
@@ -426,7 +475,7 @@ struct RecordingView: View {
         switch phase {
         case .identifyingSpeakers, .selectingTemplate, .summarizing:
             true
-        case .idle, .needsSpeakerCount, .completed, .failed:
+        case .idle, .needsSpeakerCount, .completed, .skipped, .failed:
             false
         }
     }
@@ -445,13 +494,16 @@ struct RecordingView: View {
             "Generating summary…"
         case .completed:
             "Processing complete."
-        case let .failed(message):
+        case let .skipped(message), let .failed(message):
             message
         }
     }
 
     private func processingStatusInk(_ phase: MeetingProcessingCoordinator.Phase) -> MarginaliaColorRole {
-        if case .failed = phase { return .error }
+        // `.skipped` stays secondary ink: a recording with no speech is a fact, not a fault.
+        if case .failed = phase {
+            return .error
+        }
         return .inkSecondary
     }
 

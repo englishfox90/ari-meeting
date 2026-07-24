@@ -71,7 +71,12 @@ public actor AppleContextualEmbedder: RecallEmbedder {
     /// Lazily creates, asset-checks, and loads the on-device model exactly once, caching it for
     /// the actor's lifetime. Never fabricates availability — a missing model/assets throws
     /// honestly (`RecallEmbedderError.modelUnavailable`) so the caller degrades to lexical-only.
-    private func loadedModelInstance() async throws -> NLContextualEmbedding {
+    ///
+    /// Package-visible (not `private`) so `OnboardingInstallableComponent.ensureReady`
+    /// (docs/plans/onboarding-install-flow.md §2.4, same file below) can call this same lazy-load
+    /// path directly, rather than forcing it via a throwaway-string `embed(_:)` call — the plan's
+    /// explicit "avoid the throwaway-string hack" call.
+    func loadedModelInstance() async throws -> NLContextualEmbedding {
         if let loadedModel {
             return loadedModel
         }

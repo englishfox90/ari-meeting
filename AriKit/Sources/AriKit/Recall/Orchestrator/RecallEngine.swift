@@ -55,7 +55,7 @@ extension RecallEngineError: LocalizedError {
         case .questionTooLong:
             "Questions must be 1,000 characters or fewer."
         case .unsupportedQuestion:
-            "Ask Meetings can answer only from saved local Ari Meeting transcripts. It cannot access calendars, email, accounts, internet search, or files outside Ari Meeting."
+            "Ask Meetings can answer only from saved local Ari Meeting transcripts, plus real calendar scheduling facts for your scheduled events (event times and attendees) when supplied — a calendar entry means something is scheduled, never that it was recorded or discussed. It cannot access email, accounts, internet search, or files outside Ari Meeting."
         case let .modelNotConfigured(message):
             message
         case .loopbackViolation:
@@ -99,9 +99,35 @@ public struct RecallEngine: Sendable {
         self.clientFactory = clientFactory
     }
 
+    // MARK: - Entry point (routes meeting-scoped vs. global/series-scoped, plan §4.5
+
+    // `ask-meetings-agentic-tools.md`)
+
+    /// Meeting-scoped asks stay on today's single-shot pipeline UNCHANGED (plan §4.5: the subject
+    /// is already unambiguous, the full-transcript context is needed for `@ref` verification, and
+    /// tool round-trips would only add latency). Global/series-scoped asks route through the
+    /// tool-first agentic path (`RecallEngine+Agentic.swift`), which itself falls back to the exact
+    /// pre-agentic pipeline (rung 3, plan §4.4) on any classifier miss/provider mismatch/error.
+    public func answerMeetingsLocally(
+        question: String,
+        meetingId: MeetingID? = nil,
+        seriesId: SeriesID? = nil,
+        history: [RecallTurn] = []
+    ) async throws -> RecallResponse {
+        guard meetingId == nil else {
+            return try await answerMeetingsLocallySingleShot(
+                question: question, meetingId: meetingId, seriesId: seriesId, history: history
+            )
+        }
+        return try await answerMeetingsLocallyAgentic(question: question, seriesId: seriesId, history: history)
+    }
+
     // MARK: - Single-shot (← `api_answer_meetings_locally_impl`, `shell.rs:272-472`)
 
-    public func answerMeetingsLocally(
+    /// The exact, byte-identical pre-agentic pipeline (← `api_answer_meetings_locally_impl`) —
+    /// reused verbatim both directly (meeting scope) and as the agentic ladder's rung-3 fallback
+    /// (global/series scope, plan §4.4).
+    func answerMeetingsLocallySingleShot(
         question: String,
         meetingId: MeetingID? = nil,
         seriesId: SeriesID? = nil,
@@ -131,14 +157,8 @@ public struct RecallEngine: Sendable {
             sources: prepared.sources,
             isMeetingScoped: prepared.isMeetingScoped
         )
-        return RecallResponse(answer: reconciled, sources: prepared.sources)
+        return RecallResponse(answer: reconciled, sources: prepared.sources, card: prepared.card)
     }
-
-    // TODO(follow-on): port `recall/agent.rs`'s Claude-only agentic tool-use loop
-    // (`answer_agentic`) — global scope + Claude + a real API key, ≤8 iterations, `MAX_SOURCES=24`,
-    // `MAX_TRANSCRIPT_CHARS=8_000` (plan §7 "Bounded context"). Deferred per this slice's scope;
-    // `answerMeetingsLocally`/`answerMeetingsLocallyStream` always take the single-shot/streaming
-    // path Rust falls back to on any agentic error.
 
     // MARK: - Shared preparation (single-shot + streaming, ← the identical prefix of `shell.rs`
 
@@ -150,14 +170,45 @@ public struct RecallEngine: Sendable {
         var sources: [RecallSource]
         var isMeetingScoped: Bool
         var config: ProviderConfig
+        var card: RecallCardPayload?
     }
 
-    func prepare(
+    /// `RecallTools` over this engine's own repository handles (plan §4.2) — built fresh per call
+    /// rather than stored, mirroring how `hybridSearch`/`peopleContext` are injected once but this
+    /// one is cheap value construction over the same `db`. Internal (not `private`) so the agentic
+    /// orchestration in `RecallEngine+Agentic.swift` (a sibling file, same module) can build an
+    /// `AskToolset` from it too.
+    var recallTools: RecallTools {
+        RecallTools(
+            meetings: db.meetings,
+            persons: db.persons,
+            series: db.series,
+            calendarEvents: db.calendarEvents,
+            summaries: db.summaries
+        )
+    }
+
+    /// The shared validation/gating prefix of `prepare()` (← the identical prefix of `shell.rs`
+    /// and `stream.rs`), factored out so `prepareAgentic` (`RecallEngine+Agentic.swift`) reuses it
+    /// verbatim instead of duplicating the gates — `prepare()`'s own behavior stays byte-identical
+    /// (this is a pure mechanical extraction, not a behavior change).
+    struct ValidatedContext {
+        var question: String
+        var historyText: String
+        var providerKind: ProviderKind
+        var modelConfig: RecallModelConfig
+        var apiKey: String
+        var isMeetingScoped: Bool
+        var isSeriesScoped: Bool
+        var seriesLedgerMarkdown: String?
+    }
+
+    func validate(
         question rawQuestion: String,
         meetingId: MeetingID?,
         seriesId: SeriesID?,
         history: [RecallTurn]
-    ) async throws -> PreparedRequest {
+    ) async throws -> ValidatedContext {
         let question = rawQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else {
             throw RecallEngineError.emptyQuestion
@@ -210,6 +261,43 @@ public struct RecallEngine: Sendable {
             seriesLedgerMarkdown = nil
         }
 
+        return ValidatedContext(
+            question: question,
+            historyText: historyText,
+            providerKind: providerKind,
+            modelConfig: modelConfig,
+            apiKey: apiKey,
+            isMeetingScoped: isMeetingScoped,
+            isSeriesScoped: isSeriesScoped,
+            seriesLedgerMarkdown: seriesLedgerMarkdown
+        )
+    }
+
+    func prepare(
+        question rawQuestion: String,
+        meetingId: MeetingID?,
+        seriesId: SeriesID?,
+        history: [RecallTurn]
+    ) async throws -> PreparedRequest {
+        let validated = try await validate(
+            question: rawQuestion, meetingId: meetingId, seriesId: seriesId, history: history
+        )
+        let question = validated.question
+        let historyText = validated.historyText
+        let isMeetingScoped = validated.isMeetingScoped
+        let seriesLedgerMarkdown = validated.seriesLedgerMarkdown
+
+        // Slice B structured tools (plan §4.3, `ask-meetings-tools-and-cards.md`): a STRICTLY
+        // ADDITIVE, global-scope-only pre-step. Hybrid RAG below is NEVER skipped or replaced —
+        // this only ever attaches a `card` to the eventual response and, when resolved, folds a
+        // couple of terse real facts into the prompt. A classifier miss, an ambiguous match, or a
+        // zero match all degrade to exactly today's behavior (no card, byte-identical prompt).
+        let resolvedEntity = meetingId == nil && seriesId == nil
+            ? await Self.resolveGlobalScopeEntity(question: question, tools: recallTools)
+            : nil
+        let resolvedCard = resolvedEntity?.card
+        let resolvedContextLine = resolvedEntity?.contextLine
+
         let matches: [TranscriptSearchResult]
         if let meetingId {
             matches = try await meetingTranscriptSearchResults(meetingId)
@@ -223,30 +311,27 @@ public struct RecallEngine: Sendable {
             matches = try await hybridSearch.globalSearch(question)
         }
 
-        guard !matches.isEmpty else {
-            if isMeetingScoped {
-                throw RecallEngineError.noSavedMatch(
-                    "This meeting has no saved transcript or summary yet. Record, import, recover, or retranscribe it before asking the local assistant."
-                )
-            } else if isSeriesScoped {
-                throw RecallEngineError.noSavedMatch(
-                    "No saved local transcript in this series matched that question."
-                )
-            } else {
-                throw RecallEngineError.noSavedMatch("No saved local transcript matched that question.")
-            }
-        }
-
-        var sources = isMeetingScoped
-            ? Recall.buildMeetingSources(matches)
-            : Recall.buildGlobalSources(matches)
+        // LLM-first (retrieve-augment-always): an empty retrieval is NOT a dead end. The model
+        // always runs, augmented with whatever the search found — so a greeting or an
+        // out-of-corpus question gets an honest conversational reply and streaming is visible,
+        // instead of a hard "no match" wall. Sources stay DB-built (empty when nothing matched),
+        // so the never-invent-citations guard is untouched: with zero sources, reconcile() strips
+        // any [Sn] the model emits.
+        let hasMatches = !matches.isEmpty
+        var sources = hasMatches
+            ? (isMeetingScoped
+                ? Recall.buildMeetingSources(matches)
+                : Recall.buildGlobalSources(matches))
+            : []
         await peopleContext.attachPeople(&sources)
         let peopleBlock = await peopleContext.peopleContextBlock(
             sources: sources,
             scopedMeetingId: meetingId
         )
 
-        let context = Recall.buildContext(sources)
+        let context = hasMatches
+            ? Recall.buildContext(sources)
+            : "(No saved meeting excerpts matched this question.)"
         let systemPrompt = Recall.systemPrompt(isMeetingScoped: isMeetingScoped)
         let priorConversation = historyText.isEmpty
             ? ""
@@ -255,14 +340,22 @@ public struct RecallEngine: Sendable {
         let seriesSection = seriesLedgerMarkdown.map {
             "### Series ledger (running context for this series)\n\($0)\n\n"
         } ?? ""
-        let userPrompt =
-            "\(priorConversation)\(peopleSection)\(seriesSection)Question: \(question)\n\nAuthoritative local meeting sources:\n\(context)"
+        let toolSection = resolvedContextLine.map { "\($0)\n\n" } ?? ""
+        // Real, not fabricated (No-Fake-State) — this is the device's actual current date, the
+        // same real signal `RecallTools`/the card payloads already compute "today" against. Without
+        // this the model has no anchor for "today"/"this week" and will infer one from whatever
+        // date happens to appear in a retrieved excerpt (caught live 2026-07-23: asked "today" with
+        // a correct resolved-person card in hand, the model still answered from an unrelated
+        // meeting's date and flatly contradicted its own card).
+        let todaySection = "Today's date is \(Self.todayLine()).\n\n"
+        let userPrompt = "\(todaySection)\(priorConversation)\(peopleSection)\(seriesSection)\(toolSection)"
+            + "Question: \(question)\n\nAuthoritative local meeting sources:\n\(context)"
 
         let config = ProviderConfig(
-            kind: providerKind,
-            model: modelConfig.model,
-            apiKey: apiKey,
-            ollamaEndpoint: modelConfig.ollamaEndpoint
+            kind: validated.providerKind,
+            model: validated.modelConfig.model,
+            apiKey: validated.apiKey,
+            ollamaEndpoint: validated.modelConfig.ollamaEndpoint
         )
 
         return PreparedRequest(
@@ -270,8 +363,26 @@ public struct RecallEngine: Sendable {
             userPrompt: userPrompt,
             sources: sources,
             isMeetingScoped: isMeetingScoped,
-            config: config
+            config: config,
+            card: resolvedCard
         )
+    }
+
+    /// A real, human-readable "today" line (e.g. "Thursday, July 23, 2026, and the current local
+    /// time is 8:14 PM") from the device's actual current date — the one honest anchor the model
+    /// needs for "today"/"this week" questions, distinct from any meeting/source date in the
+    /// retrieved context.
+    ///
+    /// The TIME half matters as much as the date (2026-07-23): asked "when do I next have my 1:1
+    /// with Erin" at 20:00, the model offered an 11:00 event from the same morning, because a
+    /// date-only anchor gives it no way to tell a past event from an upcoming one.
+    static func todayLine(now: Date = Date()) -> String {
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "EEEE, MMMM d, yyyy"
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeStyle = .short
+        timeFormatter.dateStyle = .none
+        return "\(dayFormatter.string(from: now)), and the current local time is \(timeFormatter.string(from: now))"
     }
 
     // MARK: - Meeting-scoped retrieval (← `TranscriptsRepository::

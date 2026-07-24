@@ -19,6 +19,7 @@ import SwiftUI
 struct RootSplitView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.openWindow) private var openWindow
 
     @State private var selectedSection: SidebarSection = .home
     @State private var path = NavigationPath()
@@ -31,7 +32,15 @@ struct RootSplitView: View {
     /// swipe). The top of the stack is therefore always the node actually on screen — so the Ask
     /// FAB never stays scoped to a meeting the user has navigated away from. Reset with `path`.
     @State private var askNavStack: [AskNavKey] = []
-    private var askNavKey: AskNavKey { askNavStack.last ?? .none }
+    private var askNavKey: AskNavKey {
+        askNavStack.last ?? .none
+    }
+
+    /// Drives the first-run install/education flow (docs/plans/onboarding-install-flow.md §6) —
+    /// an additive covering layer over the ready shell, checked once per launch after `.ready`.
+    /// Starts `false` (never shown) until the honest read below flips it — never presented
+    /// optimistically before the real flag is known.
+    @State private var showOnboarding = false
 
     var body: some View {
         Group {
@@ -43,6 +52,11 @@ struct RootSplitView: View {
         }
         .tint(Color.marginalia(.accent, in: scheme))
         .task { await environment.bootstrap() }
+        // Capture the scene-backed `OpenWindowAction` (docs/plans/notch-panel-absorption.md §11
+        // R4) — `AppEnvironment.activateApp()` uses it to reopen the main window when every
+        // window has been closed (a plain `NSHostingView`, like the notch panel, has none of its
+        // own).
+        .onAppear { environment.registerOpenWindowAction(openWindow) }
     }
 
     private func readyShell(database: AppDatabase) -> some View {
@@ -60,7 +74,11 @@ struct RootSplitView: View {
             NavigationStack(path: $path) {
                 rootContent(database: database)
                     .navigationDestination(for: MeetingID.self) { meetingId in
-                        MeetingDetailView(database: database, meetingId: meetingId)
+                        MeetingDetailView(
+                            database: database,
+                            meetingId: meetingId,
+                            recallIndexTrigger: environment.recallIndexTrigger
+                        )
                     }
                     // The persistent live-capture pill (plan §4.4): visible from every section
                     // and pushed detail screen while recording — EXCEPT the recording page,
@@ -79,7 +97,8 @@ struct RootSplitView: View {
                         MeetingDetailView(
                             database: database,
                             meetingId: moment.meetingId,
-                            initialSeek: moment.seconds
+                            initialSeek: moment.seconds,
+                            recallIndexTrigger: environment.recallIndexTrigger
                         )
                     }
                     .navigationDestination(for: PersonID.self) { personId in
@@ -99,19 +118,24 @@ struct RootSplitView: View {
                         }
                     }
             }
-            // The app-wide "Ask" FAB + floating panel (docs/plans/ari-ask-ui.md §7) — confined to
-            // the detail column only, so it never covers the sidebar rail.
-            .overlay(alignment: .bottomTrailing) {
-                AskOverlayHost(
-                    database: database,
-                    recallEngine: environment.recallEngine,
-                    selectedSection: selectedSection,
-                    navKey: askNavKey,
-                    isRecordingActive: environment.recordingSession?.isActive ?? false,
-                    onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
-                    onOpenSettings: { selectedSection = .settings }
-                )
-            }
+        }
+        // The app-wide "Ask" FAB is overlaid on the WHOLE split view, not inside the detail
+        // column: on macOS a NavigationStack hosts pushed destinations (meeting/series detail) in a
+        // layer that escapes SwiftUI overlays/ZStacks placed inside the detail closure, so the FAB
+        // vanished there. At the split-view level it stays top-most in every navigation state, and
+        // bottom-trailing is the detail area, so it still never covers the sidebar rail.
+        .overlay(alignment: .bottomTrailing) {
+            AskOverlayHost(
+                database: database,
+                recallEngine: environment.recallEngine,
+                selectedSection: selectedSection,
+                navKey: askNavKey,
+                isRecordingActive: environment.recordingSession?.isActive ?? false,
+                onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
+                onOpenPerson: { path.append($0); askNavStack.append(.none) },
+                onOpenSeries: { path.append($0); askNavStack.append(.series($0)) },
+                onOpenSettings: { selectedSection = .settings }
+            )
         }
         .onChange(of: selectedSection) { _, _ in
             path = NavigationPath()
@@ -131,8 +155,18 @@ struct RootSplitView: View {
         // section/screen is on screen when a recording finishes — `RecordingView`'s own status
         // line (when it happens to be visible) reads the SAME coordinator, never triggers it.
         .onChange(of: environment.recordingSession?.phase) { _, newPhase in
-            guard case let .saved(meetingId) = newPhase else { return }
-            Task { await environment.processingCoordinator?.begin(meetingId: meetingId) }
+            switch newPhase {
+            case let .saved(meetingId):
+                Task { await environment.processingCoordinator?.begin(meetingId: meetingId) }
+            case .recording:
+                // Courtesy "recording started" alert (gated by the Recording-alerts setting inside
+                // `recordingStarted`). Fired here, mount-independently, so it posts regardless of
+                // which screen is visible — the non-blocking successor to the consent prompt.
+                let title = environment.recordingSession?.pendingTitle
+                Task { await environment.meetingNotifications?.recordingStarted(meetingTitle: title) }
+            default:
+                break
+            }
         }
         // The import equivalent (docs/plans/audio-import.md): when an import saves, dismiss the
         // sheet, kick the SAME post-recording pipeline, open the new meeting, and reset the session
@@ -185,6 +219,23 @@ struct RootSplitView: View {
                 )
             }
         }
+        // The first-run install/education flow (docs/plans/onboarding-install-flow.md §6) — a
+        // NEW, small, additive branch, not a rework of the pre-ready states above. Checked once
+        // per launch, after the real shell is constructible: an absent/false
+        // `.onboardingCompleted` flag shows the flow; `true` (set by either "Continue" or "Skip
+        // for now" — resolved decision: never re-nag) means it never appears again.
+        .task {
+            guard let value = try? await database.settings.bool(forKey: .onboardingCompleted) else {
+                showOnboarding = true
+                return
+            }
+            showOnboarding = (value != true)
+        }
+        .sheet(isPresented: $showOnboarding) {
+            if let onboardingViewModel = environment.onboardingViewModel {
+                OnboardingView(viewModel: onboardingViewModel, onFinished: { showOnboarding = false })
+            }
+        }
     }
 
     /// `true` only while the coordinator is paused for a speaker-count input. Dismissing without
@@ -213,7 +264,7 @@ struct RootSplitView: View {
                 selection: $selectedSection
             )
         case .savedMeetings:
-            MeetingsListView(database: database)
+            MeetingsListView(database: database, recallIndexTrigger: environment.recallIndexTrigger)
         case .series:
             SeriesListView(database: database, onCreated: { path.append($0); askNavStack.append(.series($0)) })
         case .people:
@@ -227,6 +278,8 @@ struct RootSplitView: View {
         case .ask:
             AskPageView(
                 onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
+                onOpenPerson: { path.append($0); askNavStack.append(.none) },
+                onOpenSeries: { path.append($0); askNavStack.append(.series($0)) },
                 onOpenSettings: { selectedSection = .settings }
             )
         case .calendar:
@@ -245,6 +298,7 @@ struct RootSplitView: View {
                 database: database,
                 calendarSource: environment.calendarSource,
                 notifications: environment.meetingNotifications,
+                recordingSession: environment.recordingSession,
                 onAutoSeriesMembership: { [ledgerReducer = environment.seriesLedgerReducer] meetingId in
                     try? await ledgerReducer?.foldMeeting(meetingId: meetingId)
                 }

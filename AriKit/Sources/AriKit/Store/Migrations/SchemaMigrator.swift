@@ -1,43 +1,48 @@
 //
-//  SchemaMigrator.swift — the `DatabaseMigrator` for the AriKit store (plan §6).
+//  SchemaMigrator.swift — the `DatabaseMigrator` for the AriKit store (plan §6;
+//  docs/plans/robust-migration-and-backup.md).
 //
 //  A fresh Swift migration history — NOT a port of the Rust engine's `_sqlx_migrations`. One
 //  `v1_baseline` migration creates every table in its final shape; every later schema change is a
 //  NEW registered migration, never an edit to `v1_baseline` after it ships.
 //
-//  ⚠️ `v1_baseline` is STILL BEING BUILT INCREMENTALLY (plan §10 slice-1 findings): because it
-//  has not shipped/been released anywhere, later slices extend this same migration directly
-//  rather than opening `v2_...`. Slice 2 (plan §10 steps 3–5) added `summary`, `meetingNote`,
-//  `person`, `profileFact`, and `profileFactSource` to the foundation slice's
-//  `meeting`/`speaker`/`speakerSegment`/`transcript`. Slice 3 (plan §10 step 6) adds §4.7
-//  (`series`+`seriesLedger`+`seriesMember`) and §4.8 (`calendarEvent`+`calendarSyncSetting`).
-//  Recall Slice 2 (docs/plans/arikit-recall-slice2.md §4) appends `recallChunk`,
-//  `recallIndexState`, `recallFts` (FTS5), and the schema-only `askConversation`/`askMessage`.
-//  `docs/plans/ari-ask-ui.md` Phase 0 later adds `askConversation.seriesId` in place (same
-//  extend-in-place policy, table still unshipped). `docs/plans/calendar-series-intelligence.md`
-//  §7 step 1 (feature 4, strict 1:1 meeting↔calendar-event) adds a partial UNIQUE index on
-//  `calendarEvent.meetingId` in place, same policy. `docs/plans/calendar-series-intelligence.md`
-//  §7 step 4 (feature 1, series auto-detection + consent) adds `series.autoAddMode` in place too.
+//  ⚠️ `v1_baseline` IS NOW FROZEN (2026-07-23, docs/plans/robust-migration-and-backup.md). Real
+//  user data exists against this exact baseline (22 meetings, 3765 transcripts, hand-repaired
+//  after an incident — see that plan's §2). It previously carried a "still being built
+//  incrementally, extend in place" policy; that policy is RETIRED. Editing `v1_baseline` — adding,
+//  removing, or retyping ANY column/table/index — is now prohibited. Every future schema change is
+//  a NEW `migrator.registerMigration("v2_<desc>")`/`v3_...` block using additive-only DDL
+//  (`ALTER TABLE ... ADD COLUMN`, `CREATE TABLE`, `CREATE INDEX`) — see that plan's §5 Layer 1 for
+//  the shape and constraints (nullable/defaulted columns only; a destructive change needs an
+//  explicit data-migration path + sign-off per the `sqlite-schema` skill).
 //
-//  ⚠️ Table order is now parent-before-child throughout, per the slice-1 finding: `person` is
-//  declared BEFORE `speaker` so `speaker.personId REFERENCES person(id)` can be inline from the
-//  start (SQLite validates a FK's parent table exists at `CREATE TABLE` time under
+//  The table order below is parent-before-child throughout (unchanged, historical rationale kept):
+//  `person` is declared BEFORE `speaker` so `speaker.personId REFERENCES person(id)` can be inline
+//  from the start (SQLite validates a FK's parent table exists at `CREATE TABLE` time under
 //  `PRAGMA foreign_keys = ON` — a forward reference fails migration outright, "no such table:
-//  person"). This resolves the foundation slice's `speaker.personId` deferred-FK gap: the column
-//  now carries `REFERENCES person(id) ON DELETE SET NULL` inline, matching §4.3.
+//  person").
+//
+//  ⚠️ `eraseDatabaseOnSchemaChange` REMOVED from the default path (2026-07-23 incident fix): this
+//  GRDB flag drops + recreates the WHOLE database on any schema mismatch — with NO thrown error —
+//  which is exactly the mechanism that silently wiped a populated production DB after an in-place
+//  `v1_baseline` edit. It is now an explicit, off-by-default parameter
+//  (`migrator(eraseOnSchemaChange:)`) threaded from `AppDatabase.makeShared`/`makeInMemory`, which
+//  in turn is only ever set `true` via the app-layer `ARI_RESET_STORE=1` opt-in
+//  (`Ari/App/AppEnvironment.swift`) — never automatically, never in a normal launch. With it off, a
+//  genuine schema mismatch surfaces as an honest SQLite error out of the migrator (No-Fake-State),
+//  not a silent wipe.
 //
 import Foundation
 import GRDB
 
 enum SchemaMigrator {
-    static var migrator: DatabaseMigrator {
+    /// - Parameter eraseOnSchemaChange: deliberately OFF by default. `true` DROPS AND RECREATES
+    ///   the database on any schema mismatch — the exact mechanism that wiped 22 meetings in the
+    ///   2026-07-23 incident. Only ever enabled via the explicit `ARI_RESET_STORE` opt-in read in
+    ///   `AppEnvironment.bootstrap()`, never in normal launch.
+    static func migrator(eraseOnSchemaChange: Bool = false) -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
-
-        #if DEBUG
-            // DEBUG-only convenience: drops + recreates the database on any schema mismatch.
-            // Never enabled in a release build — it would silently destroy production data.
-            migrator.eraseDatabaseOnSchemaChange = true
-        #endif
+        migrator.eraseDatabaseOnSchemaChange = eraseOnSchemaChange
 
         migrator.registerMigration("v1_baseline") { db in
             try db.create(table: "meeting") { t in
@@ -266,10 +271,6 @@ enum SchemaMigrator {
                 // Not yet on `AriKit.Models.Series` — same documented gap as `Meeting.templateId`
                 // (see `Records/SeriesRecord.swift`'s header). Always persisted as `NULL` here.
                 t.column("templateId", .text)
-                // Consent memory for series auto-detection (calendar-series-intelligence plan
-                // §2.1/§7 step 4, feature 1) — 'ask' | 'always' | 'never'. Store-internal only,
-                // same documented gap as `templateId` above (not yet on `AriKit.Models.Series`).
-                t.column("autoAddMode", .text).notNull().defaults(to: "ask")
                 t.column("createdAt", .datetime).notNull()
                 t.column("updatedAt", .datetime).notNull()
                 t.column("isDeleted", .boolean).notNull().defaults(to: false)
@@ -340,19 +341,6 @@ enum SchemaMigrator {
                 t.column("isDeleted", .boolean).notNull().defaults(to: false)
                 t.column("deletedAt", .datetime)
             }
-
-            // Strict 1:1 meeting↔calendar-event (calendar-series-intelligence plan §2.1/§4,
-            // feature 4). Partial UNIQUE index — `WHERE meetingId IS NOT NULL` so any number of
-            // unlinked rows may coexist (SQLite's plain UNIQUE would already tolerate that, since
-            // NULL never equals NULL, but the partial form is explicit and matches the plan).
-            // Tombstoned rows keep their `meetingId` and are NOT exempted here (no `isDeleted`
-            // filter) — `CalendarEventRepository` clears competitors, tombstoned included, before
-            // writing a new link so this index is never violated by a live write path; it exists
-            // as the backstop for any future code path that forgets.
-            try db.execute(sql: """
-            CREATE UNIQUE INDEX idx_calendarEvent_meetingId
-            ON calendarEvent(meetingId) WHERE meetingId IS NOT NULL
-            """)
 
             // `calendarSyncSetting` (§4.8) — config/selection, not a synced text record (the
             // domain-level `CalendarInfo` DTO was deliberately deferred, arikit-models.md §7.7);
@@ -455,6 +443,70 @@ enum SchemaMigrator {
                 t.primaryKey("key", .text)
                 t.column("value", .text).notNull()
                 t.column("updatedAt", .datetime).notNull()
+            }
+        }
+
+        // v2 (docs/plans/ask-meetings-tools-and-cards.md §3.2/§7) — additive-only, `v1_baseline`
+        // stays frozen. Tags each `recallChunk` row with what text it was built from
+        // ("transcript" or "summary") so retrieval/presentation can tell them apart. Every
+        // existing row backfills to `'transcript'` — correct, since that's all `recallChunk` ever
+        // held before this migration.
+        migrator.registerMigration("v2_recall_chunk_source_kind") { db in
+            try db.alter(table: "recallChunk") { t in
+                t.add(column: "sourceKind", .text).notNull().defaults(to: "transcript")
+            }
+        }
+
+        // v3 (docs/plans/ask-meetings-tools-and-cards.md §5.1/§7) — additive-only, `v1_baseline`
+        // AND `v2_recall_chunk_source_kind` both stay frozen. A nullable JSON column carrying the
+        // Slice-B-resolved `RecallCardPayload` for a persisted assistant message, mirroring
+        // `sourcesJson`'s exact shape (nil = "no card," never a fabricated placeholder).
+        migrator.registerMigration("v3_ask_message_card") { db in
+            try db.alter(table: "askMessage") { t in
+                t.add(column: "cardJson", .text)
+            }
+        }
+
+        // v4 (docs/plans/ask-meetings-agentic-tools.md §5.4) — additive-only, `v1_baseline`,
+        // `v2_recall_chunk_source_kind`, AND `v3_ask_message_card` all stay frozen. The tool-first
+        // agentic path can resolve MORE THAN ONE entity per ask (e.g. a person + today's calendar
+        // event); `cardsJson` carries the full set. `cardJson` (v3) is kept as a legacy back-compat
+        // column, always `cards.first` going forward — the read path prefers `cardsJson`, falling
+        // back to `cardJson` for rows persisted before this column existed.
+        migrator.registerMigration("v4_ask_message_cards") { db in
+            try db.alter(table: "askMessage") { t in
+                t.add(column: "cardsJson", .text)
+            }
+        }
+
+        // v5 (docs/plans/calendar-series-intelligence.md §4, shipped-DB route) — additive-only,
+        // v1–v4 all stay frozen. Three steps, in this order:
+        //  1. Dedupe: real data may carry several calendar events linked to one meeting; keep the
+        //     link on the event with the latest `startTime` (tie-break `id`), clear the rest —
+        //     deterministic, mirrors the legacy importer's pre-pass.
+        //  2. Strict 1:1 backstop: partial UNIQUE index on `calendarEvent.meetingId`
+        //     (`WHERE meetingId IS NOT NULL` so unlinked rows coexist freely). Tombstoned rows
+        //     keep their `meetingId` and are NOT exempted — `CalendarEventRepository` clears
+        //     competitors (tombstoned included) in the same transaction as every link write; the
+        //     index exists as the backstop for any future path that forgets.
+        //  3. Consent memory for series auto-detection: `series.autoAddMode`
+        //     ('ask' | 'always' | 'never'), defaulted 'ask'. Store-internal only (same documented
+        //     gap as `series.templateId` — not yet on `AriKit.Models.Series`).
+        migrator.registerMigration("v5_calendar_series_consent") { db in
+            try db.execute(sql: """
+            UPDATE calendarEvent SET meetingId = NULL, linkSource = NULL
+            WHERE meetingId IS NOT NULL AND id NOT IN (
+                SELECT ce2.id FROM calendarEvent ce2
+                WHERE ce2.meetingId = calendarEvent.meetingId
+                ORDER BY ce2.startTime DESC, ce2.id DESC LIMIT 1
+            )
+            """)
+            try db.execute(sql: """
+            CREATE UNIQUE INDEX idx_calendarEvent_meetingId
+            ON calendarEvent(meetingId) WHERE meetingId IS NOT NULL
+            """)
+            try db.alter(table: "series") { t in
+                t.add(column: "autoAddMode", .text).notNull().defaults(to: "ask")
             }
         }
 

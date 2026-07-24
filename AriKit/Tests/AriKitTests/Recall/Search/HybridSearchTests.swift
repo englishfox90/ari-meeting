@@ -383,4 +383,62 @@ struct HybridSearchTests {
         #expect(results[0].id == meeting.id.rawValue)
         #expect(results[0].matchContext.contains("widget rollout"))
     }
+
+    // MARK: - 7. Soft-deleted meetings are excluded (No-Fake-State, "Untitled meeting" regression)
+
+    @Test("A soft-deleted meeting's indexed chunks never surface (no orphan 'Untitled', no nil date)")
+    func softDeletedMeetingChunksAreExcluded() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let live = makeMeeting(id: "live-1", title: "Live meeting")
+        let deleted = makeMeeting(id: "deleted-1", title: "Deleted meeting")
+        try await db.meetings.upsert(live)
+        try await db.meetings.upsert(deleted)
+
+        // Both meetings index a chunk that matches the query lexically; the deleted meeting's chunk
+        // is the STRONGER hit (higher tf), so absent the tombstone filter it would rank first and
+        // surface as an "Untitled meeting" with a nil date (the reported bug).
+        try await db.recallIndex.replaceMeetingChunks(
+            meetingId: live.id,
+            chunks: [RecallChunkInput(
+                id: RecallChunkID("live-chunk"),
+                chunkIndex: 0,
+                chunkText: "The gizmo shipped on schedule this quarter."
+            )],
+            contentHash: "hash-live",
+            embeddingModel: nil,
+            now: "2026-07-20T00:00:00Z"
+        )
+        try await db.recallIndex.replaceMeetingChunks(
+            meetingId: deleted.id,
+            chunks: [RecallChunkInput(
+                id: RecallChunkID("deleted-chunk"),
+                chunkIndex: 0,
+                chunkText: String(repeating: "gizmo ", count: 20) + "was discussed at length."
+            )],
+            contentHash: "hash-deleted",
+            embeddingModel: nil,
+            now: "2026-07-20T00:00:00Z"
+        )
+
+        // Tombstone the second meeting — its chunks remain in the recall index (delete does not
+        // purge the index), so search must respect the tombstone at query time.
+        try await db.meetings.softDelete(deleted.id, at: Date())
+
+        let search = HybridSearch(
+            recallIndex: db.recallIndex,
+            meetings: db.meetings,
+            summaries: db.summaries,
+            transcripts: db.transcripts,
+            embedder: ThrowingEmbedder()
+        )
+        let results = try await search.globalSearch("gizmo")
+
+        #expect(results.count == 1)
+        #expect(results[0].id == live.id.rawValue)
+        #expect(results.allSatisfy { $0.id != deleted.id.rawValue })
+        // The surviving result carries real metadata — never the "Untitled meeting" fallback or a
+        // nil date the orphaned-chunk bug produced.
+        #expect(results[0].title == "Live meeting")
+        #expect(results[0].meetingDate != nil)
+    }
 }

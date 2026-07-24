@@ -20,6 +20,7 @@ import Observation
 @MainActor
 @Observable
 public final class AskViewModel {
+
     // MARK: - State (honest, no fabricated defaults)
 
     public private(set) var scope: AskScope
@@ -61,7 +62,8 @@ public final class AskViewModel {
         _ conversationId: AskConversationID,
         _ role: String,
         _ content: String,
-        _ sources: [RecallSource]
+        _ sources: [RecallSource],
+        _ cards: [RecallCardPayload]
     ) async throws -> AskMessage
 
     public typealias DeleteConversationOperation = @Sendable (
@@ -83,6 +85,22 @@ public final class AskViewModel {
     /// check this before mutating `items`, so a just-cancelled task can never race a fresh one's
     /// state (plan §4's "scope change drops the half-streamed placeholder").
     private var streamGeneration = 0
+
+    /// Ids of every `.thinking` SECTION row created by the CURRENT (in-flight or just-completing)
+    /// ask, in creation order — an interleaved trace can open more than one section (a tool call
+    /// closes the current section; the next `.thinking` delta opens a new one, plan §5.3
+    /// amendment, 2026-07-23). Used to (a) fold ALL sections at once (on the first answer delta,
+    /// or defensively at `.done`) and (b) scope `dropInFlightPlaceholders`/the error-cleanup path
+    /// to exactly THIS ask's own rows — an already-completed prior ask's RETAINED trace (owner
+    /// decision: the trace survives `.done`, folded) must never be touched by a new question.
+    private var currentThinkingItemIds: [String] = []
+    /// Same id-scoping bookkeeping for `.toolActivity` rows, one entry per row ever created this
+    /// ask (both running and finished).
+    private var currentToolActivityItemIds: [String] = []
+    /// The currently OPEN thinking section, if any — `nil` right after a `.toolActivity` event
+    /// closes it, so the next `.thinking` delta starts a fresh section instead of merging into the
+    /// prior one (the interleaved-trace fix, plan §5.3 amendment).
+    private var openThinkingItemId: String?
 
     // MARK: - Init
 
@@ -114,9 +132,9 @@ public final class AskViewModel {
             createConversation: { meetingId, seriesId, title in
                 try await conversationStore.create(meetingId: meetingId, seriesId: seriesId, title: title)
             },
-            appendMessage: { conversationId, role, content, sources in
+            appendMessage: { conversationId, role, content, sources, cards in
                 try await conversationStore.appendMessage(
-                    conversationId: conversationId, role: role, content: content, sources: sources
+                    conversationId: conversationId, role: role, content: content, sources: sources, cards: cards
                 )
             },
             deleteConversation: { id in
@@ -174,17 +192,24 @@ public final class AskViewModel {
         streamGeneration += 1
         let generation = streamGeneration
         // A new question supersedes any still-in-flight one: drop the prior ask's live placeholder
-        // + thinking rows so they can't linger forever once its task returns on the generation
-        // guard. (Unreachable from the UI today — the composer disables send while streaming — but
-        // the VM contract promises "a new question always wins", so honor it here.)
+        // + thinking/tool rows (scoped to exactly ITS OWN row ids, never a retained COMPLETED prior
+        // ask's trace) so they can't linger forever once its task returns on the generation guard.
+        // (Unreachable from the UI today — the composer disables send while streaming — but the VM
+        // contract promises "a new question always wins", so honor it here.)
         dropInFlightPlaceholders()
 
         let history = lastHistoryTurns()
         items.append(AskTranscriptItem(kind: .user(question)))
-        let placeholderId = UUID().uuidString
-        items.append(AskTranscriptItem(id: placeholderId, kind: .assistant(text: "", sources: [], streaming: true)))
+        // No assistant placeholder is created here (2026-07-23 live-testing fix): an eagerly-created
+        // empty bubble used to sit ABOVE the thinking/tool rows that append after it, rendering as a
+        // hollow white pill during generation. The thinking row is now the ONLY in-flight placeholder;
+        // the assistant bubble is created lazily, appended AFTER whatever thinking/tool rows already
+        // exist, on the first non-empty answer delta (see the `.delta` case below).
         let thinkingId = UUID().uuidString
-        items.append(AskTranscriptItem(id: thinkingId, kind: .thinking))
+        items.append(AskTranscriptItem(id: thinkingId, kind: .thinking(text: "", folded: false)))
+        currentThinkingItemIds = [thinkingId]
+        currentToolActivityItemIds = []
+        openThinkingItemId = thinkingId
         isStreaming = true
 
         let scopeKey = scope.engineScope
@@ -192,54 +217,115 @@ public final class AskViewModel {
 
         streamTask = Task { [weak self] in
             guard let self else { return }
+            // Nil until the FIRST non-empty answer delta arrives — that is the moment the
+            // assistant bubble is actually created and appended (at the END of `items`, i.e. below
+            // any thinking/tool rows that already exist). An empty-delta-only stream (edge case)
+            // never creates a bubble at all; `.done` creates one directly if none exists yet (e.g.
+            // a fallback that emits no deltas before its terminal event). Declared OUTSIDE the
+            // `do` block so the `catch` below can clean it up if it was created before a mid-stream
+            // throw.
+            var assistantItemId: String?
             do {
-                let conversationId = try await self.ensureConversation(
+                let conversationId = try await ensureConversation(
                     meetingId: persistenceKey.meetingId,
                     seriesId: persistenceKey.seriesId,
                     firstQuestion: question,
                     generation: generation
                 )
-                _ = try await self.appendMessageOp(conversationId, "user", question, [])
+                _ = try await appendMessageOp(conversationId, "user", question, [], [])
 
                 var accumulated = ""
-                var sawFirstDelta = false
-                let stream = self.streamAnswerOp(question, scopeKey.meetingId, scopeKey.seriesId, history)
+                // The item id(s) of the currently-running row(s) for a given tool name, oldest
+                // first (a FIFO queue) — robust to the SAME tool name running twice concurrently
+                // within one ask (finding L1): a `.finished` event completes the EARLIEST still-
+                // running row for that name, never clobbering the wrong one.
+                var runningToolItemIds: [String: [String]] = [:]
+                let stream = streamAnswerOp(question, scopeKey.meetingId, scopeKey.seriesId, history)
                 for try await event in stream {
-                    guard self.streamGeneration == generation else { return }
+                    guard streamGeneration == generation else { return }
                     switch event {
                     case let .delta(delta):
-                        if !sawFirstDelta {
-                            sawFirstDelta = true
-                            self.removeItem(id: thinkingId)
-                        }
+                        guard !delta.isEmpty else { continue }
                         accumulated += delta
-                        self.updateAssistant(id: placeholderId, text: accumulated, sources: [], streaming: true)
-                    case let .done(response):
-                        self.removeItem(id: thinkingId)
-                        self.updateAssistant(
-                            id: placeholderId, text: response.answer, sources: response.sources, streaming: false
+                        if let assistantItemId {
+                            updateAssistant(
+                                id: assistantItemId, text: accumulated, sources: [], streaming: true, cards: []
+                            )
+                        } else {
+                            // First non-empty answer delta: fold every thinking SECTION opened so
+                            // far (not just one) and create the bubble now, appended after every
+                            // thinking/tool row so far.
+                            foldAllThinkingSections()
+                            let newId = UUID().uuidString
+                            assistantItemId = newId
+                            items.append(
+                                AskTranscriptItem(
+                                    id: newId,
+                                    kind: .assistant(text: accumulated, sources: [], streaming: true, cards: [])
+                                )
+                            )
+                        }
+                    case let .thinking(delta):
+                        appendThinking(delta: delta, beforeAssistantItemId: assistantItemId)
+                    case let .toolActivity(activity):
+                        applyToolActivity(
+                            activity, runningToolItemIds: &runningToolItemIds, beforeAssistantItemId: assistantItemId
                         )
-                        _ = try await self.appendMessageOp(
-                            conversationId, "assistant", response.answer, response.sources
+                    case let .done(response):
+                        // Owner decision, 2026-07-23 (supersedes plan §5.3's original "removed at
+                        // .done"): the trace (thinking sections, folded; tool rows, completed) is
+                        // RETAINED above the answer — visible for later inspection, session-view-
+                        // only (persistence below still carries only answer/sources/cards, never
+                        // the trace). Fold defensively here too, in case no answer delta ever
+                        // arrived to trigger the fold above (e.g. a rung that emits only `.done`).
+                        foldAllThinkingSections()
+                        if let assistantItemId {
+                            updateAssistant(
+                                id: assistantItemId, text: response.answer, sources: response.sources,
+                                streaming: false, cards: response.cards
+                            )
+                        } else {
+                            // No bubble was ever created (e.g. a rung that emits only `.done`, no
+                            // deltas) — create it now, final and non-streaming, at the end of items.
+                            items.append(
+                                AskTranscriptItem(
+                                    kind: .assistant(
+                                        text: response.answer, sources: response.sources,
+                                        streaming: false, cards: response.cards
+                                    )
+                                )
+                            )
+                        }
+                        _ = try await appendMessageOp(
+                            conversationId, "assistant", response.answer, response.sources, response.cards
                         )
                     }
                 }
-                guard self.streamGeneration == generation else { return }
-                self.isStreaming = false
+                guard streamGeneration == generation else { return }
+                isStreaming = false
                 // Surface the just-persisted thread in the recent list now, so it's already present
                 // when the user starts a new conversation and returns to the empty state.
-                await self.loadRecent()
+                await loadRecent()
             } catch is CancellationError {
                 // A user-initiated cancel (new question / scope change) — already handled by
                 // whichever call site bumped `streamGeneration`; nothing further to surface.
             } catch {
-                guard self.streamGeneration == generation else { return }
-                self.removeItem(id: thinkingId)
-                self.removeItem(id: placeholderId)
-                self.items.append(
-                    AskTranscriptItem(kind: .error(error.localizedDescription, showSettings: Self.showSettings(for: error)))
+                guard streamGeneration == generation else { return }
+                // Scoped to exactly THIS ask's own thinking/tool rows (never a blanket "remove
+                // every .thinking/.toolActivity item" — a prior, already-completed ask's RETAINED
+                // trace must survive an unrelated later ask's error).
+                let inFlightIds = Set(currentThinkingItemIds + currentToolActivityItemIds)
+                items.removeAll { inFlightIds.contains($0.id) }
+                if let assistantItemId {
+                    removeItem(id: assistantItemId)
+                }
+                items.append(
+                    AskTranscriptItem(kind: .error(
+                        error.localizedDescription,
+                        showSettings: Self.showSettings(for: error)
+                    ))
                 )
-                self.isStreaming = false
+                isStreaming = false
             }
         }
     }
@@ -258,24 +344,125 @@ public final class AskViewModel {
         items.removeAll { $0.id == id }
     }
 
-    /// Removes any still-live `.thinking` row and empty streaming assistant placeholder left by a
-    /// prior in-flight ask that a new question is superseding (No-Fake-State: no perpetual spinner).
+    /// Removes any still-live in-flight thinking/tool row (id-scoped to the JUST-superseded ask,
+    /// `currentThinkingItemIds`/`currentToolActivityItemIds` — never a blanket kind-based sweep,
+    /// which would also erase an already-completed prior ask's RETAINED trace) and any still-
+    /// STREAMING assistant bubble (whether or not it has accumulated any text yet) — a new question
+    /// fully replaces the prior ask's UNFINISHED state, partial answer included (No-Fake-State: no
+    /// perpetual spinner, no orphaned tool row, no stale partial bubble left behind).
     private func dropInFlightPlaceholders() {
+        let inFlightIds = Set(currentThinkingItemIds + currentToolActivityItemIds)
         items.removeAll { item in
-            switch item.kind {
-            case .thinking:
+            if inFlightIds.contains(item.id) {
                 return true
-            case let .assistant(text, _, streaming):
-                return streaming && text.isEmpty
+            }
+            switch item.kind {
+            case .thinking, .toolActivity:
+                // A retained, COMPLETED prior ask's row shares these KINDS but a different id — kind
+                // alone must never drive removal anymore (owner decision: retain the trace).
+                return false
+            case let .assistant(_, _, streaming, _):
+                return streaming
             case .user, .error:
                 return false
             }
         }
     }
 
-    private func updateAssistant(id: String, text: String, sources: [RecallSource], streaming: Bool) {
+    private func updateAssistant(
+        id: String, text: String, sources: [RecallSource], streaming: Bool, cards: [RecallCardPayload]
+    ) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        items[index].kind = .assistant(text: text, sources: sources, streaming: streaming)
+        items[index].kind = .assistant(text: text, sources: sources, streaming: streaming, cards: cards)
+    }
+
+    /// The index at which a NEW ephemeral row (a thinking section or a tool-activity row) should be
+    /// inserted: immediately BEFORE the assistant bubble if one already exists, so the trace never
+    /// renders below an in-progress answer even if an event arrives after the bubble was created
+    /// (defensive ordering, finding L1) — else at the end of `items`.
+    private func insertionIndex(beforeAssistantItemId assistantItemId: String?) -> Int {
+        guard let assistantItemId, let index = items.firstIndex(where: { $0.id == assistantItemId }) else {
+            return items.endIndex
+        }
+        return index
+    }
+
+    /// Appends a reasoning delta. If a thinking SECTION is currently open (`openThinkingItemId`),
+    /// the delta folds into that section's accumulated text; otherwise a FRESH section is created
+    /// — inserted immediately before the assistant bubble if one already exists, else at the end
+    /// (interleaved trace, plan §5.3 amendment, 2026-07-23: a `.toolActivity` event CLOSES the
+    /// current section, so the model's later reasoning after a tool call reads as its own new
+    /// section rather than merging into the original blob).
+    private func appendThinking(delta: String, beforeAssistantItemId: String?) {
+        if let openId = openThinkingItemId, let index = items.firstIndex(where: { $0.id == openId }) {
+            guard case let .thinking(text, folded) = items[index].kind else { return }
+            items[index].kind = .thinking(text: text + delta, folded: folded)
+            return
+        }
+        let newId = UUID().uuidString
+        let insertAt = insertionIndex(beforeAssistantItemId: beforeAssistantItemId)
+        items.insert(AskTranscriptItem(id: newId, kind: .thinking(text: delta, folded: false)), at: insertAt)
+        openThinkingItemId = newId
+        currentThinkingItemIds.append(newId)
+    }
+
+    /// Collapses EVERY thinking section opened so far to its folded (one-line disclosure)
+    /// presentation — called on the FIRST answer `.delta`, and defensively again at `.done` in case
+    /// no delta ever arrived. Sections are never removed here; they're RETAINED (owner decision,
+    /// 2026-07-23) until a later ask supersedes/errors this one.
+    private func foldAllThinkingSections() {
+        for id in currentThinkingItemIds {
+            guard let index = items.firstIndex(where: { $0.id == id }),
+                  case let .thinking(text, _) = items[index].kind
+            else { continue }
+            items[index].kind = .thinking(text: text, folded: true)
+        }
+    }
+
+    /// Applies one tool-dispatch lifecycle event: `.started` CLOSES the currently-open thinking
+    /// section (so a later `.thinking` delta opens a fresh one, interleaved-trace amendment) and
+    /// inserts a new running row (before the assistant bubble if one exists, finding L1); `.finished`
+    /// completes the EARLIEST still-running row for that same tool name — a FIFO queue per tool
+    /// name, robust to the SAME tool running twice concurrently within one ask (finding L1) instead
+    /// of a single id that a second concurrent run would silently clobber. `runningToolItemIds` is
+    /// owned by the calling `send()` task (one per in-flight ask).
+    private func applyToolActivity(
+        _ activity: ToolActivity,
+        runningToolItemIds: inout [String: [String]],
+        beforeAssistantItemId: String?
+    ) {
+        switch activity.phase {
+        case .started:
+            openThinkingItemId = nil
+            let id = UUID().uuidString
+            runningToolItemIds[activity.toolName, default: []].append(id)
+            currentToolActivityItemIds.append(id)
+            let insertAt = insertionIndex(beforeAssistantItemId: beforeAssistantItemId)
+            items.insert(
+                AskTranscriptItem(
+                    id: id,
+                    kind: .toolActivity(
+                        toolName: activity.toolName,
+                        label: activity.displayLabel,
+                        running: true,
+                        ok: true
+                    )
+                ),
+                at: insertAt
+            )
+        case let .finished(ok):
+            guard var ids = runningToolItemIds[activity.toolName], !ids.isEmpty else { return }
+            let id = ids.removeFirst()
+            if ids.isEmpty {
+                runningToolItemIds.removeValue(forKey: activity.toolName)
+            } else {
+                runningToolItemIds[activity.toolName] = ids
+            }
+            guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+            items[index].kind = .toolActivity(
+                toolName: activity.toolName, label: activity.displayLabel, running: false, ok: ok
+            )
+        }
     }
 
     /// Trailing history for the NEXT ask, alternating roles, newest kept (← `RecallBounds.
@@ -286,10 +473,10 @@ public final class AskViewModel {
             switch item.kind {
             case let .user(text):
                 turns.append(RecallTurn(role: "user", content: text))
-            case let .assistant(text, _, streaming):
+            case let .assistant(text, _, streaming, _):
                 guard !streaming, !text.isEmpty else { continue }
                 turns.append(RecallTurn(role: "assistant", content: text))
-            case .thinking, .error:
+            case .thinking, .toolActivity, .error:
                 continue
             }
         }
@@ -330,6 +517,9 @@ public final class AskViewModel {
         isStreaming = false
         items = []
         activeConversationId = nil
+        currentThinkingItemIds = []
+        currentToolActivityItemIds = []
+        openThinkingItemId = nil
     }
 
     /// Hydrates `items` from a saved conversation's full detail, in order, sources included.
@@ -340,7 +530,7 @@ public final class AskViewModel {
         items = detail.messages.map { message in
             let kind: AskTranscriptItemKind = message.role == "user"
                 ? .user(message.content)
-                : .assistant(text: message.content, sources: message.sources, streaming: false)
+                : .assistant(text: message.content, sources: message.sources, streaming: false, cards: message.cards)
             return AskTranscriptItem(id: message.id.rawValue, kind: kind)
         }
     }
@@ -348,7 +538,7 @@ public final class AskViewModel {
     /// Refreshes `recentConversations` for the CURRENT scope's persistence key.
     public func loadRecent() async {
         let key = scope.persistenceKey
-        recentConversations = (try? await listConversationsOp(key.meetingId, key.seriesId)) ?? []
+        recentConversations = await (try? listConversationsOp(key.meetingId, key.seriesId)) ?? []
     }
 
     /// Deletes a saved conversation (and its messages). If it was the active thread, starts a

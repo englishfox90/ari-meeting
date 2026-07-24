@@ -22,8 +22,7 @@ public enum SettingKey: String, Sendable, CaseIterable {
     /// Recall
     case recallEmbedder
 
-    // General
-    case generalShowNotch
+    /// General
     case generalRecordingAlerts
     // NOTE: `.generalShowInMenuBar` was retired (docs/plans/menu-bar-item.md) — menu-bar
     // visibility is a device-local UI preference read at app-scene scope to gate the
@@ -31,7 +30,7 @@ public enum SettingKey: String, Sendable, CaseIterable {
     // exactly like theme (see the theme note below). Any orphaned rows from an older build are
     // simply unread.
 
-    // Notifications (the Swift-native port — calendar reminders + summary-ready alerts).
+    /// Notifications (the Swift-native port — calendar reminders + summary-ready alerts).
     /// Whether a "meeting starts soon" reminder fires ahead of each synced calendar event.
     case notificationsMeetingReminders
     /// Minutes-before-start the reminder fires, stored as a plain decimal string ("1"/"5"/"10"/…).
@@ -45,6 +44,12 @@ public enum SettingKey: String, Sendable, CaseIterable {
     // Recordings
     case recordingsSaveAudio
     case recordingsStartNotification
+    /// Whether tapping Record first shows the consent-before-record prompt. Defaults OFF (a
+    /// private, single-user tool in a one-party-consent jurisdiction): the Record action is itself
+    /// the explicit edge into capture, so a second confirmation is friction. Turning it ON restores
+    /// the two-step consent gate for two-party-consent situations. This is a preference over a
+    /// preserved capability — the consent machinery/tests still exist, just un-defaulted.
+    case recordingsRequireConsent
     /// Stores a stable CoreAudio `kAudioDevicePropertyDeviceUID`
     /// (docs/plans/settings-audio-devices.md §4) — a real value binds into `MicrophoneCapture` at
     /// recording start; it never encodes a mere display name.
@@ -65,4 +70,12 @@ public enum SettingKey: String, Sendable, CaseIterable {
 
     // NOTE: theme is deliberately NOT here — it lives in `@AppStorage("appAppearance")`
     // (plan §2.4), not this table.
+
+    /// Whether the first-run model-install/education flow has been completed or explicitly
+    /// dismissed (docs/plans/onboarding-install-flow.md §4). Absent (nil) means "never shown" —
+    /// distinguished from `false`, which this flow never actually writes (it writes `true` only
+    /// on completion/dismissal, mirroring `SettingsRepository`'s honest-absence pattern: an
+    /// unknown/absent key returns nil, this repository never fabricates a default). "Skip for
+    /// now" writes `true` too (resolved 2026-07-23: never re-nag).
+    case onboardingCompleted
 }

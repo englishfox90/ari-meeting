@@ -55,6 +55,15 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
     public var role: String
     public var content: String
     public var sources: [RecallSource]
+    /// A deterministically-resolved entity card (`ask-meetings-tools-and-cards.md` §5.1), additive.
+    /// `nil` for every message except an assistant turn whose ask resolved exactly one real entity
+    /// — never a partial match, never a placeholder (No-Fake-State). Kept as back-compat, always
+    /// `cards.first` (plan §5.4, `ask-meetings-agentic-tools.md`).
+    public var card: RecallCardPayload?
+    /// The full set of resolved cards (plan §5.4) — the tool-first agentic path can resolve more
+    /// than one entity per ask. `[]` for every message except an assistant turn that resolved at
+    /// least one real entity.
+    public var cards: [RecallCardPayload]
     public var createdAt: String
 
     public init(
@@ -63,6 +72,8 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
         role: String,
         content: String,
         sources: [RecallSource] = [],
+        card: RecallCardPayload? = nil,
+        cards: [RecallCardPayload]? = nil,
         createdAt: String
     ) {
         self.id = id
@@ -70,7 +81,35 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
         self.role = role
         self.content = content
         self.sources = sources
+        let resolvedCards = cards ?? (card.map { [$0] } ?? [])
+        self.cards = resolvedCards
+        self.card = card ?? resolvedCards.first
         self.createdAt = createdAt
+    }
+}
+
+extension AskMessage {
+    private enum CodingKeys: String, CodingKey {
+        case id, conversationId, role, content, sources, card, cards, createdAt
+    }
+
+    /// Mirrors `RecallResponse`'s own custom decoder (`RecallWireTypes.swift`, L6 code review
+    /// finding 2026-07-23): the synthesized `Decodable` would otherwise require the `cards` key to
+    /// be present, but a message persisted before this field existed (or decoded from any source
+    /// that omits it) has no such key. Missing `cards` falls back to `[card]` (or `[]`), never a
+    /// decode failure.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(AskMessageID.self, forKey: .id)
+        conversationId = try container.decode(AskConversationID.self, forKey: .conversationId)
+        role = try container.decode(String.self, forKey: .role)
+        content = try container.decode(String.self, forKey: .content)
+        sources = try container.decode([RecallSource].self, forKey: .sources)
+        let decodedCard = try container.decodeIfPresent(RecallCardPayload.self, forKey: .card)
+        cards = try container.decodeIfPresent([RecallCardPayload].self, forKey: .cards)
+            ?? (decodedCard.map { [$0] } ?? [])
+        card = decodedCard ?? cards.first
+        createdAt = try container.decode(String.self, forKey: .createdAt)
     }
 }
 

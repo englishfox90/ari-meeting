@@ -65,6 +65,14 @@ struct SeriesDetailView: View {
             await viewModel.load(seriesId)
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    dismiss()
+                } label: {
+                    Label("Back", systemImage: "chevron.backward")
+                }
+                .help("Back")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button("Rename") {

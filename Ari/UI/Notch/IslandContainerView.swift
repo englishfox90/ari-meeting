@@ -1,0 +1,424 @@
+//
+//  IslandContainerView.swift — WS-H, ported from ari-notch/Sources/AriNotch/IslandContainerView.swift
+//  (docs/plans/notch-panel-absorption.md §2, §5, §10 step 2).
+//
+//  The black island CHROME that wraps `NotchRootView`. Draws a shape with SQUARE top corners
+//  (flush to the screen's top edge) and large ROUNDED BOTTOM corners, so it reads as the
+//  notch/pill growing DOWNWARD from the top edge — the look that sells the "integrated island"
+//  on both notched and non-notched screens.
+//
+//  Two states, sprung between:
+//    • collapsed — dormant (not recording/stopping, no upcoming meeting): a minimal black pill.
+//      On a notched screen it is sized to the physical notch (`IslandEnvironment.notchSize`) so
+//      it MERGES with the real notch; otherwise a small centered pill. No fake content (honest
+//      empty).
+//    • expanded — recording/stopping OR an upcoming meeting: grows to fit `NotchRootView` (the
+//      HUD or the upcoming alert).
+//
+//  Sizing: the view measures its own rendered size via a GeometryReader and reports it up
+//  through `onResize`. The AppKit host (`NotchPanelController`) resizes + re-anchors the
+//  NSPanel to follow that size continuously, so the SwiftUI spring drives the morph and the
+//  panel's click region stays tight to the visible island.
+//
+//  Dark-only chrome (the island is black by nature — pure black, deliberately NOT a Marginalia
+//  token; plan §5). The content views (`NotchRecordingHUDView` / `NotchUpcomingMeetingView`) own
+//  their own colors, resolved against a FORCED `.dark` colorScheme (below) so Marginalia's dark
+//  palette always renders here regardless of the app's own appearance setting.
+//
+import AriViewModels
+import SwiftUI
+
+// MARK: - Chrome-side environment (owned by the controller)
+
+/// Live chrome inputs the SwiftUI island reads but that don't belong on `NotchOverlayModel`: the
+/// physical notch dimensions of the *currently active* screen (nil when that screen has no
+/// notch). The controller updates this on screen changes so the collapsed pill re-sizes to
+/// merge with the notch.
+@MainActor
+@Observable
+final class IslandEnvironment {
+    /// Physical notch size (width x height) of the active screen; `nil` when the active screen
+    /// has no notch (external monitor / non-notched laptop).
+    var notchSize: CGSize?
+
+    init(notchSize: CGSize? = nil) {
+        self.notchSize = notchSize
+    }
+}
+
+// MARK: - Island shape (concave top, rounded bottom, animatable)
+
+/// The signature notch/Dynamic-Island silhouette: the top edge is flush to the screen's top,
+/// but each TOP corner is a CONCAVE fillet that flares outward so the island's sides melt
+/// smoothly into the flat top edge (rather than meeting it at a hard 90 degree square corner).
+/// The BOTTOM corners are the usual CONVEX rounding, so the island reads as a pill growing
+/// DOWNWARD out of the top edge. Both radii are `Animatable` so the collapsed <-> expanded morph
+/// springs on either. Ported verbatim (pure geometry, no color).
+struct IslandShape: Shape {
+    /// Concave flare at each top corner — how far the sides tuck in from the top edge. This is
+    /// the curve that fuses the island into the screen's top edge.
+    var topRadius: CGFloat
+    /// Convex rounding at each bottom corner.
+    var bottomRadius: CGFloat
+    /// Full-width solid headroom drawn ABOVE the fillets, as part of this same path
+    /// (`IslandGeometry.topBleed`). The host panel extends that far past the physical screen
+    /// edge, so this band is invisible in steady state — but because it is the SAME fill as the
+    /// island body (not a separate layer), there is no seam at the screen's top row that
+    /// fractional-pixel animation frames can crack open into hairlines.
+    var bleed: CGFloat = 0
+    /// Two-tier "mushroom" mode (EXPANDED island on a NOTCHED screen): when set, the tier at
+    /// menu-bar height — from the top edge down `stemHeight` points — spans only `stemWidth`
+    /// (the physical notch's width), and the wide body hangs BELOW it from concave-free convex
+    /// shoulders. The strip beside the notch at menu-bar height belongs to menu-bar status
+    /// items (and the system's mic privacy indicator, which macOS always draws topmost); a
+    /// full-width island there overlays them, so the island only widens once it's below the
+    /// menu bar. `nil` → the single-tier silhouette (non-notched screens, collapsed pill).
+    /// These snap rather than animate (they change only with the notch environment /
+    /// presentation, where the radii spring carries the morph).
+    var stemWidth: CGFloat?
+    var stemHeight: CGFloat = 0
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(topRadius, bottomRadius) }
+        set {
+            topRadius = newValue.first
+            bottomRadius = newValue.second
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        // The island body (fillets and below) occupies the rect BELOW the bleed band.
+        let bleed = max(0, min(self.bleed, rect.height))
+        let bodyTop = rect.minY + bleed
+        let bodyHeight = rect.height - bleed
+
+        // Mushroom mode only engages when the stem is meaningfully NARROWER than the rect and
+        // there's body height left below the shoulder — otherwise fall through to the plain
+        // single-tier silhouette (degenerate stems would self-intersect).
+        if let stemWidth,
+           stemWidth > 1, stemHeight > 1,
+           stemWidth < rect.width - 8,
+           bleed + stemHeight < rect.height - 8 {
+            return mushroomPath(
+                in: rect, bleed: bleed, bodyTop: bodyTop,
+                stemWidth: stemWidth, stemHeight: stemHeight
+            )
+        }
+        // Clamp so the two arcs on each side can't overrun the geometry on a narrow/short
+        // island (the fallback pill is only 30pt tall).
+        let top = max(0, min(topRadius, min(rect.width / 2.0, bodyHeight)))
+        let bottom = max(0, min(bottomRadius, min(rect.width / 2.0 - top, bodyHeight - top)))
+
+        var path = Path()
+
+        // From the very top-left of the bleed band, straight down its left edge to where the
+        // island body begins (the physical screen's top edge)…
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX, y: bodyTop))
+        // …then the top-left corner: curve DOWN-and-IN (concave).
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + top, y: bodyTop + top),
+            control: CGPoint(x: rect.minX + top, y: bodyTop)
+        )
+
+        // Left side down to where the bottom rounding begins.
+        path.addLine(to: CGPoint(x: rect.minX + top, y: rect.maxY - bottom))
+
+        // Bottom-left corner (convex).
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + top + bottom, y: rect.maxY),
+            control: CGPoint(x: rect.minX + top, y: rect.maxY)
+        )
+
+        // Bottom edge.
+        path.addLine(to: CGPoint(x: rect.maxX - top - bottom, y: rect.maxY))
+
+        // Bottom-right corner (convex).
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - top, y: rect.maxY - bottom),
+            control: CGPoint(x: rect.maxX - top, y: rect.maxY)
+        )
+
+        // Right side back up to the top concave fillet.
+        path.addLine(to: CGPoint(x: rect.maxX - top, y: bodyTop + top))
+
+        // Top-right corner: curve UP-and-OUT to where the bleed band begins (concave).
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: bodyTop),
+            control: CGPoint(x: rect.maxX - top, y: bodyTop)
+        )
+
+        // Straight up the bleed band's right edge, then close along its top.
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+
+        return path
+    }
+
+    /// The two-tier silhouette: a notch-width STEM through menu-bar height (same concave
+    /// top-corner fusion as ever), small convex junctions where the stem meets the shoulder
+    /// line, a flat shoulder, convex "hanging card" outer top corners on the wide BODY, and the
+    /// usual convex bottom rounding. The bleed band spans only the stem (nothing beside the
+    /// notch is ever painted at or above the screen edge).
+    private func mushroomPath(
+        in rect: CGRect, bleed: CGFloat, bodyTop: CGFloat,
+        stemWidth: CGFloat, stemHeight: CGFloat
+    ) -> Path {
+        let stemLeft = rect.midX - stemWidth / 2.0
+        let stemRight = rect.midX + stemWidth / 2.0
+        let shoulderY = bodyTop + stemHeight
+        let bodyBelow = rect.maxY - shoulderY
+
+        // Stem fusion fillet: clamp to the stem's own geometry.
+        let top = max(0, min(topRadius, min(stemWidth / 2.0, stemHeight)))
+        // Convex junction where the stem's side turns outward onto the shoulder.
+        let junction = max(0, min(10, stemHeight - top))
+        // Convex outer top corner of the hanging body.
+        let shoulder = max(0, min(14, min((stemLeft - rect.minX) / 2.0, bodyBelow / 2.0)))
+        // Bottom rounding: clamp against the body's own height and width.
+        let bottom = max(0, min(bottomRadius, min(rect.width / 2.0, bodyBelow - shoulder)))
+
+        var path = Path()
+
+        // Bleed band top-left, down its left edge to the screen's top edge.
+        path.move(to: CGPoint(x: stemLeft, y: rect.minY))
+        path.addLine(to: CGPoint(x: stemLeft, y: bodyTop))
+        // Stem top-left: concave fusion fillet (identical language to the single-tier top).
+        path.addQuadCurve(
+            to: CGPoint(x: stemLeft + top, y: bodyTop + top),
+            control: CGPoint(x: stemLeft + top, y: bodyTop)
+        )
+        // Stem left side down to the junction…
+        path.addLine(to: CGPoint(x: stemLeft + top, y: shoulderY - junction))
+        // …convex turn outward onto the shoulder line…
+        path.addQuadCurve(
+            to: CGPoint(x: stemLeft + top - junction, y: shoulderY),
+            control: CGPoint(x: stemLeft + top, y: shoulderY)
+        )
+        // …flat shoulder out to the body's left edge…
+        path.addLine(to: CGPoint(x: rect.minX + shoulder, y: shoulderY))
+        // …convex body top-left corner.
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: shoulderY + shoulder),
+            control: CGPoint(x: rect.minX, y: shoulderY)
+        )
+
+        // Body left side, bottom rounding, bottom edge, bottom-right rounding.
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - bottom))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + bottom, y: rect.maxY),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - bottom, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.maxY - bottom),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+
+        // Mirror back up the right: body corner, shoulder, junction, stem side, fusion fillet.
+        path.addLine(to: CGPoint(x: rect.maxX, y: shoulderY + shoulder))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - shoulder, y: shoulderY),
+            control: CGPoint(x: rect.maxX, y: shoulderY)
+        )
+        path.addLine(to: CGPoint(x: stemRight - top + junction, y: shoulderY))
+        path.addQuadCurve(
+            to: CGPoint(x: stemRight - top, y: shoulderY - junction),
+            control: CGPoint(x: stemRight - top, y: shoulderY)
+        )
+        path.addLine(to: CGPoint(x: stemRight - top, y: bodyTop + top))
+        path.addQuadCurve(
+            to: CGPoint(x: stemRight, y: bodyTop),
+            control: CGPoint(x: stemRight - top, y: bodyTop)
+        )
+
+        // Bleed band right edge and top.
+        path.addLine(to: CGPoint(x: stemRight, y: rect.minY))
+        path.addLine(to: CGPoint(x: stemLeft, y: rect.minY))
+
+        return path
+    }
+}
+
+// MARK: - Island container
+
+struct IslandContainerView: View {
+    var model: NotchOverlayModel
+    var environment: IslandEnvironment
+    /// Reports the island's rendered size up to the AppKit host each layout pass.
+    var onResize: (CGSize) -> Void
+    /// Reports the derived presentation up to the AppKit host so it can show
+    /// (`orderFrontRegardless`) or hide (`orderOut`) the panel. Computed in `body` so
+    /// Observation tracks the model signals it depends on.
+    var onPresentationChange: (IslandPresentation) -> Void
+
+    /// Pure opaque black chrome — matches the physical notch exactly so the island fuses with
+    /// it seamlessly (no translucent edge that reads as a border). The notch is pure black; so
+    /// are we. Deliberately NOT a Marginalia token (plan §5).
+    private let chrome = Color.black
+
+    // Non-notched collapsed pill fallback size.
+    private let fallbackPill = CGSize(width: 190, height: 30)
+
+    private var presentation: IslandPresentation { model.presentation }
+
+    /// Concave top-corner radius per state — the fillet that fuses the island's sides into the
+    /// flush top edge. Slightly larger when expanded so the wider body flares in gracefully;
+    /// tighter when collapsed to hug the notch corner.
+    private var topRadius: CGFloat {
+        switch presentation {
+        case .expanded:
+            13
+        case .collapsed, .hidden:
+            environment.notchSize != nil ? 8 : 10
+        }
+    }
+
+    /// Convex bottom-corner radius per state.
+    private var bottomRadius: CGFloat {
+        switch presentation {
+        case .expanded:
+            22
+        case .collapsed, .hidden:
+            // Match the notch's own corner when merging; rounder pill otherwise.
+            environment.notchSize != nil ? 10 : 15
+        }
+    }
+
+    /// Extra top inset for the expanded content so it clears the physical notch. Equals the
+    /// active screen's notch height when notched, else 0 (external / non-notched displays need
+    /// no inset — the shape just hugs the top edge).
+    private var notchInset: CGFloat {
+        guard let notch = environment.notchSize, notch.height > 1 else { return 0 }
+        return notch.height
+    }
+
+    /// Width floor for the EXPANDED island — always a bit past the physical notch on each side
+    /// (`IslandGeometry.expandedOverhang`) so it never comes out cramped to exactly notch width.
+    /// `nil` on a non-notched screen, where `.frame(minWidth:)` below is a no-op and content
+    /// alone drives the width.
+    private var expandedMinWidth: CGFloat? {
+        IslandGeometry.expandedMinWidth(notchWidth: environment.notchSize?.width)
+    }
+
+    /// Stem (menu-bar tier) dimensions for the EXPANDED mushroom silhouette: the physical notch
+    /// itself. `nil` when not expanded or on a non-notched screen — the shape then stays
+    /// single-tier. Keeping the island notch-width at menu-bar height means it never overlays
+    /// menu-bar status items or the system mic privacy indicator (which macOS always draws
+    /// topmost); the wide body only begins BELOW the menu bar.
+    private var expandedStem: CGSize? {
+        guard presentation == .expanded,
+              let notch = environment.notchSize, notch.width > 1, notch.height > 1 else {
+            return nil
+        }
+        return notch
+    }
+
+    /// Collapsed pill dimensions: the physical notch size when present (so it disappears INTO
+    /// the real notch), else a small centered pill.
+    private var collapsedSize: CGSize {
+        if let notch = environment.notchSize, notch.width > 1, notch.height > 1 {
+            return notch
+        }
+        return fallbackPill
+    }
+
+    var body: some View {
+        content
+            // The island's overall SIZE transition drives ONLY the AppKit host's hit-test rect
+            // now (`onResize` -> `NotchPanelController.updateActiveRect`) — the panel's own FRAME
+            // is fixed (`IslandGeometry.fixedPanelFrame`) and never resizes to follow this
+            // anymore, closing the class of bug where a discrete `setFrame` raced this
+            // CONTINUOUS spring and could show through as a sliver at the top edge mid-morph
+            // (docs/plans/notch-panel-absorption.md). Deliberately no overshoot here regardless:
+            // an overshooting height still reads as the island briefly detaching from its final
+            // size. This inner `.animation` is more deeply nested than the bouncy one below, so it
+            // wins for content's own geometry; the corner-radius spring below still gets its
+            // bounce.
+            .animation(.spring(response: 0.34, dampingFraction: 1.0), value: presentation)
+            // Top bleed: the extra headroom the host panel reserves ABOVE the physical screen
+            // edge (`IslandGeometry.topBleed`) is padded in here and drawn by the SAME
+            // `IslandShape` fill as the island body (its `bleed` band). One path, one fill —
+            // there is no layer seam at the screen's top row for a fractional-pixel animation
+            // frame to crack open into visible hairlines.
+            .padding(.top, IslandGeometry.topBleed)
+            .background(
+                IslandShape(topRadius: topRadius, bottomRadius: bottomRadius,
+                            bleed: IslandGeometry.topBleed,
+                            stemWidth: expandedStem?.width,
+                            stemHeight: expandedStem?.height ?? 0).fill(chrome))
+            .clipShape(
+                IslandShape(topRadius: topRadius, bottomRadius: bottomRadius,
+                            bleed: IslandGeometry.topBleed,
+                            stemWidth: expandedStem?.width,
+                            stemHeight: expandedStem?.height ?? 0))
+            // The corner-radius morph uses the SAME no-overshoot curve as the content size.
+            // The bounce was dropped deliberately (2026-07-22, live pass): even cosmetic
+            // overshoot reads as the island detaching from the notch it's meant to be part of.
+            .animation(.spring(response: 0.34, dampingFraction: 1.0), value: presentation)
+            .animation(.spring(response: 0.34, dampingFraction: 1.0), value: environment.notchSize)
+            .background(sizeReporter)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Belt-and-suspenders with the host's `safeAreaRegions = []`: whichever macOS
+            // honors, the island must extend into the menu-bar/notch safe area so its square
+            // top sits FLUSH against the physical top edge rather than floating a notch-height
+            // gap below it.
+            .ignoresSafeArea()
+            // The island is black; force its hosted content to resolve Marginalia's DARK
+            // palette regardless of the app's own appearance setting (plan §5).
+            .environment(\.colorScheme, .dark)
+            // Reading `presentation` here (and above) tracks the model via Observation; report
+            // show/hide transitions to the host. Fire once on appear so the host reflects the
+            // initial (idle -> hidden) state.
+            .onAppear { onPresentationChange(presentation) }
+            .onChange(of: presentation) { _, newValue in
+                onPresentationChange(newValue)
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch presentation {
+        case .expanded:
+            // On a NOTCHED display the black shape runs flush to the top edge to fuse with the
+            // notch, but the physical notch would then cover the first content row. So inset the
+            // content's top by the notch height (`notchInset`) so REC/timer/title clear the notch
+            // and sit BELOW it — the chrome still fills that inset region (black behind the
+            // notch). On non-notched displays `notchInset` is 0, so external monitors are
+            // unaffected.
+            NotchRootView(model: model)
+                .padding(.top, 8 + notchInset)
+                .padding(.bottom, 12)
+                .padding(.horizontal, 12)
+                // Floor at notch width + overhang on a notched screen (never exactly notch-
+                // width — reads as cramped); ceiling so a long transcript line can't make the
+                // island absurdly wide. Content between the two still drives its own width.
+                .frame(minWidth: expandedMinWidth ?? 0, maxWidth: 460)
+        case .collapsed:
+            // Reserved / unused (`IslandPresentation.derive` never yields this). A minimal
+            // black pill, sized to merge with the notch (or a small pill otherwise).
+            Color.clear
+                .frame(width: collapsedSize.width, height: collapsedSize.height)
+        case .hidden:
+            // Idle: nothing to draw — the host orders the panel out. Keep a zero-size probe so
+            // layout stays valid until the panel is hidden.
+            Color.clear.frame(width: 0, height: 0)
+        }
+    }
+
+    /// Invisible probe that reports the island's rendered size to the host. It measures the
+    /// bleed-padded chrome, but `IslandGeometry.islandFrame` reserves the bleed itself — so
+    /// report the VISIBLE content size (bleed subtracted) to keep the host's contract unchanged.
+    private var sizeReporter: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { onResize(visibleSize(of: proxy.size)) }
+                .onChange(of: proxy.size) { _, newSize in onResize(visibleSize(of: newSize)) }
+        }
+    }
+
+    private func visibleSize(of measured: CGSize) -> CGSize {
+        CGSize(width: measured.width,
+               height: max(0, measured.height - IslandGeometry.topBleed))
+    }
+}

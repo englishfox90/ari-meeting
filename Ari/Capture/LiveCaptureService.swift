@@ -14,10 +14,11 @@ import Foundation
 struct LiveCaptureService: CaptureService {
     private let coordinator: CaptureCoordinator
 
-    /// Pre-start readiness for the idle screen's eager probe: real TCC state for the mic;
-    /// the system tap has no pre-flight query (TCC fires on first tap creation), so
-    /// `.notDetermined` is the only honest static answer before a start attempt.
+    /// Pre-start readiness for the idle screen's eager probe: both sources can answer before a
+    /// start attempt — the mic from real TCC state, the system tap by pre-flighting the Screen &
+    /// System-Audio Recording grant (`SystemAudioTap.availability()`).
     private let microphone: MicrophoneCapture
+    private let systemTap: SystemAudioTap
 
     /// The persisted microphone device UID to prefer, read once at `start()`
     /// (docs/plans/settings-audio-devices.md §2.3). Defaults to `{ nil }` for the source-probe
@@ -31,6 +32,7 @@ struct LiveCaptureService: CaptureService {
         let microphone = MicrophoneCapture()
         let systemTap = SystemAudioTap()
         self.microphone = microphone
+        self.systemTap = systemTap
         self.preferredMicDeviceUID = preferredMicDeviceUID
         coordinator = CaptureCoordinator(
             config: CaptureCoordinator.Config(meetingFolder: meetingFolder),
@@ -62,12 +64,18 @@ struct LiveCaptureService: CaptureService {
 
     func sourceStatus() async -> (mic: CaptureAvailability, system: CaptureAvailability) {
         let status = await coordinator.sourceStatus()
-        // Before start() the coordinator reports .notDetermined for both; the mic can do
-        // better (real TCC state), so prefer its answer while nothing has started.
+        // Before start() the coordinator reports .notDetermined for both; each source can do
+        // better than that placeholder via its own pre-flight (real mic TCC state, and the
+        // system tap's Screen-Recording grant probe), so substitute those while nothing has
+        // started. Once a start has run, the coordinator's recorded status is authoritative.
+        var resolved = status
         if case .notDetermined = status.mic {
-            return await (microphone.availability(), status.system)
+            resolved.mic = await microphone.availability()
         }
-        return status
+        if case .notDetermined = status.system {
+            resolved.system = await systemTap.availability()
+        }
+        return resolved
     }
 
     /// Bridges an actor-isolated `AsyncStream` accessor into the protocol's synchronous

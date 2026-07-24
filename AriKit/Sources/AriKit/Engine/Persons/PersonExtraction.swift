@@ -197,6 +197,8 @@ public struct PersonExtraction: Sendable {
             "LLM call failed: cancelled"
         case let .providerUnavailable(detail):
             "LLM call failed: \(detail)"
+        case .nothingToSummarize:
+            "No transcript text — skipping fact \(verb)."
         }
     }
 

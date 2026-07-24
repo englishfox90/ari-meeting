@@ -27,6 +27,8 @@ struct AskOverlayHost: View {
     let navKey: AskNavKey
     let isRecordingActive: Bool
     let onOpenMeeting: (MeetingID) -> Void
+    let onOpenPerson: (PersonID) -> Void
+    let onOpenSeries: (SeriesID) -> Void
     let onOpenSettings: () -> Void
 
     @Environment(\.colorScheme) private var scheme
@@ -41,8 +43,24 @@ struct AskOverlayHost: View {
         } else {
             fab
                 .popover(isPresented: $isExpanded, arrowEdge: .trailing) { panel }
-                .task { ensureViewModel() }
+                // Keyed on engine readiness so it re-runs when `recallEngine` flips nil→available:
+                // the shell can mount the FAB before bootstrap assigns the engine, and a plain
+                // `.task {}` (no id) would run once against the nil engine and never retry, leaving
+                // the panel stuck on `ProgressView()` until a navigation change.
+                .task(id: recallEngine != nil) { ensureViewModel() }
                 .task(id: navKey) { await refreshScope() }
+                // Belt-and-suspenders (caught live 2026-07-23: the panel stayed on `ProgressView()`
+                // even well after bootstrap had clearly finished — the main `.ask` page worked fine
+                // in the same session). `.popover`'s content can be unreliable about picking up a
+                // `@State` change that happens while it's already presented on macOS; re-running the
+                // same idempotent guard at the exact moment the user opens the panel (using
+                // whichever `recallEngine` value is current then) sidesteps that reactivity gap
+                // instead of depending on it.
+                .onChange(of: isExpanded) { _, expanded in
+                    if expanded {
+                        ensureViewModel()
+                    }
+                }
                 .padding(MarginaliaSpacing.lg.value)
         }
     }
@@ -53,9 +71,9 @@ struct AskOverlayHost: View {
         selectedSection == .newMeeting || isRecordingActive || selectedSection == .ask
     }
 
-    // A round chat-bubble FAB — the one amber Signal for "ask the AI" (plan §7/§8). Built as an
-    // explicit accent-filled circle rather than the `.primary` glass pill: the pill read as a flat
-    // system-tinted button, not a speech bubble, and the glyph looked like a zoom control.
+    /// A round chat-bubble FAB — the one amber Signal for "ask the AI" (plan §7/§8). Built as an
+    /// explicit accent-filled circle rather than the `.primary` glass pill: the pill read as a flat
+    /// system-tinted button, not a speech bubble, and the glyph looked like a zoom control.
     private var fab: some View {
         Button {
             isExpanded.toggle()
@@ -83,6 +101,14 @@ struct AskOverlayHost: View {
                     onOpenMeeting: { meetingId in
                         isExpanded = false
                         onOpenMeeting(MeetingID(rawValue: meetingId))
+                    },
+                    onOpenPerson: { personId in
+                        isExpanded = false
+                        onOpenPerson(PersonID(rawValue: personId))
+                    },
+                    onOpenSeries: { seriesId in
+                        isExpanded = false
+                        onOpenSeries(SeriesID(rawValue: seriesId))
                     },
                     onOpenSettings: {
                         isExpanded = false
@@ -126,7 +152,7 @@ struct AskOverlayHost: View {
 
         case let .meeting(meetingId):
             guard let meeting = try? await database.meetings.find(meetingId) else { return .none }
-            let seriesIds = (try? await database.series.seriesIds(forMeeting: meetingId)) ?? []
+            let seriesIds = await (try? database.series.seriesIds(forMeeting: meetingId)) ?? []
             var seriesRef: AskNavSeriesRef?
             if let firstSeriesId = seriesIds.first,
                let series = try? await database.series.find(firstSeriesId) {

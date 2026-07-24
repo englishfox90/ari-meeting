@@ -162,6 +162,26 @@ struct PeopleViewParitySlice1Tests {
         #expect(all.count == 3)
     }
 
+    @Test("upsertStubFromAttendee normalizes the stored email and dedups case-insensitively")
+    func upsertStubFromAttendeeNormalizesEmail() async throws {
+        let db = try AppDatabase.makeInMemory()
+
+        // Mixed-case calendar attendee → stored lowercase (canonical, so BINARY UNIQUE agrees
+        // with the case-insensitive findByEmail on later writes).
+        let first = try await db.persons.upsertStubFromAttendee(
+            email: "  Ryan.Chadwick@Arivo.com ", displayName: "", at: base
+        )
+        #expect(first.email == "ryan.chadwick@arivo.com")
+
+        // A differently-cased sync of the same human resolves to the same row, no duplicate.
+        let again = try await db.persons.upsertStubFromAttendee(
+            email: "RYAN.CHADWICK@arivo.com", displayName: "Ryan", at: base
+        )
+        #expect(again.id == first.id)
+        let all = try await db.persons.all()
+        #expect(all.count == 1)
+    }
+
     // MARK: - 3. ProfileFactRepository.confirmFact
 
     @Test("confirmFact sets active + lastConfirmedAt, and retires a supersede target")

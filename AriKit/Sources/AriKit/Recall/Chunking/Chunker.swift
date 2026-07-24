@@ -37,7 +37,7 @@ public struct ChunkDraft: Codable, Hashable, Sendable {
 
 extension Recall {
     /// Target chunk size in scalars (~500 tokens at ~4 chars/token) (← `TARGET_CHARS`).
-    private static let targetChars = 2_000
+    private static let targetChars = 2000
     /// Segments carried into the next chunk so a boundary-spanning fact stays retrievable
     /// (← `OVERLAP_SEGMENTS`).
     private static let overlapSegments = 1
@@ -77,6 +77,55 @@ extension Recall {
             if let draft = buildChunk(index: index, segments: current) {
                 chunks.append(draft)
             }
+        }
+
+        return chunks
+    }
+
+    /// Chunk a meeting's generated summary body into overlapping windows, mirroring
+    /// `chunkTranscripts`'s target-size/overlap behavior but over one plain document rather than N
+    /// ordered transcript segments (plan `ask-meetings-tools-and-cards.md` §3.2). No timestamp is
+    /// ever attached — a summary chunk has no meaningful recording-relative time span, and this
+    /// function stays summary-agnostic about WHY it's being called: it is the caller (`Indexer`)
+    /// that tags the resulting drafts with `sourceKind == .summary`, not `Chunker` itself.
+    public static func chunkSummary(_ bodyMarkdown: String) -> [ChunkDraft] {
+        let paragraphs = bodyMarkdown
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !paragraphs.isEmpty else { return [] }
+
+        var chunks: [ChunkDraft] = []
+        var current: [String] = []
+        var currentChars = 0
+        var index = 0
+
+        func flush() {
+            let text = current.joined(separator: "\n")
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                chunks.append(ChunkDraft(
+                    chunkIndex: index,
+                    text: text,
+                    tokenEstimate: text.unicodeScalars.count / 4
+                ))
+                index += 1
+            }
+        }
+
+        for paragraph in paragraphs {
+            current.append(paragraph)
+            currentChars += paragraph.unicodeScalars.count
+            if currentChars >= targetChars {
+                flush()
+                let keepFrom = current.count - min(current.count, overlapSegments)
+                current = Array(current[keepFrom...])
+                currentChars = current.reduce(0) { $0 + $1.unicodeScalars.count }
+            }
+        }
+
+        let isPureOverlap = !chunks.isEmpty && current.count <= overlapSegments
+        if !current.isEmpty, !isPureOverlap {
+            flush()
         }
 
         return chunks

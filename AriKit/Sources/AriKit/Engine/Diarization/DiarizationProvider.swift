@@ -1,10 +1,10 @@
-//
-//  DiarizationProvider.swift — the diarization backend seam (plan §2.2).
-//
-//  `DiarizationOutput` is the whole-meeting result of one diarizer run; `DiarizationProvider` is
-//  the protocol a backend (FluidAudio, or a future replacement) conforms to. Core `AriKit` never
-//  imports FluidAudio — `AriKitDiarizationFluidAudio` (D7) supplies the sole real conformer.
-//
+///
+///  DiarizationProvider.swift — the diarization backend seam (plan §2.2).
+///
+///  `DiarizationOutput` is the whole-meeting result of one diarizer run; `DiarizationProvider` is
+///  the protocol a backend (FluidAudio, or a future replacement) conforms to. Core `AriKit` never
+///  imports FluidAudio — `AriKitDiarizationFluidAudio` (D7) supplies the sole real conformer.
+///
 public struct DiarizationOutput: Sendable {
     public var segments: [DiarizedSegment]
     public var clusters: [DiarizationCluster]
@@ -32,13 +32,26 @@ public protocol DiarizationProvider: Sendable {
     var embeddingModel: String { get }
     func isAvailable() async -> Bool
     /// Download/compile models if needed. Idempotent. Honest errors — never a fake ready state.
-    func prepare() async throws
+    /// `progress`, when supplied, reports a real fraction-complete signal for backends that can
+    /// produce one (docs/plans/onboarding-install-flow.md §2.2) — never fabricated. The
+    /// zero-argument convenience below (`prepare()`) is the historical call shape and stays
+    /// additive/backward-compatible.
+    func prepare(progress: (@Sendable (Double) -> Void)?) async throws
     /// `samples`: 16 kHz mono `[-1, 1]`. Never called on the capture hot path.
     func diarize(
         samples: [Float],
         hint: SpeakerCountHint,
         progress: (@Sendable (Double) -> Void)?
     ) async throws -> DiarizationOutput
+}
+
+/// Convenience default-arg overload, mirroring the historical zero-arg `prepare()` call shape
+/// (`DiarizationService.swift:122`'s `try await provider.prepare()`) — additive, not breaking
+/// (docs/plans/onboarding-install-flow.md §2.2).
+public extension DiarizationProvider {
+    func prepare() async throws {
+        try await prepare(progress: nil)
+    }
 }
 
 public enum DiarizationError: Error, Sendable, Equatable {

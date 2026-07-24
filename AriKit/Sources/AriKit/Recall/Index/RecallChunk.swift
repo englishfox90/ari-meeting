@@ -9,7 +9,17 @@ import Foundation
 
 public typealias RecallChunkID = Identifier<RecallChunk>
 
-/// A persisted, indexed transcript chunk (← Rust `RecallChunk`, database/models.rs:87-100).
+/// What text a recall chunk was built from (plan `docs/plans/ask-meetings-tools-and-cards.md`
+/// §3.2). A `.summary` chunk never carries a real transcript timestamp — presentation code
+/// (`HybridSearch`) must not fall through to `timestampLabel` for it, since that's always `nil`
+/// by construction; see that method's explicit `"not available"` stamp.
+public enum RecallChunkSourceKind: String, Codable, Hashable, Sendable {
+    case transcript
+    case summary
+}
+
+/// A persisted, indexed transcript (or summary) chunk (← Rust `RecallChunk`,
+/// database/models.rs:87-100, extended by the Swift-only `sourceKind` tag, plan §3.2).
 /// `createdAt` is kept as raw RFC3339 `String`, NOT `Date` — see `arikit-recall-slice2.md` §4.6's
 /// timestamp-format note.
 public struct RecallChunk: Codable, Hashable, Sendable, Identifiable {
@@ -25,6 +35,7 @@ public struct RecallChunk: Codable, Hashable, Sendable, Identifiable {
     public var dim: Int?
     public var tokenEstimate: Int?
     public var createdAt: String
+    public var sourceKind: RecallChunkSourceKind
 
     public init(
         id: RecallChunkID,
@@ -38,7 +49,8 @@ public struct RecallChunk: Codable, Hashable, Sendable, Identifiable {
         embeddingModel: String? = nil,
         dim: Int? = nil,
         tokenEstimate: Int? = nil,
-        createdAt: String
+        createdAt: String,
+        sourceKind: RecallChunkSourceKind = .transcript
     ) {
         self.id = id
         self.meetingId = meetingId
@@ -52,6 +64,7 @@ public struct RecallChunk: Codable, Hashable, Sendable, Identifiable {
         self.dim = dim
         self.tokenEstimate = tokenEstimate
         self.createdAt = createdAt
+        self.sourceKind = sourceKind
     }
 }
 
@@ -71,6 +84,7 @@ public struct RecallChunkInput: Sendable {
     public var embeddingModel: String?
     public var dim: Int?
     public var tokenEstimate: Int?
+    public var sourceKind: RecallChunkSourceKind
 
     public init(
         id: RecallChunkID,
@@ -82,7 +96,8 @@ public struct RecallChunkInput: Sendable {
         embedding: Data? = nil,
         embeddingModel: String? = nil,
         dim: Int? = nil,
-        tokenEstimate: Int? = nil
+        tokenEstimate: Int? = nil,
+        sourceKind: RecallChunkSourceKind = .transcript
     ) {
         self.id = id
         self.chunkIndex = chunkIndex
@@ -94,6 +109,7 @@ public struct RecallChunkInput: Sendable {
         self.embeddingModel = embeddingModel
         self.dim = dim
         self.tokenEstimate = tokenEstimate
+        self.sourceKind = sourceKind
     }
 }
 

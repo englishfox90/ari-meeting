@@ -36,13 +36,16 @@ struct SettingsGeneralSection: View {
                 }
 
                 SettingsGroup(header: "Notch & Menu Bar") {
+                    // The native Swift overlay (docs/plans/notch-panel-absorption.md). Default
+                    // OFF, backed by `NotchVisibilityStore` (UserDefaults), not the `setting`
+                    // table — same device-local-preference pattern as menu-bar visibility.
                     SettingsToggleRow(
-                        "Show meeting notch",
-                        description: viewModel.notchAvailability.disabledReason
-                            ?? "A live HUD near the notch during recording.",
-                        isOn: showNotchBinding
+                        "Notch overlay",
+                        description: "A live island near the notch during recording — the "
+                            + "native Swift version of the meeting notch.",
+                        isOn: notchOverlayBinding
                     )
-                    .disabled(viewModel.notchAvailability.isDisabled)
+                    .disabled(viewModel.notchOverlayAvailability.isDisabled)
 
                     SettingsToggleRow(
                         "Show in menu bar",
@@ -97,7 +100,8 @@ struct SettingsGeneralSection: View {
                         SettingsToggleRow(
                             "Recording alerts",
                             description: viewModel.recordingAlertsAvailability.disabledReason
-                                ?? "Notify when a recording starts or stops.",
+                                ?? "A notification when a recording starts — a cue to let "
+                                + "participants know.",
                             isOn: recordingAlertsBinding
                         )
                         .disabled(viewModel.recordingAlertsAvailability.isDisabled)
@@ -130,13 +134,6 @@ struct SettingsGeneralSection: View {
 
     // MARK: - Honest-disabled toggle bindings
 
-    private var showNotchBinding: Binding<Bool> {
-        Binding(
-            get: { viewModel.showNotch },
-            set: { newValue in Task { try? await viewModel.setShowNotch(newValue) } }
-        )
-    }
-
     /// Menu-bar visibility is UserDefaults-backed (like `appearanceBinding`), not a
     /// `SettingsRepository` row — writing the store synchronously flips `AriApp`'s
     /// `@AppStorage(MenuBarVisibilityStore.defaultsKey)` gate, inserting/removing the `MenuBarExtra`
@@ -145,6 +142,17 @@ struct SettingsGeneralSection: View {
         Binding(
             get: { viewModel.menuBar.isVisible },
             set: { viewModel.menuBar.isVisible = $0 }
+        )
+    }
+
+    /// Notch-overlay visibility is UserDefaults-backed (like `showInMenuBarBinding`), not a
+    /// `SettingsRepository` row — writing the store synchronously is observed by
+    /// `NotchOverlayCoordinator` (`UserDefaults.didChangeNotification`), inserting/removing the
+    /// panel live (docs/plans/notch-panel-absorption.md §6).
+    private var notchOverlayBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.notchOverlay.isVisible },
+            set: { viewModel.notchOverlay.isVisible = $0 }
         )
     }
 
@@ -183,13 +191,13 @@ struct SettingsGeneralSection: View {
     private var notificationAuthorizationBannerMessage: String? {
         switch viewModel.notificationAuthorization {
         case .denied:
-            return "Notifications are turned off for Ari in System Settings — reminders and "
+            "Notifications are turned off for Ari in System Settings — reminders and "
                 + "summary alerts won't appear until you allow them."
         case .notDetermined:
-            return "Ari hasn't been allowed to send notifications yet — allow them so reminders "
+            "Ari hasn't been allowed to send notifications yet — allow them so reminders "
                 + "and summary alerts can appear."
         case .authorized, .provisional, .none:
-            return nil
+            nil
         }
     }
 

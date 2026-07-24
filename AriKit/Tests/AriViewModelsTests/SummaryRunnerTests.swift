@@ -130,8 +130,8 @@ struct SummaryRunnerTests {
 
     // MARK: - generate: honest failures
 
-    @Test("generate throws notConfigured when the meeting has no transcript text")
-    func generateThrowsNotConfiguredWhenTranscriptEmpty() async throws {
+    @Test("generate throws nothingToSummarize when the meeting has no transcript text")
+    func generateThrowsNothingToSummarizeWhenTranscriptEmpty() async throws {
         let db = try AppDatabase.makeInMemory()
         try await db.meetings.upsert(makeMeeting())
         let settings = StubSettingsReading(
@@ -139,8 +139,11 @@ struct SummaryRunnerTests {
         )
         let runner = makeRunner(db: db, settings: settings)
 
-        await #expect(throws: LLMError.self) {
+        do {
             _ = try await runner.generate(meetingId: meetingId, templateId: "standard_meeting", speakerCount: nil)
+            Issue.record("expected LLMError.nothingToSummarize")
+        } catch LLMError.nothingToSummarize {
+            // The benign, non-error path: the UI presents this as a calm note, never as a fault.
         }
     }
 

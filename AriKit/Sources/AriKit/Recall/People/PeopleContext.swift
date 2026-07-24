@@ -165,9 +165,11 @@ public struct PeopleContext: Sendable {
             // marked "seen" on its FIRST source regardless of whether that source had speakers.
             guard seen.insert(source.meetingId).inserted else { continue }
             guard !source.speakers.isEmpty else { continue }
-            let date = source.meetingDate
-                .map { String($0.prefix(10)) }
-                .flatMap { $0.isEmpty ? nil : " (\($0))" } ?? ""
+            // Local-day formatting, NOT `String(prefix(10))`: the raw RFC3339 prefix is the UTC
+            // calendar date, wrong for the local day near midnight. `friendlyDayOnly` converts the
+            // stored UTC instant to the device's real local day before it reaches the prompt.
+            let date = RecallCardDisplay.friendlyDayOnly(source.meetingDate)
+                .map { " (\($0))" } ?? ""
             lines.append("- \"\(source.title)\"\(date) — people: \(source.speakers.joined(separator: ", ")).")
         }
     }

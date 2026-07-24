@@ -72,6 +72,8 @@
 
         private var windowID: UInt64 = 0
         private var emittedWindows = 0
+        /// Gain + peak-hold-decay state for `liveLevel()` — see `PeakLevelMeter`.
+        private var levelMeter = PeakLevelMeter()
 
         private var consumerTasks: [Task<Void, Never>] = []
         private var saverTask: Task<Void, Never>?
@@ -338,8 +340,7 @@
                     .warning("Dropped mixed window \(dropped.windowID) — the STT consumer is behind; that window is silence to it")
             }
 
-            let peak = mixed.reduce(into: Float(0)) { $0 = max($0, abs($1)) }
-            levelContinuation?.yield(peak)
+            levelContinuation?.yield(levelMeter.update(with: mixed))
 
             if case .dropped = saverContinuation?.yield(mixed) ?? .terminated {
                 Self.logger.error("Dropped a save window — audio data was lost before checkpointing")

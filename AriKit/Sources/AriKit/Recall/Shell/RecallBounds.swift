@@ -52,4 +52,32 @@ public enum RecallBounds {
     public static let maxFactChars = 160
     /// Truncation budget for a calendar event's notes line (← `MAX_NOTE_CHARS`).
     public static let maxNoteChars = 300
+
+    // MARK: - Structured-tools caps (Slice B, ← ask-meetings-tools-and-cards.md §4/§9)
+
+    /// Bound on how many of a series' newest meetings `RecallTools.meetings(inSeries:limit:)`
+    /// reads for a resolved series card — a real, bounded count, never an unbounded scan.
+    public static let maxCardSeriesMeetings = 50
+    /// Truncation budget for the terse "Resolved: …" fact line folded into the prompt when a
+    /// tool resolves a real entity (mirrors `PeopleContext`'s bounded-block pattern).
+    public static let maxCardContextChars = 240
+
+    // MARK: - Agentic-loop caps (← ari-engine/src/recall/agent.rs:31-34, ported as invariants;
+
+    // docs/plans/ask-meetings-agentic-tools.md §3.4)
+
+    /// Hard budget on tool-loop iterations per ask — enforced by `AskToolset.dispatch`
+    /// (`ChatSession`'s own internal loop is uncapped, plan §2.4/§4.3).
+    public static let maxAgenticIterations = 8
+    /// Hard cap on sources accumulated across all `search_transcripts` calls in one ask.
+    public static let maxAgenticSources = 24
+    /// Per-summary/transcript budget for tool-fetched long text (`get_meeting_summary`).
+    public static let maxAgenticTranscriptChars = 8000
+    /// Overall per-tool-result truncation budget.
+    public static let maxToolResultChars = 16000
+    /// Global per-ask cap on attached entity cards (`ToolTurnState.attach`), enforced AFTER dedup —
+    /// so one ask can never stack more than this many cards regardless of how many tools ran or
+    /// how many entities each resolved (2026-07-23 live-test failure A: an unfiltered
+    /// `todays_events` call attached one card per today's event).
+    public static let maxCardsPerAsk = 4
 }

@@ -22,7 +22,7 @@ Build the **full native Settings UI shell** for the macOS `Ari` app, reaching fu
 
 ### 2.1 New key-value `setting` table + `SettingsRepository`
 
-Extend the still-unshipped `v1_baseline` migration in place (`SchemaMigrator.swift`), appended after `askMessage`:
+Extend the then-unshipped `v1_baseline` migration in place (`SchemaMigrator.swift`), appended after `askMessage`. ⚠️ **Historical: `v1_baseline` was FROZEN on 2026-07-22** — the `setting` table's in-place append was legal at the time; future schema changes are new `v2+` migrations (`docs/plans/robust-migration-and-backup.md`):
 
 ```
 setting(

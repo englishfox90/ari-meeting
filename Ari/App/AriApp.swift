@@ -11,6 +11,10 @@ import SwiftUI
 
 @main
 struct AriApp: App {
+    /// Gates process termination on in-flight MLX generation (see `AppDelegate.swift` for the
+    /// crash this fixes: 2026-07-22, `NSApp.terminate` racing a live MLX summary generation).
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     /// The single root environment for the whole app. `@State` so its lifetime is the app's.
     @State private var environment = AppEnvironment()
 

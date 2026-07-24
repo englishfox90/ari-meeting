@@ -45,7 +45,7 @@ private func onDeleteActions(
 struct RecallIndexSchemaFidelityTests {
     private func migratedQueue() throws -> DatabaseQueue {
         let queue = try DatabaseQueue()
-        try SchemaMigrator.migrator.migrate(queue)
+        try SchemaMigrator.migrator().migrate(queue)
         return queue
     }
 
@@ -91,7 +91,10 @@ struct RecallIndexSchemaFidelityTests {
             ExpectedColumn(name: "embeddingModel", type: "TEXT", notNull: false),
             ExpectedColumn(name: "dim", type: "INTEGER", notNull: false),
             ExpectedColumn(name: "tokenEstimate", type: "INTEGER", notNull: false),
-            ExpectedColumn(name: "createdAt", type: "TEXT", notNull: true)
+            ExpectedColumn(name: "createdAt", type: "TEXT", notNull: true),
+            // v2_recall_chunk_source_kind (ask-meetings-tools-and-cards.md §3.2/§7) — additive,
+            // NOT NULL DEFAULT 'transcript'.
+            ExpectedColumn(name: "sourceKind", type: "TEXT", notNull: true)
         ], table: "recallChunk")
     }
 
@@ -179,7 +182,11 @@ struct RecallIndexSchemaFidelityTests {
             ExpectedColumn(name: "role", type: "TEXT", notNull: true),
             ExpectedColumn(name: "content", type: "TEXT", notNull: true),
             ExpectedColumn(name: "sourcesJson", type: "TEXT", notNull: false),
-            ExpectedColumn(name: "createdAt", type: "TEXT", notNull: true)
+            ExpectedColumn(name: "createdAt", type: "TEXT", notNull: true),
+            // v3_ask_message_card (`ask-meetings-tools-and-cards.md` §5.1/§7) — additive, nullable.
+            ExpectedColumn(name: "cardJson", type: "TEXT", notNull: false),
+            // v4_ask_message_cards (`ask-meetings-agentic-tools.md` §5.4) — additive, nullable.
+            ExpectedColumn(name: "cardsJson", type: "TEXT", notNull: false)
         ], table: "askMessage")
 
         let actions = try onDeleteActions(

@@ -8,13 +8,14 @@
 //
 import Foundation
 
-extension Recall {
+public extension Recall {
+
     // MARK: - Middle excerpt
 
     /// Keep the opening and the conclusion, eliding the middle (← `bounded_middle_excerpt`). When
     /// the text is within `maximum` scalars it is returned unchanged; otherwise a `head` (first
     /// `maximum/2` scalars) and `tail` (remaining budget) are joined around an elision line.
-    public static func boundedMiddleExcerpt(_ text: String, max maximum: Int) -> String {
+    static func boundedMiddleExcerpt(_ text: String, max maximum: Int) -> String {
         let characters = scalars(text)
         if characters.count <= maximum {
             return text
@@ -30,7 +31,7 @@ extension Recall {
 
     /// Meeting-scoped sources: cap to `maxSources` (keeping the edges when over), then bound each
     /// excerpt to an even per-source budget (← `build_meeting_recall_sources`).
-    public static func buildMeetingSources(_ matches: [TranscriptSearchResult]) -> [RecallSource] {
+    static func buildMeetingSources(_ matches: [TranscriptSearchResult]) -> [RecallSource] {
         let matchCount = matches.count
         let selected: [TranscriptSearchResult]
         if matchCount > RecallBounds.maxSources {
@@ -61,7 +62,7 @@ extension Recall {
 
     /// Global sources: one merged source per meeting, capped to `maxGlobalMeetings`
     /// (← `build_global_recall_sources`).
-    public static func buildGlobalSources(_ matches: [TranscriptSearchResult]) -> [RecallSource] {
+    static func buildGlobalSources(_ matches: [TranscriptSearchResult]) -> [RecallSource] {
         var sources: [RecallSource] = []
         for item in matches {
             if let existingIndex = sources.firstIndex(where: { $0.meetingId == item.id }) {
@@ -104,7 +105,7 @@ extension Recall {
     /// exercised by any Slice-1 test; Foundation's `JSONSerialization` pretty output is used as the
     /// closest available equivalent to serde_json's `to_string_pretty` (2-space indent, sorted
     /// keys). Byte-for-byte formatting of that branch is not guaranteed — flagged for review.
-    public static func summaryMarkdown(_ raw: String) -> String? {
+    static func summaryMarkdown(_ raw: String) -> String? {
         let trimmedRaw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedRaw.isEmpty {
             return nil
@@ -156,7 +157,7 @@ extension Recall {
     /// Assemble the last `maxHistoryTurns` turns into a bounded block (← `build_local_recall_history`).
     /// Only `user`/`assistant` roles are accepted; any other role throws (never trusted). Empty
     /// turns are skipped.
-    public static func buildHistory(_ turns: [RecallTurn]) throws -> String {
+    static func buildHistory(_ turns: [RecallTurn]) throws -> String {
         let start = turns.count - min(turns.count, RecallBounds.maxHistoryTurns)
         var lines: [String] = []
         for turn in turns[start...] {
@@ -179,10 +180,27 @@ extension Recall {
 
     /// Render the numbered `[Source N | …]` context blocks, printing each meeting's saved summary
     /// at most once, then bound the whole thing (← `build_local_recall_context`).
-    public static func buildContext(_ sources: [RecallSource]) -> String {
+    ///
+    /// `source.meetingDate` is a raw RFC3339 UTC instant on the wire type (kept unchanged so the UI
+    /// layer's own `RecallCardDisplay.friendlyDate` re-formatting still works). Here it is converted
+    /// to an already-correct LOCAL-timezone human string BEFORE it reaches the model — never handed
+    /// over as a raw `…T14:46:29Z` for the LLM to (wrongly) timezone-shift itself (the live
+    /// 2026-07-23 "2:46 PM" bug). `source.timestamp` is a within-recording offset label
+    /// ("00:05"/"not available"), NOT a wall-clock date, so it is printed verbatim. `timeZone`/
+    /// `locale` default to the device's current values; injectable so the conversion is testable
+    /// independent of the CI machine's own zone.
+    static func buildContext(
+        _ sources: [RecallSource],
+        timeZone: TimeZone = .current,
+        locale: Locale = .current
+    ) -> String {
         var summariesIncluded = Set<String>()
         let blocks = sources.enumerated().map { index, source -> String in
-            let meetingDate = source.meetingDate ?? "date unavailable"
+            let meetingDate = RecallCardDisplay.friendlyDate(
+                source.meetingDate,
+                timeZone: timeZone,
+                locale: locale
+            ) ?? "date unavailable"
             var summarySection = ""
             // Rust `.filter(|_| insert(...))`: `insert` runs (and thus the meeting is marked seen)
             // ONLY when a summary is present — the short-circuit here preserves that.

@@ -33,6 +33,18 @@ public struct MeetingRepository: Sendable {
         }
     }
 
+    /// Renames a meeting in place — updates only `title` and `updatedAt`, leaving the tombstone
+    /// and every other column untouched (contrast `upsert`, which resets `isDeleted`/`deletedAt`
+    /// via `MeetingRecord.init(_:)`). A no-op if the meeting doesn't exist.
+    public func rename(_ id: MeetingID, to title: String, at date: Date) async throws {
+        try await dbWriter.write { db in
+            guard var record = try MeetingRecord.fetchOne(db, key: id.rawValue) else { return }
+            record.title = title
+            record.updatedAt = date
+            try record.update(db)
+        }
+    }
+
     /// Tombstone — sets `isDeleted`/`deletedAt`, never issues a hard `DELETE`.
     public func softDelete(_ id: MeetingID, at date: Date) async throws {
         try await dbWriter.write { db in

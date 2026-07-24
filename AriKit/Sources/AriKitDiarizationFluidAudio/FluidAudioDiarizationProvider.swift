@@ -32,8 +32,20 @@
 
         /// Idempotent: a second call, whether or not the first succeeded synchronously before
         /// this one started, resolves to the same cached models rather than reloading them.
-        public func prepare() async throws {
-            _ = try await preparedModels()
+        /// `progress` (plan §2.2) forwards FluidAudio's own `DownloadProgress.fractionCompleted`
+        /// — never fabricated — losing only the `DownloadPhase` detail at this narrower
+        /// `DiarizationProvider` boundary (the richer `OnboardingInstallProgress` phase mapping
+        /// happens one layer up, in `FluidAudioOnboardingComponent`, which calls
+        /// `OfflineDiarizerModels.load` directly with the full `DownloadProgress`).
+        public func prepare(progress: (@Sendable (Double) -> Void)?) async throws {
+            guard let progress else {
+                _ = try await preparedModels()
+                return
+            }
+            let progressHandler: ProgressHandler = { (downloadProgress: DownloadProgress) in
+                progress(downloadProgress.fractionCompleted)
+            }
+            _ = try await preparedModels(progress: progressHandler)
         }
 
         public func diarize(
@@ -74,13 +86,20 @@
             return DiarizationOutput(segments: segments, clusters: clusters, embeddingModel: embeddingModel, dim: dim)
         }
 
+        /// Not `private` (module-internal): `FluidAudioOnboardingComponent.ensureReady` (same
+        /// module, a different file) calls this directly with the FULL `DownloadProgress`
+        /// handler so it can map the richer `DownloadPhase` onto `OnboardingInstallProgress`
+        /// honestly — `prepare(progress:)` above instead adapts its own narrower `Double`-only
+        /// signature down to this same shared load/cache/purge-retry path.
         @discardableResult
-        private func preparedModels() async throws -> OfflineDiarizerModels {
+        func preparedModels(
+            progress progressHandler: ProgressHandler? = nil
+        ) async throws -> OfflineDiarizerModels {
             if let loadedModels {
                 return loadedModels
             }
             do {
-                let models = try await OfflineDiarizerModels.load()
+                let models = try await OfflineDiarizerModels.load(progressHandler: progressHandler)
                 loadedModels = models
                 return models
             } catch {
@@ -92,7 +111,7 @@
                 // inside the actor, no shared/global state.
                 purgeDiarizerModelsCache()
                 do {
-                    let models = try await OfflineDiarizerModels.load()
+                    let models = try await OfflineDiarizerModels.load(progressHandler: progressHandler)
                     loadedModels = models
                     return models
                 } catch {
@@ -156,7 +175,11 @@
 
             return accumulated
                 .map { key, value in
-                    DiarizationCluster(key: key, centroid: SpeakerMath.l2Normalized(value.centroid), speechSecs: value.totalSecs)
+                    DiarizationCluster(
+                        key: key,
+                        centroid: SpeakerMath.l2Normalized(value.centroid),
+                        speechSecs: value.totalSecs
+                    )
                 }
                 .sorted { $0.key < $1.key }
         }

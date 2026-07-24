@@ -24,9 +24,14 @@ public final class MeetingsListViewModel {
 
     private let database: AppDatabase
     private var observationTask: Task<Void, Never>?
+    /// Fires the recall-index purge on delete (docs/plans/ask-meetings-tools-and-cards.md §3.1.1)
+    /// — `nil` in contexts that don't wire recall indexing (e.g. narrower tests), in which case a
+    /// delete simply doesn't purge anything (the meeting is still tombstoned either way).
+    private let recallIndexTrigger: RecallIndexTrigger?
 
-    public init(database: AppDatabase) {
+    public init(database: AppDatabase, recallIndexTrigger: RecallIndexTrigger? = nil) {
         self.database = database
+        self.recallIndexTrigger = recallIndexTrigger
     }
 
     /// Loads the initial list (honest `.failed` on a real error), then starts consuming the
@@ -49,5 +54,26 @@ public final class MeetingsListViewModel {
                 state = meetings.isEmpty ? .empty : .loaded(meetings)
             }
         }
+    }
+
+    /// Renames a meeting. The live `observeAll()` stream (started in `observe()`) re-emits the
+    /// updated list, so this view model never mutates `state` by hand — the row refreshes itself.
+    /// A blank/whitespace-only title is rejected (kept as a no-op) so the list can't show an
+    /// empty row. Throws on a real write failure so the caller can surface it (No-Fake-State:
+    /// never a silent success).
+    public func rename(_ meeting: Meeting, to newTitle: String) async throws {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != meeting.title else { return }
+        try await database.meetings.rename(meeting.id, to: trimmed, at: Date())
+    }
+
+    /// Soft-deletes (tombstones) a meeting — it disappears from every list but stays recoverable
+    /// in the DB. The live `observeAll()` stream drops the tombstoned row automatically. Throws on
+    /// a real write failure so the caller can surface it.
+    public func delete(_ meeting: Meeting) async throws {
+        try await database.meetings.softDelete(meeting.id, at: Date())
+        // Fire-and-forget purge of any indexed recall chunks (§3.1.1) — never blocks the delete,
+        // never surfaces its own failure to the caller.
+        recallIndexTrigger?.purgeOnDelete(meeting.id)
     }
 }

@@ -283,14 +283,23 @@ impl CalendarRepository {
     /// The (at most one) calendar event linked to `meeting_id`, with attendees parsed —
     /// used to inject the authoritative event title/notes/attendee roster into the F3
     /// summary context so the summarizer doesn't misattribute speakers. Uses the
-    /// `idx_calendar_events_meeting` index. If a meeting were ever linked to more than one
-    /// event (shouldn't happen), the first row wins.
+    /// `idx_calendar_events_meeting` index. A meeting should only ever be linked to one
+    /// event (`find_closest_meeting_in_window` now enforces exclusivity going forward),
+    /// but as a defensive backstop against stale double-links from before that fix, break
+    /// ties deterministically by picking the event whose start_time is closest to the
+    /// meeting's `created_at` rather than an arbitrary row.
     pub async fn get_event_by_meeting_id(
         pool: &SqlitePool,
         meeting_id: &str,
     ) -> Result<Option<crate::calendar::models::CalendarEvent>, sqlx::Error> {
         let row = sqlx::query_as::<_, CalendarEventRow>(
-            "SELECT * FROM calendar_events WHERE meeting_id = ? LIMIT 1",
+            r#"
+            SELECT ce.* FROM calendar_events ce
+            JOIN meetings m ON m.id = ce.meeting_id
+            WHERE ce.meeting_id = ?
+            ORDER BY ABS(CAST((julianday(ce.start_time) - julianday(m.created_at)) * 86400.0 AS INTEGER)) ASC
+            LIMIT 1
+            "#,
         )
         .bind(meeting_id)
         .fetch_optional(pool)
@@ -340,16 +349,28 @@ impl CalendarRepository {
         Ok(())
     }
 
+    /// Links `event_id` to `meeting_id` as a manual (user-chosen) link. A meeting may only
+    /// ever be linked to one event, so any other event currently holding this meeting_id is
+    /// released first — otherwise this insert would violate `idx_calendar_events_meeting_unique`.
     pub async fn set_manual_link(
         pool: &SqlitePool,
         event_id: &str,
         meeting_id: &str,
     ) -> Result<(), sqlx::Error> {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "UPDATE calendar_events SET meeting_id = NULL, link_source = NULL WHERE meeting_id = ? AND id != ?",
+        )
+        .bind(meeting_id)
+        .bind(event_id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("UPDATE calendar_events SET meeting_id = ?, link_source = 'manual' WHERE id = ?")
             .bind(meeting_id)
             .bind(event_id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -397,7 +418,10 @@ impl CalendarRepository {
     }
 
     /// Closest meeting whose `created_at` falls within [window_start, window_end], for
-    /// auto-matching. Returns `None` if none found.
+    /// auto-matching. Excludes meetings already claimed by another calendar event so two
+    /// overlapping events (e.g. back-to-back meetings whose ±15min slack windows both cover
+    /// the same recording) can't both auto-link to the same meeting. Returns `None` if none
+    /// found.
     pub async fn find_closest_meeting_in_window(
         pool: &SqlitePool,
         window_start: DateTime<Utc>,
@@ -409,6 +433,7 @@ impl CalendarRepository {
             SELECT id
             FROM meetings
             WHERE created_at >= ? AND created_at <= ?
+              AND id NOT IN (SELECT meeting_id FROM calendar_events WHERE meeting_id IS NOT NULL)
             ORDER BY ABS(CAST((julianday(created_at) - julianday(?)) * 86400.0 AS INTEGER)) ASC
             LIMIT 1
             "#,

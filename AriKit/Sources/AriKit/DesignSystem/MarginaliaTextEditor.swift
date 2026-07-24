@@ -18,6 +18,10 @@ public struct MarginaliaTextEditor: View {
     private let maxHeight: CGFloat?
     @FocusState private var isFocused: Bool
 
+    /// `NSTextContainer.lineFragmentPadding`'s default — the horizontal inset the editor adds
+    /// inside its own bounds, which the placeholder overlay must match.
+    private static let lineFragmentPadding: CGFloat = 5
+
     public init(
         text: Binding<String>,
         prompt: String,
@@ -35,10 +39,14 @@ public struct MarginaliaTextEditor: View {
     public var body: some View {
         ZStack(alignment: .topLeading) {
             if text.wrappedValue.isEmpty {
+                // The placeholder has to sit exactly where the editor's own first line (and so the
+                // caret) is drawn, or the caret reads as floating above the prompt text. The only
+                // offset from the shared padding is the `NSTextView` line-fragment padding on the
+                // leading edge; vertically the editor's text starts flush with its padding.
                 Text(prompt)
                     .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
-                    .padding(.horizontal, MarginaliaSpacing.sm.value + 4)
-                    .padding(.vertical, MarginaliaSpacing.xs.value + 3)
+                    .padding(.horizontal, MarginaliaSpacing.sm.value + Self.lineFragmentPadding)
+                    .padding(.vertical, MarginaliaSpacing.xs.value)
                     .allowsHitTesting(false)
             }
             TextEditor(text: text)

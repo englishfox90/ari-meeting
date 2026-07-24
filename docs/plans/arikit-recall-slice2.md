@@ -8,7 +8,7 @@ Slice 2 of `docs/plans/arikit-recall.md` (§5, §2.3, §4) — Phase 3.1's recal
 
 **Scope guard.** This spec touches only:
 - `AriKit/Sources/AriKit/Recall/Index/**` (new) — domain values + `RecallIndexRepository` + its internal GRDB records.
-- `AriKit/Sources/AriKit/Store/Migrations/SchemaMigrator.swift` — an **additive append** to the still-unshipped `v1_baseline` migration (per `arikit-store.md` §6 slice-1 finding: extend in place, don't fork a new migration, since it hasn't shipped).
+- `AriKit/Sources/AriKit/Store/Migrations/SchemaMigrator.swift` — an **additive append** to the then-unshipped `v1_baseline` migration (per the 2026-07-17 slice-1 finding). ⚠️ **This was one of the last legal in-place edits — `v1_baseline` was FROZEN on 2026-07-22** (`docs/plans/robust-migration-and-backup.md`); future changes are new `v2+` migrations.
 - `AriKit/Sources/AriKit/Store/AppDatabase.swift` — one new `nonisolated var recallIndex: RecallIndexRepository` accessor, mirroring every existing repository accessor.
 - `AriKit/Tests/AriKitTests/Recall/Index/**` (new).
 

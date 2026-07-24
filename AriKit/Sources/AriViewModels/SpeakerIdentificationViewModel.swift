@@ -31,10 +31,14 @@ public final class SpeakerIdentificationViewModel {
     /// Honest run-state spine (No-Fake-State, invariant I2): idle until asked to run, real
     /// phase/fraction while running, the genuine result on success, the real error text on
     /// failure — never a fabricated "ready"/progress step.
-    public enum RunState {
+    public enum RunState: Equatable {
         case idle
         case running(phase: DiarizationPhase, fraction: Double)
         case succeeded(DiarizationService.RunResult)
+        /// Rebuilt from persisted rows without running the pipeline (speaker-retag-and-calendar-
+        /// candidates.md §2 #2, decision 1) — never carries a fabricated `MatchDecision`
+        /// score/tier (No-Fake-State), unlike `.succeeded`'s real fresh-run result.
+        case reconstructed(DiarizationService.PersistedDiarizationResult)
         case failed(String)
     }
 
@@ -51,6 +55,10 @@ public final class SpeakerIdentificationViewModel {
     /// The full assignable-person list for the sheet's "Assign person…" picker fallback list
     /// (plan §6). Honest empty array until `loadAssignablePeople()` succeeds — never fabricated.
     public private(set) var assignablePeople: [Person] = []
+    /// The people likely in this meeting, resolved from calendar attendees ∪ linked participants
+    /// (speaker-retag-and-calendar-candidates.md §2 #3). Honest empty until
+    /// `loadLikelyPeople(inMeeting:)` succeeds / when none resolve — never fabricated.
+    public private(set) var likelyPeople: [Person] = []
 
     /// Test-only synchronization hook (mirrors `RecordingSession.readinessProbeTask`): lets
     /// tests await the progress-consuming task deterministically instead of racing it.
@@ -66,6 +74,8 @@ public final class SpeakerIdentificationViewModel {
     private let confirmOperation: ConfirmOperation
     private let assignablePeopleOperation: AssignablePeopleOperation
     private let assignmentSuggestionsOperation: AssignmentSuggestionsOperation
+    private let loadPersistedOperation: LoadPersistedOperation
+    private let likelyPeopleOperation: LikelyPeopleOperation
 
     typealias RunOperation = @Sendable (
         _ meetingId: MeetingID,
@@ -86,6 +96,14 @@ public final class SpeakerIdentificationViewModel {
         _ speakerId: SpeakerID
     ) async throws -> [(personId: PersonID, score: Float)]
 
+    typealias LoadPersistedOperation = @Sendable (
+        _ meetingId: MeetingID
+    ) async throws -> DiarizationService.PersistedDiarizationResult?
+
+    typealias LikelyPeopleOperation = @Sendable (
+        _ meetingId: MeetingID
+    ) async throws -> [Person]
+
     public convenience init(
         service: DiarizationService,
         hintProvider: any SpeakerCountHintProviding,
@@ -105,6 +123,12 @@ public final class SpeakerIdentificationViewModel {
             },
             assignmentSuggestionsOperation: { speakerId in
                 try await service.assignmentSuggestions(forSpeaker: speakerId)
+            },
+            loadPersistedOperation: { meetingId in
+                try await service.loadPersisted(meetingId: meetingId)
+            },
+            likelyPeopleOperation: { meetingId in
+                try await service.likelyAttendees(inMeeting: meetingId)
             }
         )
     }
@@ -115,7 +139,9 @@ public final class SpeakerIdentificationViewModel {
         runOperation: @escaping RunOperation,
         confirmOperation: @escaping ConfirmOperation,
         assignablePeopleOperation: @escaping AssignablePeopleOperation = { [] },
-        assignmentSuggestionsOperation: @escaping AssignmentSuggestionsOperation = { _ in [] }
+        assignmentSuggestionsOperation: @escaping AssignmentSuggestionsOperation = { _ in [] },
+        loadPersistedOperation: @escaping LoadPersistedOperation = { _ in nil },
+        likelyPeopleOperation: @escaping LikelyPeopleOperation = { _ in [] }
     ) {
         self.hintProvider = hintProvider
         self.isRecording = isRecording
@@ -123,6 +149,8 @@ public final class SpeakerIdentificationViewModel {
         self.confirmOperation = confirmOperation
         self.assignablePeopleOperation = assignablePeopleOperation
         self.assignmentSuggestionsOperation = assignmentSuggestionsOperation
+        self.loadPersistedOperation = loadPersistedOperation
+        self.likelyPeopleOperation = likelyPeopleOperation
     }
 
     /// The hint that will actually drive a run: the user's explicit entry if any, else the
@@ -210,13 +238,13 @@ public final class SpeakerIdentificationViewModel {
     /// Loads the full assignable-person list for the sheet's "Assign person…" fallback list
     /// (plan §6). A throwing source leaves `assignablePeople` honestly empty — never fabricated.
     public func loadAssignablePeople() async {
-        assignablePeople = (try? await assignablePeopleOperation()) ?? []
+        assignablePeople = await (try? assignablePeopleOperation()) ?? []
     }
 
     /// Ranked assign-picker suggestions for one speaker (plan §6, parity-M3). A throwing source
     /// returns an honestly empty array — never a fabricated suggestion.
     public func assignmentSuggestions(for speakerId: SpeakerID) async -> [(personId: PersonID, score: Float)] {
-        (try? await assignmentSuggestionsOperation(speakerId)) ?? []
+        await (try? assignmentSuggestionsOperation(speakerId)) ?? []
     }
 
     /// Confirm-before-enroll (plan §6): the single structural gate into
@@ -228,5 +256,32 @@ public final class SpeakerIdentificationViewModel {
         } catch {
             runState = .failed(String(describing: error))
         }
+    }
+
+    /// Rebuilds the assignable list from persisted rows WITHOUT running the pipeline
+    /// (speaker-retag-and-calendar-candidates.md §2 #2). Refuses to overwrite a live `.running`
+    /// (same reentrancy guard as `run`). On success with rows, sets `.reconstructed`; when the
+    /// meeting has never been diarized (`nil`), leaves `runState` untouched — it stays `.idle`
+    /// (or whatever it already was), an explicit run is still required. On a thrown error, sets
+    /// `.failed`.
+    public func loadPersisted(meetingId: MeetingID) async {
+        if case .running = runState {
+            return
+        }
+        do {
+            guard let result = try await loadPersistedOperation(meetingId) else {
+                return
+            }
+            runState = .reconstructed(result)
+        } catch {
+            runState = .failed(String(describing: error))
+        }
+    }
+
+    /// Loads the "likely in this meeting" candidates for the assign picker (speaker-retag-and-
+    /// calendar-candidates.md §2 #3). A throwing source leaves `likelyPeople` honestly empty —
+    /// never fabricated.
+    public func loadLikelyPeople(inMeeting meetingId: MeetingID) async {
+        likelyPeople = await (try? likelyPeopleOperation(meetingId)) ?? []
     }
 }

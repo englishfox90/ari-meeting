@@ -256,7 +256,15 @@ struct PeopleContextTests {
             scopedMeetingId: nil
         )
         #expect(!block.contains("Silent meeting"))
-        #expect(block.contains("- \"Identified meeting\" (2026-07-19) — people: Ada Lovelace, Grace Hopper."))
+        // The per-meeting line renders the people and a LOCAL-day date. The exact day depends on
+        // the device timezone (this path uses `.current`, unlike `buildContext`'s injectable one),
+        // so assert the tz-independent invariant: the people render, and the raw RFC3339 UTC string
+        // never leaks into the prompt (the fix for the 2026-07-23 timezone bug — was `prefix(10)`).
+        #expect(block.contains("- \"Identified meeting\" ("))
+        #expect(block.contains(") — people: Ada Lovelace, Grace Hopper."))
+        #expect(block.contains("2026"))
+        #expect(!block.contains("2026-07-19"))
+        #expect(!block.contains("T00:00:00Z"))
     }
 
     // MARK: - 4. The diarization-derived half is absent (documented; no speaker-name assertions)

@@ -62,11 +62,11 @@ Use `DatabasePool` (concurrent reads, one writer) in production; `DatabaseQueue`
 Ordered, named, run-once. **Freeze the sqlx migrations at cutover** and re-express the resulting schema as the GRDB baseline; do not try to co-read `_sqlx_migrations`.
 
 ```swift
-private var migrator: DatabaseMigrator {
+// eraseOnSchemaChange defaults to false — see the ⚠️ note below. Only the app's
+// ARI_RESET_STORE=1 opt-in ever passes true (a deliberate dev clean-slate).
+static func migrator(eraseOnSchemaChange: Bool = false) -> DatabaseMigrator {
     var m = DatabaseMigrator()
-    #if DEBUG
-    m.eraseDatabaseOnSchemaChange = true   // DEBUG only — never in prod
-    #endif
+    m.eraseDatabaseOnSchemaChange = eraseOnSchemaChange
 
     m.registerMigration("v1_baseline") { db in
         try db.create(table: "meeting") { t in
@@ -85,6 +85,8 @@ private var migrator: DatabaseMigrator {
     return m
 }
 ```
+
+⚠️ **`v1_baseline` is FROZEN (2026-07-22 incident).** It used to be extended in place while "unshipped," and `eraseDatabaseOnSchemaChange = true` was on in DEBUG. Together they silently wiped a real 22-meeting DB when a DEBUG build detected the changed baseline. The baseline is now shipped: **every future schema change is a new `v2+` `registerMigration` (`ALTER TABLE`/new table/new index), never an edit to `v1_baseline`.** Full incident + design: `docs/plans/robust-migration-and-backup.md`.
 
 ## Records — Codable + GRDB protocols
 
@@ -143,6 +145,6 @@ let observation = ValueObservation.tracking { db in
 
 - `DatabasePool` needs WAL (default for pools) — don't force `journal_mode=DELETE`.
 - Set `PRAGMA foreign_keys = ON` in `prepareDatabase` (off by default in SQLite).
-- `eraseDatabaseOnSchemaChange` is a DEBUG-only convenience — it drops data. Never ship it.
+- `eraseDatabaseOnSchemaChange` **DROPS THE ENTIRE DATABASE** on any schema mismatch — it silently wiped a real 22-meeting DB on 2026-07-22. It is now **off by default** (`SchemaMigrator.migrator(eraseOnSchemaChange:)`); only the app's `ARI_RESET_STORE=1` opt-in ever turns it on. Never default it true, even in DEBUG. A real mismatch must surface as an honest `.failed` launch status, never a wipe.
 - Dates: GRDB stores `Date` as ISO-8601 text by default; match whatever format the Phase-2 import migrator reads from the legacy `sqlx` DB, or convert explicitly.
 - Don't add a second `DatabaseQueue` "just for this one read" — that's a second owner. Route it through `AppDatabase`.

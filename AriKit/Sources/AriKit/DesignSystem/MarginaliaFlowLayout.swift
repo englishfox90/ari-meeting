@@ -43,20 +43,37 @@ public struct MarginaliaFlowLayout: Layout {
 
     public func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache _: inout Void) {
         let maxWidth = proposal.width ?? bounds.width
-        var x = bounds.minX
         var y = bounds.minY
-        var rowHeight: CGFloat = 0
+        // Buffer each row so we know its height before placing — items are then centered on the
+        // row's midline (a tall citation chip and a short text word share one baseline band)
+        // instead of every item hugging the top.
+        var row: [(subview: LayoutSubview, size: CGSize, x: CGFloat)] = []
+        var rowWidth: CGFloat = 0
+
+        func flushRow() {
+            let rowHeight = row.reduce(0) { max($0, $1.size.height) }
+            for item in row {
+                let itemY = y + (rowHeight - item.size.height) / 2
+                item.subview.place(
+                    at: CGPoint(x: item.x, y: itemY),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(item.size)
+                )
+            }
+            y += rowHeight + lineSpacing
+            row.removeAll(keepingCapacity: true)
+            rowWidth = 0
+        }
 
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.minX + maxWidth {
-                x = bounds.minX
-                y += rowHeight + lineSpacing
-                rowHeight = 0
+            if rowWidth > 0, rowWidth + spacing + size.width > maxWidth {
+                flushRow()
             }
-            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
+            let x = bounds.minX + rowWidth + (rowWidth > 0 ? spacing : 0)
+            row.append((subview, size, x))
+            rowWidth += (rowWidth > 0 ? spacing : 0) + size.width
         }
+        flushRow()
     }
 }

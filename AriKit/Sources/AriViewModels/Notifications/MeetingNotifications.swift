@@ -110,7 +110,7 @@ public final class MeetingNotifications: NotificationAuthorizing {
 
         let currentDate = now()
         let window = currentDate ... currentDate.addingTimeInterval(Self.scheduleHorizon)
-        let events = (try? await database.calendarEvents.events(startingIn: window)) ?? []
+        let events = await (try? database.calendarEvents.events(startingIn: window)) ?? []
 
         let plan = MeetingReminderPlanner.plan(
             events: events,
@@ -145,12 +145,26 @@ public final class MeetingNotifications: NotificationAuthorizing {
         guard enabled else { return }
         guard await refreshAuthorization().allowsDelivery else { return }
 
-        let title: String?
-        if let meeting = try? await database.meetings.find(meetingId) {
-            title = meeting.title
+        let title: String? = if let meeting = try? await database.meetings.find(meetingId) {
+            meeting.title
         } else {
-            title = nil
+            nil
         }
         await scheduler.post(.summaryReady(meetingId: meetingId, meetingTitle: title))
+    }
+
+    // MARK: - Recording alerts
+
+    /// Post a "recording started" alert IFF the "Recording alerts" setting is on and delivery is
+    /// permitted. Called by the app-layer phase observer the moment a session transitions to
+    /// `.recording`. Gated on `.generalRecordingAlerts` (the General ▸ Notifications "Recording
+    /// alerts" toggle); an unset/failed read falls back to the documented default. No-op when off
+    /// or unauthorized — never a silent fake "posted".
+    public func recordingStarted(meetingTitle: String?) async {
+        let enabled = await (try? database.settings.bool(forKey: .generalRecordingAlerts))
+            ?? SettingsViewModel.Defaults.recordingAlerts
+        guard enabled else { return }
+        guard await refreshAuthorization().allowsDelivery else { return }
+        await scheduler.post(.recordingStarted(meetingTitle: meetingTitle))
     }
 }

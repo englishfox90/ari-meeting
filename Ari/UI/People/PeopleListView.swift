@@ -243,6 +243,9 @@ struct PeopleListView: View {
                 .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
         }
         .padding(MarginaliaSpacing.md.value)
+        // Make the whole padded row (incl. the Spacer gap) the tap target, not just the text —
+        // without an explicit content shape SwiftUI only hit-tests the glyph/labels/chevron.
+        .contentShape(Rectangle())
     }
 
     private func badge(_ text: String, ink: MarginaliaColorRole) -> some View {
@@ -341,7 +344,7 @@ private struct OwnerEditSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
                     field("Name", text: $displayName)
-                    field("Email", text: $email)
+                    ownerEmailField
                     field("Role", text: $role)
                     field("Organization", text: $organization)
                     field("Domain / focus", text: $domain)
@@ -397,6 +400,31 @@ private struct OwnerEditSheet: View {
             Text(label.uppercased())
                 .marginaliaTextStyle(.caption, in: scheme)
             MarginaliaTextField(text: text, prompt: label, scheme: scheme)
+        }
+    }
+
+    /// Email is the identity key — locked once set (correcting it is a merge/heal op), editable
+    /// and validated only while still unset. Mirrors `PersonDetailView.emailField`.
+    @ViewBuilder
+    private var ownerEmailField: some View {
+        let isLocked = !(owner?.email ?? "").isEmpty
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+            HStack(spacing: MarginaliaSpacing.xs.value) {
+                Text("EMAIL")
+                    .marginaliaTextStyle(.caption, in: scheme)
+                if isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                }
+            }
+            MarginaliaTextField(text: $email, prompt: "Email", scheme: scheme)
+                .disabled(isLocked)
+                .opacity(isLocked ? 0.6 : 1)
+            if isLocked {
+                Text("Locked — email is the identity key. Correcting it is a merge operation.")
+                    .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
+            }
         }
     }
 

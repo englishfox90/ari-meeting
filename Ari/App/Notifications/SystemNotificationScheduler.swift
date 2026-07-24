@@ -16,7 +16,9 @@ final class SystemNotificationScheduler: NotificationScheduling {
     /// Computed (never stored) so the type holds NO non-Sendable state and is unconditionally
     /// `Sendable` — `UNUserNotificationCenter.current()` is the process-global, thread-safe
     /// singleton, so re-resolving it per call is free and always the same instance.
-    private var center: UNUserNotificationCenter { .current() }
+    private var center: UNUserNotificationCenter {
+        .current()
+    }
 
     init() {
         registerCategories()
@@ -42,7 +44,15 @@ final class SystemNotificationScheduler: NotificationScheduling {
             intentIdentifiers: [],
             options: []
         )
-        center.setNotificationCategories([reminderCategory, summaryCategory])
+        // Recording-started: a bare courtesy alert, no custom actions — a tap just foregrounds
+        // the app (default routing).
+        let recordingStartedCategory = UNNotificationCategory(
+            identifier: NotificationCategory.recordingStarted.rawValue,
+            actions: [],
+            intentIdentifiers: [],
+            options: []
+        )
+        center.setNotificationCategories([reminderCategory, summaryCategory, recordingStartedCategory])
     }
 
     func authorizationStatus() async -> NotificationAuthorization {

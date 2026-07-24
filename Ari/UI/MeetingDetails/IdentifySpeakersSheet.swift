@@ -40,7 +40,10 @@ struct IdentifySpeakersSheet: View {
 
     private enum CountMode: String, CaseIterable, Identifiable, Hashable, Sendable {
         case exact, uncertain
-        var id: String { rawValue }
+        var id: String {
+            rawValue
+        }
+
         var title: String {
             switch self {
             case .exact: "Exactly"
@@ -85,6 +88,7 @@ struct IdentifySpeakersSheet: View {
             .navigationDestination(item: $assignSpeakerId) { speakerId in
                 AssignPersonView(
                     people: viewModel.assignablePeople,
+                    likely: viewModel.likelyPeople,
                     suggestions: namedSuggestions(for: speakerId),
                     samples: samplesFor(speakerId),
                     audioAvailable: audioAvailable,
@@ -108,6 +112,13 @@ struct IdentifySpeakersSheet: View {
         .task {
             await viewModel.loadHint(for: meetingId)
             await viewModel.loadAssignablePeople()
+            await viewModel.loadLikelyPeople(inMeeting: meetingId)
+            // Read-only reconstruction from the store (speaker-retag-and-calendar-candidates.md
+            // §2 #2) — reaches the assign UI without paying the full re-diarization cost when
+            // this meeting was already diarized. Leaves `.idle` (offering an explicit run) when
+            // it never was.
+            await viewModel.loadPersisted(meetingId: meetingId)
+            await loadSuggestions()
             if countText.isEmpty, case let .upperBound(n) = viewModel.prefilledHint?.hint {
                 countText = String(n)
                 viewModel.setUncertainCount(n)
@@ -145,7 +156,7 @@ struct IdentifySpeakersSheet: View {
                         .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                 }
             }
-            Button("Identify speakers") {
+            Button(runButtonTitle) {
                 runTapped()
             }
             .buttonStyle(.marginalia(.primary, .large, in: scheme))
@@ -160,8 +171,20 @@ struct IdentifySpeakersSheet: View {
         }
     }
 
+    /// Reframed as an explicit re-run once results already exist — whether from a fresh run or
+    /// a reconstruction — so the default path to reach the assign UI is the (free) reconstruction
+    /// in `.task`, not another full diarization pass (speaker-retag-and-calendar-candidates.md
+    /// §2 #2).
+    private var runButtonTitle: String {
+        switch viewModel.runState {
+        case .succeeded, .reconstructed: "Re-run diarization"
+        default: "Identify speakers"
+        }
+    }
+
     private var prefillCaption: String? {
-        guard let prefilledHint = viewModel.prefilledHint, prefilledHint.origin == .calendarAttendees else { return nil }
+        guard let prefilledHint = viewModel.prefilledHint,
+              prefilledHint.origin == .calendarAttendees else { return nil }
         guard case let .upperBound(n) = prefilledHint.hint else { return nil }
         return "From calendar/participants: \(n)"
     }
@@ -195,13 +218,15 @@ struct IdentifySpeakersSheet: View {
         case let .failed(message):
             Text(message)
                 .marginaliaTextStyle(.callout, in: scheme, ink: .error)
-        case .idle, .succeeded:
+        case .idle, .succeeded, .reconstructed:
             EmptyView()
         }
     }
 
     private var isRunning: Bool {
-        if case .running = viewModel.runState { return true }
+        if case .running = viewModel.runState {
+            return true
+        }
         return false
     }
 
@@ -217,25 +242,71 @@ struct IdentifySpeakersSheet: View {
 
     // MARK: - Results
 
+    /// One row's render-minimal shape (No-Fake-State) — carries only what `SpeakerAssignmentRow`
+    /// actually renders, never a fabricated score. Populated from either a fresh `.succeeded`
+    /// run's real `MatchTier` or a `.reconstructed` rebuild's real `isAssigned` (speaker-retag-
+    /// and-calendar-candidates.md §2, step 4).
+    private struct DisplaySpeaker: Identifiable {
+        let speakerId: SpeakerID
+        let tier: SpeakerRenderTier
+        let speechSecs: Double
+        var id: SpeakerID {
+            speakerId
+        }
+    }
+
+    private var displaySpeakers: [DisplaySpeaker]? {
+        switch viewModel.runState {
+        case let .succeeded(result):
+            result.speakers.map { resolved in
+                DisplaySpeaker(
+                    speakerId: resolved.speakerId,
+                    tier: resolved.tier == .autoConfirm ? .identified : .assignable,
+                    speechSecs: resolved.speechSecs
+                )
+            }
+        case let .reconstructed(result):
+            result.speakers.map { persisted in
+                DisplaySpeaker(
+                    speakerId: persisted.speakerId,
+                    tier: persisted.isAssigned ? .identified : .assignable,
+                    speechSecs: persisted.speechSecs
+                )
+            }
+        default:
+            nil
+        }
+    }
+
+    private var unresolvedRowCount: Int? {
+        switch viewModel.runState {
+        case let .succeeded(result): result.unresolvedRows
+        case let .reconstructed(result): result.unresolvedRows
+        default: nil
+        }
+    }
+
     @ViewBuilder
     private var resultsSection: some View {
-        if case let .succeeded(result) = viewModel.runState {
+        if let speakers = displaySpeakers {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
                 SectionHeader(title: "Speakers")
                 VStack(spacing: 0) {
-                    ForEach(result.speakers, id: \.speakerId) { resolved in
+                    ForEach(speakers) { display in
                         VStack(alignment: .leading, spacing: 0) {
                             SpeakerAssignmentRow(
-                                resolved: resolved,
-                                resolvedName: resolved.tier == .autoConfirm ? displayName(resolved.speakerId) : nil,
-                                suggestion: topSuggestion(for: resolved.speakerId),
-                                confirmedOverrideName: confirmedSpeakerNames[resolved.speakerId],
-                                onConfirmSuggestion: { confirmTopSuggestion(for: resolved.speakerId) },
-                                onNotThem: { suggestionsBySpeaker[resolved.speakerId] = [] },
-                                onAssign: { assignSpeakerId = resolved.speakerId }
+                                speakerId: display.speakerId,
+                                tier: display.tier,
+                                speechSecs: display.speechSecs,
+                                resolvedName: display.tier == .identified ? displayName(display.speakerId) : nil,
+                                suggestion: topSuggestion(for: display.speakerId),
+                                confirmedOverrideName: confirmedSpeakerNames[display.speakerId],
+                                onConfirmSuggestion: { confirmTopSuggestion(for: display.speakerId) },
+                                onNotThem: { suggestionsBySpeaker[display.speakerId] = [] },
+                                onAssign: { assignSpeakerId = display.speakerId }
                             )
                             SpeakerSampleList(
-                                samples: samplesFor(resolved.speakerId),
+                                samples: samplesFor(display.speakerId),
                                 audioAvailable: audioAvailable,
                                 isPlaying: isPlaying,
                                 onPlayClip: onPlayClip,
@@ -247,9 +318,11 @@ struct IdentifySpeakersSheet: View {
                         Divider().overlay(Color.marginalia(.hairline, in: scheme))
                     }
                 }
-                if result.unresolvedRows > 0 {
-                    Text("\(result.unresolvedRows) transcript \(result.unresolvedRows == 1 ? "row" : "rows") could not be matched to a speaker.")
-                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                if let unresolvedRowCount, unresolvedRowCount > 0 {
+                    Text(
+                        "\(unresolvedRowCount) transcript \(unresolvedRowCount == 1 ? "row" : "rows") could not be matched to a speaker."
+                    )
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                 }
             }
         }
@@ -261,7 +334,8 @@ struct IdentifySpeakersSheet: View {
 
     private func namedSuggestions(for speakerId: SpeakerID) -> [(personId: PersonID, name: String, score: Float)] {
         (suggestionsBySpeaker[speakerId] ?? []).compactMap { suggestion in
-            guard let name = viewModel.assignablePeople.first(where: { $0.id == suggestion.personId })?.displayName else {
+            guard let name = viewModel.assignablePeople.first(where: { $0.id == suggestion.personId })?.displayName
+            else {
                 return nil
             }
             return (personId: suggestion.personId, name: name, score: suggestion.score)
@@ -300,10 +374,30 @@ struct IdentifySpeakersSheet: View {
         }
     }
 
+    /// Loads ranked assign-picker suggestions for every not-yet-identified row — a fresh run's
+    /// `.suggest` speakers, or a reconstruction's `!isAssigned` speakers (speaker-retag-
+    /// and-calendar-candidates.md §2, step 4).
+    ///
+    /// The fresh-run path is deliberately restricted to `.suggest` and NOT all non-`.autoConfirm`
+    /// tiers: an `.anonymous` cluster's best match fell below `suggestThreshold` (0.55), so the
+    /// three-tier matcher intentionally withholds a suggestion. `rankedSuggestions` uses a lower
+    /// `noiseFloor` (0.30), so fetching for `.anonymous` would resurrect a sub-threshold match as
+    /// a one-tap "Confirm" — defeating the very gate the tiering exists to enforce. `.anonymous`
+    /// therefore renders "Assign person…" with no suggestion, matching pre-`.reconstructed`
+    /// behavior. The reconstruction path has no run-time tier to honor, so surfacing a suggestion
+    /// there is acceptable net-new UX.
     private func loadSuggestions() async {
-        guard case let .succeeded(result) = viewModel.runState else { return }
-        for speaker in result.speakers where speaker.tier != .autoConfirm {
-            suggestionsBySpeaker[speaker.speakerId] = await viewModel.assignmentSuggestions(for: speaker.speakerId)
+        switch viewModel.runState {
+        case let .succeeded(result):
+            for speaker in result.speakers where speaker.tier == .suggest {
+                suggestionsBySpeaker[speaker.speakerId] = await viewModel.assignmentSuggestions(for: speaker.speakerId)
+            }
+        case let .reconstructed(result):
+            for speaker in result.speakers where !speaker.isAssigned {
+                suggestionsBySpeaker[speaker.speakerId] = await viewModel.assignmentSuggestions(for: speaker.speakerId)
+            }
+        default:
+            break
         }
     }
 }
@@ -318,6 +412,11 @@ struct IdentifySpeakersSheet: View {
 /// confirm and pops the stack.
 private struct AssignPersonView: View {
     let people: [Person]
+    /// The calendar-attendee ∪ linked-participant candidates for this meeting (speaker-retag-
+    /// and-calendar-candidates.md §2 #3) — rendered above "Looks like…" when non-empty; the
+    /// section vanishes entirely when empty (honest absence, never a "no candidates" placeholder;
+    /// R3 accepts a person appearing in both this and "Looks like…" as harmless duplication).
+    let likely: [Person]
     let suggestions: [(personId: PersonID, name: String, score: Float)]
     let samples: [SpeakerSamples.SpeakerSample]
     let audioAvailable: Bool
@@ -371,11 +470,21 @@ private struct AssignPersonView: View {
     private var peopleColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.lg.value) {
+                if !likely.isEmpty {
+                    VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                        SectionHeader(title: "Likely in this meeting")
+                        pickerList(likely.map { (id: $0.id, title: $0.displayName, metadata: nil) })
+                    }
+                }
                 if !suggestions.isEmpty {
                     VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
                         SectionHeader(title: "Looks like…")
                         pickerList(suggestions.map { suggestion in
-                            (id: suggestion.personId, title: suggestion.name, metadata: "\(Int((suggestion.score * 100).rounded()))% match")
+                            (
+                                id: suggestion.personId,
+                                title: suggestion.name,
+                                metadata: "\(Int((suggestion.score * 100).rounded()))% match"
+                            )
                         })
                     }
                 }
