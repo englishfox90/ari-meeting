@@ -41,7 +41,7 @@ enum SchemaMigrator {
     ///   2026-07-23 incident. Only ever enabled via the explicit `ARI_RESET_STORE` opt-in read in
     ///   `AppEnvironment.bootstrap()`, never in normal launch.
     static func migrator(eraseOnSchemaChange: Bool = false) -> DatabaseMigrator {
-        var migrator = migratorThroughV4(eraseOnSchemaChange: eraseOnSchemaChange)
+        var migrator = migratorWithoutVocabularyTerm(eraseOnSchemaChange: eraseOnSchemaChange)
 
         // v5 (docs/plans/custom-vocabulary.md §4.1) — additive-only, `v1_baseline` through
         // `v4_ask_message_cards` all stay frozen. A user-editable dictionary of domain proper
@@ -86,11 +86,14 @@ enum SchemaMigrator {
 
     /// The full migration history EXCLUDING `v5_vocabulary_term` — a test seam
     /// (`VocabularyRepositoryTests`, mirroring `MigrationSafetyTests`'s two-migrator pattern) so a
-    /// test can drive a v4-shaped DB forward with the REAL v5 migration and prove it's additive.
-    /// Module-internal only; production always goes through `migrator(eraseOnSchemaChange:)` above.
-    /// No DDL here differs from what `migrator(eraseOnSchemaChange:)` registers for v1–v4 — this is
-    /// a code-motion split, not an edit to any frozen migration's content.
-    static func migratorThroughV4(eraseOnSchemaChange: Bool = false) -> DatabaseMigrator {
+    /// test can drive a pre-vocabulary DB forward with the REAL vocabulary migration and prove it's
+    /// additive. Named by intent, not version number: it registers everything the shipping
+    /// `migrator()` does except the trailing `v5_vocabulary_term` (so it includes the separately-
+    /// merged `v5_calendar_series_consent`). Module-internal only; production always goes through
+    /// `migrator(eraseOnSchemaChange:)` above. No DDL here differs from what `migrator(...)`
+    /// registers for those migrations — this is a code-motion split, not an edit to any frozen
+    /// migration's content.
+    static func migratorWithoutVocabularyTerm(eraseOnSchemaChange: Bool = false) -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.eraseDatabaseOnSchemaChange = eraseOnSchemaChange
 

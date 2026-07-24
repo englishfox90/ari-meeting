@@ -43,7 +43,7 @@ struct VocabularyRepositoryTests {
 
         do {
             let pool = try DatabasePool(path: url.path)
-            let db = try AppDatabase(pool, migrator: SchemaMigrator.migratorThroughV4())
+            let db = try AppDatabase(pool, migrator: SchemaMigrator.migratorWithoutVocabularyTerm())
             try await db.dbWriter.write { conn in
                 try conn.execute(
                     sql: """
@@ -86,24 +86,30 @@ struct VocabularyRepositoryTests {
 
     // MARK: - T-S2
 
-    @Test("T-S2 v1_baseline and v2 through v4 are unmodified — v5 is appended, not inserted")
-    func v1BaselineAndV2ThroughV4AreUnmodified() throws {
+    @Test("T-S2 prior migrations are unmodified — v5_vocabulary_term is appended last, not inserted")
+    func priorMigrationsUnmodifiedVocabularyAppendedLast() throws {
+        // The vocabulary migration must be registered LAST — after every prior migration,
+        // including the separately-merged `v5_calendar_series_consent`. Guards against an
+        // in-place edit to, or reordering ahead of, any earlier (frozen) migration.
         let migrator = SchemaMigrator.migrator()
-        let identifiers = migrator.migrations
-        #expect(identifiers == [
+        #expect(migrator.migrations == [
             "v1_baseline",
             "v2_recall_chunk_source_kind",
             "v3_ask_message_card",
             "v4_ask_message_cards",
+            "v5_calendar_series_consent",
             "v5_vocabulary_term"
         ])
 
-        let throughV4 = SchemaMigrator.migratorThroughV4()
-        #expect(throughV4.migrations == [
+        // Everything except the trailing vocabulary migration — the "before" state the
+        // additivity test (T-S1) migrates forward from.
+        let withoutVocabulary = SchemaMigrator.migratorWithoutVocabularyTerm()
+        #expect(withoutVocabulary.migrations == [
             "v1_baseline",
             "v2_recall_chunk_source_kind",
             "v3_ask_message_card",
-            "v4_ask_message_cards"
+            "v4_ask_message_cards",
+            "v5_calendar_series_consent"
         ])
     }
 

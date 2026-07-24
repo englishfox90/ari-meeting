@@ -18,6 +18,7 @@ import SwiftUI
 
 struct SettingsIntelligenceSection: View {
     let viewModel: SettingsViewModel
+    let database: AppDatabase
 
     @Environment(\.colorScheme) private var scheme
 
@@ -101,6 +102,8 @@ struct SettingsIntelligenceSection: View {
             }
 
             transcriptionDetailRow
+
+            SettingsVocabularySection(database: database)
         }
     }
 

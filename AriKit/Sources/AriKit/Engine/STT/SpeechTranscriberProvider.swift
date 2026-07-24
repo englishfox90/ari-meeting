@@ -84,7 +84,12 @@ public struct SpeechTranscriberProvider: TranscriptionProvider, Sendable {
     /// synchronization). A `nil` bias attaches no context at all. A `setContext` failure is logged
     /// and swallowed — a meeting must never fail to transcribe because a glossary could not be
     /// attached (§3 "Failure policy for setContext").
-    private static func applyVocabularyBias(_ bias: VocabularyBias?, to analyzer: SpeechAnalyzer) async {
+    ///
+    /// Deliberately not `private`: this is the "spy seam" T-C1 (docs/plans/custom-vocabulary.md
+    /// §5) uses to assert structurally, via `SpeechAnalyzer.context` (the documented framework
+    /// getter), that a `nil` bias leaves the analyzer's context untouched — no bespoke test hook
+    /// reaching into Speech internals.
+    static func applyVocabularyBias(_ bias: VocabularyBias?, to analyzer: SpeechAnalyzer) async {
         guard let bias else { return }
         let context = AnalysisContext()
         context.contextualStrings[.general] = bias.contextualStrings

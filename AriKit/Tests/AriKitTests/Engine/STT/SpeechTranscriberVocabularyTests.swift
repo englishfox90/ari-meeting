@@ -40,7 +40,67 @@ private func makeSilentBuffer(durationSec: Double = 0.02) throws -> AnalyzerInpu
     return AnalyzerInput(buffer: buffer)
 }
 
+/// A file path that is never opened by these tests — every seam is configured so the provider
+/// resolves availability/locale/assets successfully and reaches the real `AVAudioFile(forReading:)`
+/// call, which then fails honestly with `.audioDecodeFailed`. Reaching exactly that error (and no
+/// other) is the proof that the vocabulary step ran and did not itself disrupt the normal flow
+/// (mirrors `TranscriptionErrorTests.unreachableFileURL`'s role).
+private let unreachableFileURL = URL(fileURLWithPath: "/nonexistent/does-not-exist.wav")
+
 struct SpeechTranscriberVocabularyTests {
+    // T-C1 — with the default `{ nil }` seam, the provider must not build/attach an
+    // `AnalysisContext` at all. Asserted structurally via the documented `SpeechAnalyzer.context`
+    // getter (verified at swiftinterface:229) rather than a bespoke Speech-internals hook.
+    @Test func nilBiasAttachesNoContext() async throws {
+        let transcriber = SpeechTranscriber(
+            locale: Locale(identifier: "en-US"),
+            transcriptionOptions: [],
+            reportingOptions: [],
+            attributeOptions: []
+        )
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+
+        let before = await analyzer.context.contextualStrings[.general]
+        #expect(before == nil, "a freshly constructed analyzer must start with no .general contextual strings")
+
+        await SpeechTranscriberProvider.applyVocabularyBias(nil, to: analyzer)
+
+        let after = await analyzer.context.contextualStrings[.general]
+        #expect(after == nil, "a nil bias must leave the analyzer's context untouched — no setContext call")
+    }
+
+    // T-C4 — a vocabulary seam that fails internally (caught, resolved to nil, exactly like
+    // `VocabularySource.bias()`'s `try?` best-effort contract) must not derail transcription: the
+    // provider proceeds to the same honest failure a normal unbiased run would hit.
+    @Test func vocabularyFetchFailureDoesNotFailTranscription() async {
+        struct SimulatedVocabularyFetchFailure: Error {}
+
+        let provider = SpeechTranscriberProvider(
+            isAvailableCheck: { true },
+            supportedLocale: { _ in Locale(identifier: "en-US") },
+            installedLocalesCheck: { [Locale(identifier: "en-US")] },
+            vocabularyBias: {
+                // Mirrors `VocabularySource.bias()`: an internal failure resolves to `nil`,
+                // never propagates as a thrown error out of the seam.
+                do {
+                    throw SimulatedVocabularyFetchFailure()
+                } catch {
+                    return nil
+                }
+            }
+        )
+
+        do {
+            _ = try await provider.transcribe(fileURL: unreachableFileURL, language: "en-US")
+            Issue.record("expected .audioDecodeFailed — the file genuinely does not exist")
+        } catch TranscriptionError.audioDecodeFailed {
+            // expected: the provider reached the normal file-open step, proving the failed
+            // vocabulary fetch did not abort or otherwise disrupt transcription.
+        } catch {
+            Issue.record("unexpected error from a failed vocabulary fetch: \(error)")
+        }
+    }
+
     @Test func biasIsFetchedExactlyOnceAcrossFiftyPlusLiveBuffers() async throws {
         let counter = CallCounter()
 

@@ -102,7 +102,7 @@ struct SettingsView: View {
         case .recordings:
             SettingsRecordingsSection(viewModel: viewModel)
         case .intelligence:
-            SettingsIntelligenceSection(viewModel: viewModel)
+            SettingsIntelligenceSection(viewModel: viewModel, database: database)
         case .calendar:
             SettingsCalendarSection(viewModel: calendarViewModel)
         }
