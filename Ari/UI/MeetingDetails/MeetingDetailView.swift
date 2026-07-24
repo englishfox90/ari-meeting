@@ -77,8 +77,16 @@ struct MeetingDetailView: View {
     /// summary toolbar shows Save/Cancel instead of the generation controls. The draft only
     /// persists on Save — `viewModel.saveSummaryEdit(summaryDocument.serialized())`, serializing
     /// the segment model back to the closed Marginalia markdown grammar; Cancel discards it.
+    ///
+    /// NON-OPTIONAL by design (crash fix, 2026-07-24): an earlier `SummaryEditDocument?` + a
+    /// `Binding($summaryDocument)` unwrap in `summaryBody` built a FORCE-UNWRAPPING binding that
+    /// SwiftUI re-`update()`d during the Save transaction — the moment Save set the optional to
+    /// `nil` while `SummaryRichEditor` was still mounted, `BindingOperations.ForceUnwrapping.get`
+    /// trapped (`EXC_BREAKPOINT`). Keeping it non-optional and gating the editor purely on
+    /// `isEditingSummary` means the child only ever holds a plain `$summaryDocument` binding that
+    /// can never force-unwrap `nil`. "No draft" is the empty document, never `nil`.
     @State private var isEditingSummary = false
-    @State private var summaryDocument: SummaryEditDocument?
+    @State private var summaryDocument = SummaryEditDocument(segments: [])
     /// Honest surfacing of a real rename/delete write failure (No-Fake-State — never a silent
     /// success).
     @State private var actionError: String?
@@ -211,7 +219,7 @@ struct MeetingDetailView: View {
             // Editing state belongs to the previous meeting — never carry a stale draft across
             // (the detail view is reused, see below).
             isEditingSummary = false
-            summaryDocument = nil
+            summaryDocument = SummaryEditDocument(segments: [])
             // The F9 ledger fold's reducer (docs/plans/calendar-series-intelligence.md §2.4):
             // `seriesViewModel` is constructed in `init`, before the environment is readable, so
             // it's assigned here from the ONE reducer `AppEnvironment.bootstrap()` builds — the
@@ -523,8 +531,8 @@ struct MeetingDetailView: View {
 
     private var summaryBody: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-            if isEditingSummary, let documentBinding = Binding($summaryDocument) {
-                SummaryRichEditor(document: documentBinding, scheme: scheme)
+            if isEditingSummary {
+                SummaryRichEditor(document: $summaryDocument, scheme: scheme)
             } else if let summary = viewModel.summary {
                 MarginaliaMarkdownView(markdown: summary.bodyMarkdown, onSeek: seekHandler)
             } else {
@@ -686,7 +694,7 @@ struct MeetingDetailView: View {
 
     private func cancelSummaryEdit() {
         isEditingSummary = false
-        summaryDocument = nil
+        summaryDocument = SummaryEditDocument(segments: [])
     }
 
     /// Whether the current draft would serialize to nothing (empty doc, or only whitespace/empty
@@ -694,17 +702,16 @@ struct MeetingDetailView: View {
     /// Serializing per toolbar render is cheap (summaries are tens of KB; plan §3 keeps this on the
     /// main actor deliberately).
     private var isSerializedSummaryEmpty: Bool {
-        guard let markdown = summaryDocument?.serialized() else { return true }
-        return markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        summaryDocument.serialized().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func commitSummaryEdit() {
-        guard let markdown = summaryDocument?.serialized() else { return }
+        let markdown = summaryDocument.serialized()
         Task {
             do {
                 try await viewModel.saveSummaryEdit(markdown)
                 isEditingSummary = false
-                summaryDocument = nil
+                summaryDocument = SummaryEditDocument(segments: [])
             } catch {
                 // Honest write-failure surfacing (No-Fake-State) — the editor stays open with
                 // the draft intact so nothing typed is lost.
