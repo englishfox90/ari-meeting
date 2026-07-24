@@ -67,6 +67,12 @@ final class AppEnvironment {
     /// `SecretsReading`/`RecallSecretsReading`/`SecretsStoring` all at once. Stateless, so it
     /// needs no `bootstrap()` gating; available from construction.
     let secrets: SecretsStoring = KeychainSecretStore()
+    /// View-declared "where am I" presence for the Ask FAB's scope pill (bug fix, 2026-07-24) —
+    /// `MeetingDetailView`/`SeriesDetailView` register themselves here while on screen, so the
+    /// pill reflects the current page regardless of which navigation mechanism got there
+    /// (`path.append`, an internal `NavigationLink(value:)`, a notification-driven push, …).
+    /// Stateless UI-only tracking, available immediately like `secrets` — no `bootstrap()` gating.
+    let askNavTracker = AskNavTracker()
     /// The single offline diarization orchestrator (docs/plans/arikit-diarization.md §5 D9b) —
     /// the FluidAudio provider is injected here, at the composition root, so core `AriKit` and
     /// `AriViewModels` never import FluidAudio directly. Constructed once `database` exists.
@@ -408,7 +414,9 @@ final class AppEnvironment {
             // `ReconcileFactsOperation` closure is `@Sendable`, so it cannot reach the
             // main-actor-isolated `Self.logger` static property; this local mirrors the discipline
             // of capturing only Sendable values, never `self`.
-            let reconcileLogger = Logger(subsystem: "com.arivo.ari", category: "summary.reconcile")
+            // Same subsystem the coordinator's own `static let log` uses (`summary.reconcile`
+            // category) so both sides of this feature's logging land under one filterable stream.
+            let reconcileLogger = Logger(subsystem: "com.arivo.ari.AriViewModels", category: "summary.reconcile")
             let coordinator = MeetingProcessingCoordinator(
                 resolveAudioURL: { mid in
                     guard let meeting = try? await db.meetings.find(mid) else { return nil }

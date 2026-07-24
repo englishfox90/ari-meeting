@@ -5,32 +5,27 @@
 //  suppressed on `.newMeeting`, during active recording, and on the `.ask` page itself (one
 //  Signal per screen — recording owns the red Signal there).
 //
+//  Nav-position resolution: `AskNavKey` (AriKit/Sources/AriViewModels/Ask/AskNavTracker.swift) is
+//  no longer maintained by a parallel stack of `path.append` call sites — that missed every
+//  internal `NavigationLink(value:)` push (bug fix, 2026-07-24). It's now VIEW-DECLARED presence:
+//  `MeetingDetailView`/`SeriesDetailView` register themselves on `environment.askNavTracker` while
+//  on screen, and this host just reads `environment.askNavTracker.top`.
+//
 import AriKit
 import AriViewModels
 import SwiftUI
-
-/// A lightweight nav-position key `RootSplitView` maintains alongside its opaque
-/// `NavigationPath` — SwiftUI's `NavigationPath` has no public API to peek at its top element's
-/// concrete type, so the app tracks "the meeting/series currently in view" explicitly at each
-/// `path.append` call site instead of trying to introspect `path` itself. `AskOverlayHost`
-/// resolves this key into the richer `AskNavContext` (real titles + series membership) itself.
-enum AskNavKey: Hashable {
-    case none
-    case meeting(MeetingID)
-    case series(SeriesID)
-}
 
 struct AskOverlayHost: View {
     let database: AppDatabase
     let recallEngine: RecallEngine?
     let selectedSection: SidebarSection
-    let navKey: AskNavKey
     let isRecordingActive: Bool
     let onOpenMeeting: (MeetingID) -> Void
     let onOpenPerson: (PersonID) -> Void
     let onOpenSeries: (SeriesID) -> Void
     let onOpenSettings: () -> Void
 
+    @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
     @State private var viewModel: AskViewModel?
     @State private var isExpanded = false
@@ -46,19 +41,24 @@ struct AskOverlayHost: View {
                 // Keyed on engine readiness so it re-runs when `recallEngine` flips nil→available:
                 // the shell can mount the FAB before bootstrap assigns the engine, and a plain
                 // `.task {}` (no id) would run once against the nil engine and never retry, leaving
-                // the panel stuck on `ProgressView()` until a navigation change.
-                .task(id: recallEngine != nil) { ensureViewModel() }
-                .task(id: navKey) { await refreshScope() }
+                // the panel stuck on `ProgressView()` until a navigation change. Also refreshes
+                // scope here (not just `ensureViewModel()`): if the engine was still nil when the
+                // nav-key task fired, that scope refresh was silently lost with no later retry —
+                // this idempotent re-run (via `refreshScope()`'s own `ensureViewModel()` call)
+                // recovers it the moment the engine arrives.
+                .task(id: recallEngine != nil) { await refreshScope() }
+                .task(id: environment.askNavTracker.top) { await refreshScope() }
                 // Belt-and-suspenders (caught live 2026-07-23: the panel stayed on `ProgressView()`
                 // even well after bootstrap had clearly finished — the main `.ask` page worked fine
                 // in the same session). `.popover`'s content can be unreliable about picking up a
                 // `@State` change that happens while it's already presented on macOS; re-running the
-                // same idempotent guard at the exact moment the user opens the panel (using
-                // whichever `recallEngine` value is current then) sidesteps that reactivity gap
-                // instead of depending on it.
+                // same idempotent refresh at the exact moment the user opens the panel (using
+                // whichever `recallEngine`/nav-key values are current then) sidesteps that
+                // reactivity gap instead of depending on it — so an open popup always reflects the
+                // current page rather than whatever it last resolved.
                 .onChange(of: isExpanded) { _, expanded in
                     if expanded {
-                        ensureViewModel()
+                        Task { await refreshScope() }
                     }
                 }
                 .padding(MarginaliaSpacing.lg.value)
@@ -146,7 +146,7 @@ struct AskOverlayHost: View {
     }
 
     private func resolveNavContext() async -> AskNavContext {
-        switch navKey {
+        switch environment.askNavTracker.top {
         case .none:
             return .none
 

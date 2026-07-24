@@ -24,8 +24,14 @@ struct SeriesDetailView: View {
     let onOpenMeetingMoment: (MeetingID, Double) -> Void
 
     @State private var viewModel: SeriesDetailViewModel
+    @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
+
+    /// This view's live registration on `environment.askNavTracker` (bug fix, 2026-07-24) —
+    /// mirrors `MeetingDetailView.askNavToken`. Pushed/replaced in `.task(id: seriesId)`, removed
+    /// in `.onDisappear`.
+    @State private var askNavToken: AskNavTracker.Token?
 
     /// Local UI state for the toolbar's Rename / Merge / Delete affordances (plan Part 4).
     @State private var showRenameSheet = false
@@ -62,7 +68,19 @@ struct SeriesDetailView: View {
         .background(Color.marginalia(.canvas, in: scheme))
         .navigationTitle(viewModel.series.value?.title ?? "Series")
         .task(id: seriesId) {
+            // Ask-nav presence (bug fix, 2026-07-24) — see `MeetingDetailView`'s identical
+            // `.task(id:)`-driven push/replace for why this isn't just `.onAppear`.
+            if let askNavToken {
+                environment.askNavTracker.remove(askNavToken)
+            }
+            askNavToken = environment.askNavTracker.push(.series(seriesId))
             await viewModel.load(seriesId)
+        }
+        .onDisappear {
+            if let askNavToken {
+                environment.askNavTracker.remove(askNavToken)
+                self.askNavToken = nil
+            }
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {

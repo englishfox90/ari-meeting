@@ -81,6 +81,11 @@ struct MeetingDetailView: View {
     /// Honest surfacing of a real rename/delete write failure (No-Fake-State — never a silent
     /// success).
     @State private var actionError: String?
+    /// This view's live registration on `environment.askNavTracker` (bug fix, 2026-07-24: the
+    /// Ask FAB's scope pill used to depend on every navigation call site remembering to append
+    /// to a parallel stack, which missed internal `NavigationLink(value:)` pushes). Held so it can
+    /// be removed on teardown/replacement — see `.task(id: meetingId)` and `.onDisappear` below.
+    @State private var askNavToken: AskNavTracker.Token?
 
     private struct IdentifySpeakersContext: Identifiable {
         let id = UUID()
@@ -186,6 +191,16 @@ struct MeetingDetailView: View {
             Text(actionError ?? "")
         }
         .task(id: meetingId) {
+            // Ask-nav presence (bug fix, 2026-07-24): registered here, not just `.onAppear`,
+            // because this view is REUSED across meetings in the split detail column (see the
+            // reset comment just below) — a plain `.onAppear` wouldn't re-fire when `meetingId`
+            // changes on an already-mounted instance. Remove the OLD token (if any) before
+            // pushing the new one, so a rapid meeting-to-meeting navigation never leaves a stale
+            // entry underneath the fresh one.
+            if let askNavToken {
+                environment.askNavTracker.remove(askNavToken)
+            }
+            askNavToken = environment.askNavTracker.push(.meeting(meetingId))
             // Reset first: the detail view is REUSED across meetings in the split detail column
             // (no per-meeting `.id`), so a previous meeting's player must be stopped before the
             // new one loads — otherwise selecting a meeting with missing/absent audio would leave
@@ -225,7 +240,15 @@ struct MeetingDetailView: View {
                 }
             }
         }
-        .onDisappear { audioController.reset() }
+        .onDisappear {
+            audioController.reset()
+            // Genuine navigation-away (as opposed to a same-instance meetingId swap, which the
+            // `.task(id:)` above already handles by removing its own stale token first).
+            if let askNavToken {
+                environment.askNavTracker.remove(askNavToken)
+                self.askNavToken = nil
+            }
+        }
         // docs/plans/swift-meeting-generation-flow.md, Track 2: when the post-recording pipeline
         // finishes THIS meeting, pull in whatever it produced (speaker labels, summary) — the
         // pipeline itself already persisted via the same repositories this view reads through.
