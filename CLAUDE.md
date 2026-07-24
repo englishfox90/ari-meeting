@@ -6,13 +6,13 @@ Guidance for Claude Code working in this repository. Keep this file lean — det
 
 **Ari Meeting App** — a private, single-user, **macOS-only** meeting-intelligence tool. It records and transcribes meetings, then produces summaries that are aware of *who is in the room, who owns the meeting, and what kind of meeting it is*.
 
-It **began** as a fork of `henryvn27/meetily_improved` (itself a fork of Zackriya's Meetily, MIT), and inherited a mature Tauri/Rust engine from it: macOS audio capture, native Whisper + Parakeet STT, a multi-provider LLM layer, SQLite persistence, and summary templates. On that foundation we built persistent speaker identity, per-person knowledge, calendar awareness, theme summaries, meeting-series ledgers, and MCP/agent extensibility. **It is now Arivo's own product**, developed in our own direction — the fork is history that explains the engine's shape, not a constraint on how we evolve it.
+It **began** as a fork of `henryvn27/meetily_improved` (itself a fork of Zackriya's Meetily, MIT), and inherited a mature Tauri/Rust engine from it: macOS audio capture, native Whisper + Parakeet STT, a multi-provider LLM layer, SQLite persistence, and summary templates. On that foundation we built persistent speaker identity, per-person knowledge, calendar awareness, theme summaries, meeting-series ledgers, and MCP/agent extensibility. **It is now its own product**, developed in our own direction — the fork is history that explains the engine's shape, not a constraint on how we evolve it.
 
 The product north star is `meeting-intelligence-prd.md` (repo root). Read it before any feature work.
 
 ## How we work: this is our own codebase
 
-The project began as a fork but is now **Arivo's own**. We own the entire tree — inherited files included — and may refactor, reorganize, rename, or delete any of it. There is no upstream rebase to protect, so the former *additive-only* rule is **retired** (we no longer track or pull from Meetily).
+The project began as a fork but is now **it's own**. We own the entire tree — inherited files included — and may refactor, reorganize, rename, or delete any of it. There is no upstream rebase to protect, so the former *additive-only* rule is **retired** (we no longer track or pull from Meetily).
 
 What governs now is ordinary good-engineering discipline: refactor deliberately (for clarity/correctness, not churn), keep the codebase coherent with its conventions and its own docs, keep the checks green, and extend the engine's tests rather than dropping them. Preferring new modules/tables/commands for net-new capability is still good practice — for separation of concerns, not fork-preservation. Full detail in `.claude/rules/codebase-ownership.md`.
 

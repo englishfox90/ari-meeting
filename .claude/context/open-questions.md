@@ -38,7 +38,7 @@ PRD §9 discovery items. Investigated 2026-07-14 via read-only code analysis; ve
 ## RESOLVED (formerly open)
 
 - **Q6 — Distribution scope.** ✅ **Resolved (2026-07-16):** personal-use scope, **Developer ID + hardened runtime, NO App Sandbox** (sandboxing would break process-tap capture + sidecar model dirs; MAS/notarization not pursued). New code identity means a one-time re-grant of Mic/Screen/Calendar TCC. Revisit only if scope ever widens. See `plans/swift-migration-plan.md` (Decisions).
-- **Q7 — Upstream merge-base & rebase cadence.** ✅ **Moot (2026-07-16):** the project has severed from upstream and is now Arivo's own — we no longer track or rebase against Meetily. See `../rules/codebase-ownership.md`.
+- **Q7 — Upstream merge-base & rebase cadence.** ✅ **Moot (2026-07-16):** the project has severed from upstream and is now it's own — we no longer track or rebase against Meetily. See `../rules/codebase-ownership.md`.
 
 ## Standing risks (unchanged, PRD §9)
 

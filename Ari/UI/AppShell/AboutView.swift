@@ -172,7 +172,7 @@ struct AboutView: View {
                     .foregroundColor(Color.marginalia(.inkBody, in: scheme))
                     + Text(
                         "Ari began as a fork of Meetily by Zackriya Solutions and grew from its "
-                            + "capture and transcription engine. It has since become Arivo\u{2019}s own "
+                            + "capture and transcription engine. It has since become it\u{2019}s own "
                             + "product \u{2014} Meetily\u{2019}s original work and MIT license remain "
                             + "gratefully credited."
                     )

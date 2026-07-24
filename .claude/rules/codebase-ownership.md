@@ -1,6 +1,6 @@
 # Rule: This Is Our Codebase
 
-This project began as a fork of `henryvn27/meetily_improved` (→ Zackriya's Meetily, MIT), but it is now **Arivo's own product**, developed in our own direction. We **own the entire tree** — inherited engine code included — and there is no upstream rebase to protect.
+This project began as a fork of `henryvn27/meetily_improved` (→ Zackriya's Meetily, MIT), but it is now *'s own product**, developed in our own direction. We **own the entire tree** — inherited engine code included — and there is no upstream rebase to protect.
 
 This rule replaces the former *additive-only* rule, which existed only to keep rebases against upstream cheap. That constraint is retired.
 
