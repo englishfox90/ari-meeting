@@ -137,4 +137,29 @@ enum SummaryCanonicalFont {
         // Unrecognized (foreign paste, native-command font we don't mint) → plain base for the kind.
         return SummaryFontVariant.base(for: kind)
     }
+
+    /// The canonical font for a kind at an explicit bold/italic state — used by the formatting
+    /// toolbar (`SummaryEditing`) to SET emphasis directly, mirroring the values `coerce` produces.
+    static func font(for kind: SummaryBlockKind, bold: Bool, italic: Bool) -> Font {
+        switch (bold, italic) {
+        case (false, false): SummaryFontVariant.base(for: kind)
+        case (true, false): SummaryFontVariant.bold(for: kind)
+        case (false, true): SummaryFontVariant.italic(for: kind)
+        case (true, true): SummaryFontVariant.boldItalic(for: kind)
+        }
+    }
+
+    /// Recovers the (bold, italic) state of a run font by matching it against the canonical set of
+    /// any family (so a toolbar toggle can flip one axis while keeping the other). A font we don't
+    /// recognize reads as plain — the same conservative default as `coerce`.
+    static func emphasis(of font: Font?, for _: SummaryBlockKind) -> (bold: Bool, italic: Bool) {
+        guard let font else { return (false, false) }
+        for family in families {
+            if font == SummaryFontVariant.boldItalic(for: family) { return (true, true) }
+            if font == SummaryFontVariant.bold(for: family) { return (true, false) }
+            if font == SummaryFontVariant.italic(for: family) { return (false, true) }
+            if font == SummaryFontVariant.base(for: family) { return (false, false) }
+        }
+        return (false, false)
+    }
 }
