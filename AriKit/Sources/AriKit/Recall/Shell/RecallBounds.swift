@@ -61,4 +61,18 @@ public enum RecallBounds {
     /// Truncation budget for the terse "Resolved: …" fact line folded into the prompt when a
     /// tool resolves a real entity (mirrors `PeopleContext`'s bounded-block pattern).
     public static let maxCardContextChars = 240
+
+    // MARK: - Agentic-loop caps (← ari-engine/src/recall/agent.rs:31-34, ported as invariants;
+
+    // docs/plans/ask-meetings-agentic-tools.md §3.4)
+
+    /// Hard budget on tool-loop iterations per ask — enforced by `AskToolset.dispatch`
+    /// (`ChatSession`'s own internal loop is uncapped, plan §2.4/§4.3).
+    public static let maxAgenticIterations = 8
+    /// Hard cap on sources accumulated across all `search_transcripts` calls in one ask.
+    public static let maxAgenticSources = 24
+    /// Per-summary/transcript budget for tool-fetched long text (`get_meeting_summary`).
+    public static let maxAgenticTranscriptChars = 8000
+    /// Overall per-tool-result truncation budget.
+    public static let maxToolResultChars = 16000
 }
