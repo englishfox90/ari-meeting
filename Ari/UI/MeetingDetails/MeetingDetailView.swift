@@ -73,20 +73,19 @@ struct MeetingDetailView: View {
     /// Drives the delete confirmation dialog.
     @State private var showingDeleteConfirm = false
     /// Rich-text summary editing: when true, `summaryBody` swaps the rendered
-    /// `MarginaliaMarkdownView` for a `SummaryRichEditor` bound to `summaryDocument`, and the
-    /// summary toolbar shows Save/Cancel instead of the generation controls. The draft only
-    /// persists on Save — `viewModel.saveSummaryEdit(summaryDocument.serialized())`, serializing
-    /// the segment model back to the closed Marginalia markdown grammar; Cancel discards it.
+    /// `MarginaliaMarkdownView` for a `SummaryRichEditor` driven by `summaryEditor`, and the
+    /// summary toolbar shows the formatting controls + Save/Cancel instead of the generation
+    /// controls. The draft only persists on Save — `viewModel.saveSummaryEdit(summaryEditor
+    /// .serialized())`; Cancel discards it.
     ///
-    /// NON-OPTIONAL by design (crash fix, 2026-07-24): an earlier `SummaryEditDocument?` + a
-    /// `Binding($summaryDocument)` unwrap in `summaryBody` built a FORCE-UNWRAPPING binding that
-    /// SwiftUI re-`update()`d during the Save transaction — the moment Save set the optional to
-    /// `nil` while `SummaryRichEditor` was still mounted, `BindingOperations.ForceUnwrapping.get`
-    /// trapped (`EXC_BREAKPOINT`). Keeping it non-optional and gating the editor purely on
-    /// `isEditingSummary` means the child only ever holds a plain `$summaryDocument` binding that
-    /// can never force-unwrap `nil`. "No draft" is the empty document, never `nil`.
+    /// The editing state (document, focus, selection) lives in `SummaryEditorModel` — NOT view-
+    /// local `@State` — so the WINDOW-TOOLBAR formatting buttons can drive it. An inline button
+    /// would steal the `TextEditor`'s first responder and clear its selection (a no-op format);
+    /// `NSToolbar` items don't. (An earlier `SummaryEditDocument?` + `Binding($…)` unwrap here also
+    /// crashed on Save via `BindingOperations.ForceUnwrapping.get`; the model owns a non-optional
+    /// document, so no force-unwrapping binding exists — "no draft" is the empty document.)
     @State private var isEditingSummary = false
-    @State private var summaryDocument = SummaryEditDocument(segments: [])
+    @State private var summaryEditor = SummaryEditorModel()
     /// Honest surfacing of a real rename/delete write failure (No-Fake-State — never a silent
     /// success).
     @State private var actionError: String?
@@ -219,7 +218,7 @@ struct MeetingDetailView: View {
             // Editing state belongs to the previous meeting — never carry a stale draft across
             // (the detail view is reused, see below).
             isEditingSummary = false
-            summaryDocument = SummaryEditDocument(segments: [])
+            summaryEditor.clear()
             // The F9 ledger fold's reducer (docs/plans/calendar-series-intelligence.md §2.4):
             // `seriesViewModel` is constructed in `init`, before the environment is readable, so
             // it's assigned here from the ONE reducer `AppEnvironment.bootstrap()` builds — the
@@ -532,7 +531,7 @@ struct MeetingDetailView: View {
     private var summaryBody: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             if isEditingSummary {
-                SummaryRichEditor(document: $summaryDocument, scheme: scheme)
+                SummaryRichEditor(model: summaryEditor, scheme: scheme)
             } else if let summary = viewModel.summary {
                 MarginaliaMarkdownView(markdown: summary.bodyMarkdown, onSeek: seekHandler)
             } else {
@@ -688,13 +687,13 @@ struct MeetingDetailView: View {
         // Split the stored markdown into the segment model (editable prose runs + verbatim table
         // slabs). All structure/style lives in the document from here; the raw string is only
         // reconstructed on Save via `serialized()`.
-        summaryDocument = SummaryEditDocument.make(from: summary.bodyMarkdown)
+        summaryEditor.load(SummaryEditDocument.make(from: summary.bodyMarkdown))
         isEditingSummary = true
     }
 
     private func cancelSummaryEdit() {
         isEditingSummary = false
-        summaryDocument = SummaryEditDocument(segments: [])
+        summaryEditor.clear()
     }
 
     /// Whether the current draft would serialize to nothing (empty doc, or only whitespace/empty
@@ -702,16 +701,16 @@ struct MeetingDetailView: View {
     /// Serializing per toolbar render is cheap (summaries are tens of KB; plan §3 keeps this on the
     /// main actor deliberately).
     private var isSerializedSummaryEmpty: Bool {
-        summaryDocument.serialized().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        summaryEditor.isSerializedEmpty
     }
 
     private func commitSummaryEdit() {
-        let markdown = summaryDocument.serialized()
+        let markdown = summaryEditor.serialized()
         Task {
             do {
                 try await viewModel.saveSummaryEdit(markdown)
                 isEditingSummary = false
-                summaryDocument = SummaryEditDocument(segments: [])
+                summaryEditor.clear()
             } catch {
                 // Honest write-failure surfacing (No-Fake-State) — the editor stays open with
                 // the draft intact so nothing typed is lost.
@@ -723,6 +722,31 @@ struct MeetingDetailView: View {
     @ToolbarContentBuilder
     private var summaryToolbar: some ToolbarContent {
         if isEditingSummary, !isNarrowLayout || narrowSection == .summary {
+            // Formatting controls live in the WINDOW toolbar (native glass group, matching the
+            // generation controls' styling) rather than inline: an inline button steals the
+            // TextEditor's first responder and clears the selection before the format applies,
+            // whereas an NSToolbar item leaves the editor focused and its selection intact. They
+            // act on the last-focused editable segment — select text (or a line), then click.
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button { summaryEditor.toggleBold() } label: {
+                    Label("Bold", systemImage: "bold")
+                }
+                .help("Bold the selected text")
+                Button { summaryEditor.toggleItalic() } label: {
+                    Label("Italic", systemImage: "italic")
+                }
+                .help("Italicize the selected text")
+                Menu {
+                    Button("Heading") { summaryEditor.setBlockKind(.heading(level: 2)) }
+                    Button("Body") { summaryEditor.setBlockKind(.paragraph) }
+                    Divider()
+                    Button("Bulleted list") { summaryEditor.setBlockKind(.bulletItem) }
+                    Button("Numbered list") { summaryEditor.setBlockKind(.numberedItem) }
+                } label: {
+                    Label("Paragraph style", systemImage: "textformat")
+                }
+                .help("Set the selected line's style (heading, body, or list)")
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Cancel", role: .cancel) {
                     cancelSummaryEdit()
