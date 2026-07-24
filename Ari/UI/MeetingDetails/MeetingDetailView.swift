@@ -536,25 +536,19 @@ struct MeetingDetailView: View {
     /// meeting-level Cancel/Save in the window toolbar. Each control acts on the last-focused
     /// editable segment's selection: select text (or a line), then click.
     private var summaryFormattingBar: some View {
-        HStack(spacing: MarginaliaSpacing.xs.value) {
-            summaryFormatButton("bold", "Bold") { summaryEditor.toggleBold() }
-            summaryFormatButton("italic", "Italic") { summaryEditor.toggleItalic() }
-            Divider().frame(height: 18).overlay(Color.marginalia(.hairline, in: scheme))
-            summaryFormatButton("textformat.size", "Heading") { summaryEditor.setBlockKind(.heading(level: 2)) }
-            summaryFormatButton("text.alignleft", "Body text") { summaryEditor.setBlockKind(.paragraph) }
-            summaryFormatButton("list.bullet", "Bulleted list") { summaryEditor.setBlockKind(.bulletItem) }
-            summaryFormatButton("list.number", "Numbered list") { summaryEditor.setBlockKind(.numberedItem) }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, MarginaliaSpacing.sm.value)
-        .padding(.vertical, MarginaliaSpacing.xs.value)
-        .background {
-            RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
-                .fill(Color.marginalia(.elevated, in: scheme))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
-                .strokeBorder(Color.marginalia(.hairline, in: scheme), lineWidth: 1)
+        // Liquid-Glass capsule buttons matching the window toolbar's chrome (same
+        // `GlassEffectContainer` + `.glassEffect(.regular.interactive(), in: Capsule())` idiom as
+        // `ListenBackPanel`), so the inline formatting bar reads as the same button family.
+        GlassEffectContainer(spacing: MarginaliaSpacing.xs.value) {
+            HStack(spacing: MarginaliaSpacing.xs.value) {
+                summaryFormatButton("bold", "Bold") { summaryEditor.toggleBold() }
+                summaryFormatButton("italic", "Italic") { summaryEditor.toggleItalic() }
+                summaryFormatButton("textformat.size", "Heading") { summaryEditor.setBlockKind(.heading(level: 2)) }
+                summaryFormatButton("text.alignleft", "Body text") { summaryEditor.setBlockKind(.paragraph) }
+                summaryFormatButton("list.bullet", "Bulleted list") { summaryEditor.setBlockKind(.bulletItem) }
+                summaryFormatButton("list.number", "Numbered list") { summaryEditor.setBlockKind(.numberedItem) }
+                Spacer(minLength: 0)
+            }
         }
     }
 
@@ -563,12 +557,13 @@ struct MeetingDetailView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 28, height: 24)
-                .contentShape(Rectangle())
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.marginalia(.inkBody, in: scheme))
+                .frame(width: 34, height: 30)
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+        .glassEffect(.regular.interactive(), in: Capsule())
         .help(help)
     }
 
