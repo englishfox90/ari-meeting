@@ -723,16 +723,11 @@ struct MeetingDetailView: View {
                 .help("Save the edited summary")
             }
         } else if let summaryVM = summaryViewModel, !isNarrowLayout || narrowSection == .summary {
+            // Grouped by what the control acts on: the generation cluster (template,
+            // instructions, generate — all steer the NEXT summary) forms one glass group;
+            // Edit Summary (acts on the EXISTING text, like the manage menu's rename/delete)
+            // sits after a spacer, beside the manage menu.
             ToolbarItemGroup(placement: .primaryAction) {
-                if viewModel.summary != nil {
-                    Button {
-                        beginSummaryEdit()
-                    } label: {
-                        Label("Edit Summary", systemImage: "square.and.pencil")
-                    }
-                    .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
-                    .help("Edit the summary text directly")
-                }
                 Picker("Template", selection: templateSelectionBinding(summaryVM)) {
                     Text("Auto (suggest)").tag(nil as String?)
                     ForEach(summaryVM.templates) { option in
@@ -748,7 +743,7 @@ struct MeetingDetailView: View {
                 } label: {
                     Label(
                         "Instructions",
-                        systemImage: hasCustomInstructions(summaryVM) ? "pencil.circle.fill" : "pencil"
+                        systemImage: hasCustomInstructions(summaryVM) ? "text.bubble.fill" : "text.bubble"
                     )
                 }
                 .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
@@ -777,6 +772,18 @@ struct MeetingDetailView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(isCoordinatorProcessingThisMeeting)
                     .help(viewModel.summary != nil ? "Regenerate the summary" : "Generate a summary")
+                }
+            }
+            if viewModel.summary != nil {
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        beginSummaryEdit()
+                    } label: {
+                        Label("Edit Summary", systemImage: "square.and.pencil")
+                    }
+                    .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
+                    .help("Edit the summary text directly")
                 }
             }
         }
