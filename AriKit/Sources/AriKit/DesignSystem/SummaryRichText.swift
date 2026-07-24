@@ -288,7 +288,13 @@ public enum SummaryRichText {
 /// The closed canonical font set the serializer compares runs against, derived from a
 /// paragraph's `SummaryBlockKind`: heading level ≤ 2 → `.title2` ramp, level ≥ 3 →
 /// `.headline`; every other kind → `.body` (mirrors `MarginaliaMarkdownView`'s mapping).
-private enum SummaryFontVariant {
+///
+/// Module-internal (not file-private) so `MarginaliaSummaryFormattingDefinition`'s
+/// `SummaryFontConstraint` coerces every editor run to these EXACT `Font` values — the same
+/// ones `serialize` compares against. Sharing the one source is what makes the constraint's
+/// output identity-canonical: a run the constraint normalizes to `bold(for:)` is byte-for-byte
+/// the value the serializer recognizes as `**…**` (plan §2.4, R1). Never fork this mapping.
+enum SummaryFontVariant {
     static func base(for kind: SummaryBlockKind) -> Font {
         switch kind {
         case let .heading(level):

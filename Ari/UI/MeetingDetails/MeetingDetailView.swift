@@ -72,12 +72,13 @@ struct MeetingDetailView: View {
     @State private var renameText = ""
     /// Drives the delete confirmation dialog.
     @State private var showingDeleteConfirm = false
-    /// Plain-markdown summary editing: when true, `summaryBody` swaps the rendered
-    /// `MarginaliaMarkdownView` for a `MarginaliaTextEditor` bound to `summaryDraft`, and the
+    /// Rich-text summary editing: when true, `summaryBody` swaps the rendered
+    /// `MarginaliaMarkdownView` for a `SummaryRichEditor` bound to `summaryDocument`, and the
     /// summary toolbar shows Save/Cancel instead of the generation controls. The draft only
-    /// persists on Save (via `viewModel.saveSummaryEdit`); Cancel discards it.
+    /// persists on Save — `viewModel.saveSummaryEdit(summaryDocument.serialized())`, serializing
+    /// the segment model back to the closed Marginalia markdown grammar; Cancel discards it.
     @State private var isEditingSummary = false
-    @State private var summaryDraft = ""
+    @State private var summaryDocument: SummaryEditDocument?
     /// Honest surfacing of a real rename/delete write failure (No-Fake-State — never a silent
     /// success).
     @State private var actionError: String?
@@ -210,7 +211,7 @@ struct MeetingDetailView: View {
             // Editing state belongs to the previous meeting — never carry a stale draft across
             // (the detail view is reused, see below).
             isEditingSummary = false
-            summaryDraft = ""
+            summaryDocument = nil
             // The F9 ledger fold's reducer (docs/plans/calendar-series-intelligence.md §2.4):
             // `seriesViewModel` is constructed in `init`, before the environment is readable, so
             // it's assigned here from the ONE reducer `AppEnvironment.bootstrap()` builds — the
@@ -522,13 +523,8 @@ struct MeetingDetailView: View {
 
     private var summaryBody: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-            if isEditingSummary {
-                MarginaliaTextEditor(
-                    text: $summaryDraft,
-                    prompt: "Write the summary in Markdown…",
-                    scheme: scheme,
-                    minHeight: 320
-                )
+            if isEditingSummary, let documentBinding = Binding($summaryDocument) {
+                SummaryRichEditor(document: documentBinding, scheme: scheme)
             } else if let summary = viewModel.summary {
                 MarginaliaMarkdownView(markdown: summary.bodyMarkdown, onSeek: seekHandler)
             } else {
@@ -677,26 +673,38 @@ struct MeetingDetailView: View {
         }
     }
 
-    // MARK: - Summary editing (plain markdown)
+    // MARK: - Summary editing (rich text)
 
     private func beginSummaryEdit() {
         guard let summary = viewModel.summary else { return }
-        summaryDraft = summary.bodyMarkdown
+        // Split the stored markdown into the segment model (editable prose runs + verbatim table
+        // slabs). All structure/style lives in the document from here; the raw string is only
+        // reconstructed on Save via `serialized()`.
+        summaryDocument = SummaryEditDocument.make(from: summary.bodyMarkdown)
         isEditingSummary = true
     }
 
     private func cancelSummaryEdit() {
         isEditingSummary = false
-        summaryDraft = ""
+        summaryDocument = nil
+    }
+
+    /// Whether the current draft would serialize to nothing (empty doc, or only whitespace/empty
+    /// editable runs) — Save is disabled so an edit can never replace a summary with a blank one.
+    /// Serializing per toolbar render is cheap (summaries are tens of KB; plan §3 keeps this on the
+    /// main actor deliberately).
+    private var isSerializedSummaryEmpty: Bool {
+        guard let markdown = summaryDocument?.serialized() else { return true }
+        return markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func commitSummaryEdit() {
-        let draft = summaryDraft
+        guard let markdown = summaryDocument?.serialized() else { return }
         Task {
             do {
-                try await viewModel.saveSummaryEdit(draft)
+                try await viewModel.saveSummaryEdit(markdown)
                 isEditingSummary = false
-                summaryDraft = ""
+                summaryDocument = nil
             } catch {
                 // Honest write-failure surfacing (No-Fake-State) — the editor stays open with
                 // the draft intact so nothing typed is lost.
@@ -719,7 +727,7 @@ struct MeetingDetailView: View {
                     Label("Save", systemImage: "checkmark")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(summaryDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(isSerializedSummaryEmpty)
                 .help("Save the edited summary")
             }
         } else if let summaryVM = summaryViewModel, !isNarrowLayout || narrowSection == .summary {
