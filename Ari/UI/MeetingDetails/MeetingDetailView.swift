@@ -86,6 +86,9 @@ struct MeetingDetailView: View {
     /// document, so no force-unwrapping binding exists — "no draft" is the empty document.)
     @State private var isEditingSummary = false
     @State private var summaryEditor = SummaryEditorModel()
+    /// Shared namespace so `glassEffectUnion` can fuse each pair of formatting buttons into one
+    /// continuous glass capsule (see `summaryFormattingBar`).
+    @Namespace private var formatGlassNamespace
     /// Honest surfacing of a real rename/delete write failure (No-Fake-State — never a silent
     /// success).
     @State private var actionError: String?
@@ -546,19 +549,22 @@ struct MeetingDetailView: View {
     /// meeting-level Cancel/Save in the window toolbar. Each control acts on the last-focused
     /// editable segment's selection: select text (or a line), then click.
     private var summaryFormattingBar: some View {
-        // Uses the SAME button family as the window toolbar: macOS 26's `.buttonStyle(.glass)`,
-        // which is what the toolbar's own controls (Regenerate, Instructions, Cancel, Save) render
-        // with. Previously this hand-rolled the look with `.buttonStyle(.plain)` +
-        // `.glassEffect(in: Capsule())`, which read as a different, flatter control family than the
-        // toolbar sitting right above it. Grouped in threes — emphasis / block kind / lists —
-        // separated by a wider gap, so related controls read as one cluster.
+        // These are REAL system glass buttons (`.buttonStyle(.glass)`) — the same control AppKit
+        // gives the window toolbar — not a plain button wearing a `.glassEffect` background. That
+        // hand-rolled version looked close but was inert: no hover highlight, no system pressed
+        // state, because `.buttonStyle(.plain)` has no interaction treatment of its own.
+        //
+        // Grouped like Preview's toolbar: the three pairs (emphasis / block kind / lists) each
+        // merge into ONE continuous glass capsule via `glassEffectUnion`, with a wider gap between
+        // groups. Related controls therefore read as a single segmented control rather than six
+        // loose circles.
         GlassEffectContainer(spacing: MarginaliaSpacing.xs.value) {
             HStack(spacing: MarginaliaSpacing.md.value) {
-                HStack(spacing: MarginaliaSpacing.xs.value) {
+                formatGroup(id: "emphasis") {
                     summaryFormatButton("bold", "Bold") { summaryEditor.toggleBold() }
                     summaryFormatButton("italic", "Italic") { summaryEditor.toggleItalic() }
                 }
-                HStack(spacing: MarginaliaSpacing.xs.value) {
+                formatGroup(id: "block") {
                     summaryFormatButton("textformat.size", "Heading") {
                         summaryEditor.setBlockKind(.heading(level: 2))
                     }
@@ -566,7 +572,7 @@ struct MeetingDetailView: View {
                         summaryEditor.setBlockKind(.paragraph)
                     }
                 }
-                HStack(spacing: MarginaliaSpacing.xs.value) {
+                formatGroup(id: "lists") {
                     summaryFormatButton("list.bullet", "Bulleted list") {
                         summaryEditor.setBlockKind(.bulletItem)
                     }
@@ -577,27 +583,40 @@ struct MeetingDetailView: View {
                 Spacer(minLength: 0)
             }
         }
+        // The whole tree is tinted with the Arivo accent by `RootSplitView`, and a glass button
+        // adopts the ambient tint as a FILL — which is what turned these into solid navy blobs.
+        // Clearing the tint here restores the neutral toolbar-style glass (and keeps the Signal
+        // Rule: the accent belongs to Save, not to six formatting controls).
+        .tint(nil)
+    }
+
+    /// Merges a pair of format buttons into one continuous glass capsule (the Preview-toolbar
+    /// segmented look). `glassEffectUnion` needs a shared namespace to know which neighbours fuse.
+    private func formatGroup(
+        id: String, @ViewBuilder content: () -> some View
+    ) -> some View {
+        HStack(spacing: 2) {
+            content()
+        }
+        .glassEffectUnion(id: id, namespace: formatGlassNamespace)
     }
 
     private func summaryFormatButton(
         _ symbol: String, _ help: String, action: @escaping () -> Void
     ) -> some View {
-        // NOT `.buttonStyle(.glass)`: it renders tinted/prominent (solid accent-blue fills), which
-        // is both wrong for this control family and a Signal-Rule violation. Neutral interactive
-        // glass in a CIRCLE matches the window toolbar's own round buttons (Back / Cancel / Save).
+        // Glyph sizing matches the window toolbar's measured metrics (~36pt hit target, a glyph
+        // heavier than body text); the CHROME comes from `.buttonStyle(.glass)`, so hover, pressed,
+        // and disabled states are the system's, not an approximation.
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color.marginalia(.inkHeading, in: scheme))
-                // 36pt circle + semibold glyph to match the window toolbar's own round buttons
-                // (measured: those are 44×52pt slots around a ~36pt circle, with a heavier glyph
-                // than body text). At the previous 30×30/medium these read as a visibly smaller,
-                // lighter control family than the toolbar directly above them.
-                .frame(width: 36, height: 36)
-                .contentShape(Circle())
+                .frame(width: 22, height: 22)
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: Circle())
+        .buttonStyle(.glass)
+        // Capsule, not the default rounded rectangle: a fused pair would otherwise read as a
+        // squared-off slab next to the toolbar's fully-round buttons. With capsule ends the merged
+        // group is a pill — the same corner language as the toolbar, just holding two controls.
+        .buttonBorderShape(.capsule)
         .help(help)
     }
 
