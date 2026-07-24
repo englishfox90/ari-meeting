@@ -32,7 +32,10 @@ import os
 /// capping runaway growth; `MLXClient` additionally `clearCache()`s on the idle transition so the
 /// pool is handed back between summaries. A top-level `let` is a lazily-initialized, thread-safe
 /// once — reference it (`_ = mlxRuntimeConfigured`) at every generation entry point.
-private let mlxRuntimeConfigured: Bool = {
+/// Not `private`: `MLXClient+Tools.swift` (the tool-capable `respondWithTools` conformance,
+/// docs/plans/ask-meetings-agentic-tools.md §3.5) installs the same one-time GPU cache-limit
+/// bracket at its own generation entry point, mirroring `generate`/`stream` below.
+let mlxRuntimeConfigured: Bool = {
     // 512 MB: comfortably above a single decode's transient buffer churn (so reuse still helps),
     // far below the multi-GB default ceiling. MLX docs note even ~2 MB is often perf-neutral; 512
     // MB is a conservative pick that keeps growth bounded without risking decode regressions.
@@ -133,7 +136,8 @@ public final class MLXClient: LLMClient {
     /// The reclaim is handed to `end(reclaimingWhenIdle:)` so it runs *inside* the tracker's
     /// actor-isolated critical section, before the drained-to-idle waiters resume — see that
     /// method for why that ordering is load-bearing against the process-teardown race.
-    private static func endActivityReclaimingCacheIfIdle() async {
+    /// Not `private`: shared with `MLXClient+Tools.swift`'s `respondWithTools` bracket.
+    static func endActivityReclaimingCacheIfIdle() async {
         await MLXActivityTracker.shared.end(reclaimingWhenIdle: { MLX.Memory.clearCache() })
     }
 
@@ -213,7 +217,8 @@ public final class MLXClient: LLMClient {
 
     // MARK: - Internals
 
-    private func resolveContainer() async throws -> ModelContainer {
+    /// Not `private`: shared with `MLXClient+Tools.swift`'s `respondWithTools`.
+    func resolveContainer() async throws -> ModelContainer {
         do {
             return try await host.container(forRepoId: repoId)
         } catch {
