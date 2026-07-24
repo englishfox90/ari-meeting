@@ -4,9 +4,10 @@
 //
 //  A `SettingsRow` shows the real enabled/cap count and opens a Marginalia-themed sheet holding the
 //  list editor (add / edit / delete / enable-toggle). Per the plan's editor-field-labelling
-//  correctness affordance (§ non-negotiables), the "Also said as" (fed to the recognizer) and
-//  "Sometimes mis-transcribed as" (glossary-only, NEVER fed to the recognizer) fields are labeled
-//  and captioned so distinctly that a user cannot poison the decoder by filling in the obvious box.
+//  correctness affordance (§ non-negotiables), the term form GROUPS its fields by destination —
+//  a "Recognition" group (fed to the recognizer) and a "Summary only" group ("Sometimes
+//  mis-transcribed as" lives here, NEVER fed to the recognizer) — so a user cannot poison the
+//  decoder by filling in the obvious box.
 //
 //  Rule 45 (`liquid-glass-adoption.md`) — the sheet paints NO background/material of its own; the
 //  system supplies the glass. Content inside uses Marginalia text/fields as usual.
@@ -187,11 +188,16 @@ private struct VocabularyEditorSheet: View {
 
 // MARK: - Add/edit form
 
-/// One term's edit form. Four fields, deliberately labeled so the two list-fields cannot be
-/// confused (plan's editor-field-labelling correctness affordance):
-///   - "Also said as" — OTHER CORRECT forms, sent to the recognizer.
-///   - "Sometimes mis-transcribed as" — known WRONG transcriptions, glossary-only, never sent to
-///     the recognizer (feeding a mis-hearing into the recognizer biases IT TOWARD the error).
+/// One term's edit form. Four fields in two structural groups that teach the load-bearing
+/// distinction ONCE each, instead of a caps caption per field (plan's editor-field-labelling
+/// correctness affordance):
+///   - **Recognition** — "Term" + "Also said as": correct forms, sent to the speech recognizer
+///     (and used in summaries).
+///   - **Summary only** — "What it is" + "Sometimes mis-transcribed as": never sent to the
+///     recognizer; feeding a mis-hearing into the recognizer would bias IT TOWARD the error,
+///     which the group's one quiet explanation line states.
+/// The grouping is the safeguard: a mis-transcription physically lives in a group whose header
+/// says it never reaches the recognizer.
 private struct VocabularyTermFormSheet: View {
     let existing: VocabularyTerm?
     let viewModel: VocabularyViewModel
@@ -218,57 +224,53 @@ private struct VocabularyTermFormSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
-                    field("Term", text: $term, prompt: "e.g. Arivo")
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.lg.value) {
+            Text(existing == nil ? "Add term" : "Edit term")
+                .marginaliaTextStyle(.title2, in: scheme)
 
-                    fieldWithHelp(
-                        "What it is",
-                        text: $definition,
-                        prompt: "One line for the summary — never sent to the recognizer",
-                        help: "Used by the summary to spell and explain the term. Not used by the speech recognizer."
-                    )
-
-                    fieldWithHelp(
-                        "Also said as",
-                        text: $alternateForms,
-                        prompt: "Comma-separated, e.g. Ari Kit",
-                        help: "OTHER CORRECT ways this is said or written. These ARE sent to the recognizer."
-                    )
-
-                    fieldWithHelp(
-                        "Sometimes mis-transcribed as",
-                        text: $misheardAs,
-                        prompt: "Comma-separated, e.g. Revo, Arrivo",
-                        help: "What the recognizer gets WRONG. Fixes summaries only — never sent to the recognizer, which would bias it toward the error."
-                    )
-
-                    Toggle("Enabled", isOn: $isEnabled)
-                        .toggleStyle(.switch)
-
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .marginaliaTextStyle(.caption, in: scheme, ink: .error)
-                    }
-                }
-                .padding(MarginaliaSpacing.lg.value)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            fieldGroup(
+                eyebrow: "Recognition",
+                explanation: "Sent to the speech recognizer so it listens for these. Also used in summaries."
+            ) {
+                labeledField("Term", text: $term, prompt: "e.g. Arivo")
+                labeledField(
+                    "Also said as",
+                    text: $alternateForms,
+                    prompt: "Other correct forms, comma-separated — e.g. Ari Kit"
+                )
             }
-            .navigationTitle(existing == nil ? "Add term" : "Edit term")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isSaving ? "Saving…" : "Save") { save() }
-                        .buttonStyle(.marginalia(.primary, .regular, in: scheme))
-                        .disabled(isSaving || term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+
+            fieldGroup(
+                eyebrow: "Summary only",
+                explanation: "Never sent to the recognizer — a known mis-hearing there would bias it toward the error. Summaries use these to spell and explain the term."
+            ) {
+                labeledField("What it is", text: $definition, prompt: "One line, e.g. our meeting-notes app")
+                labeledField(
+                    "Sometimes mis-transcribed as",
+                    text: $misheardAs,
+                    prompt: "Known wrong transcriptions, comma-separated — e.g. Revo, Arrivo"
+                )
+            }
+
+            MarginaliaToggleRow("Enabled", isOn: $isEnabled, scheme: scheme)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .error)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: MarginaliaSpacing.md.value) {
+                Spacer(minLength: 0)
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+                Button(isSaving ? "Saving…" : "Save") { save() }
+                    .buttonStyle(.marginalia(.primary, .regular, in: scheme))
+                    .disabled(isSaving || term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .frame(minWidth: 440, minHeight: 480)
+        .padding(MarginaliaSpacing.xl.value)
+        .frame(width: 520)
     }
 
     private func save() {
@@ -314,21 +316,42 @@ private struct VocabularyTermFormSheet: View {
             .filter { !$0.isEmpty }
     }
 
-    private func field(_ label: String, text: Binding<String>, prompt: String) -> some View {
-        VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-            Text(label.uppercased())
-                .marginaliaTextStyle(.caption, in: scheme)
-            MarginaliaTextField(text: text, prompt: prompt, scheme: scheme)
+    /// One of the two destination buckets: a quiet surface card introduced by an uppercase
+    /// eyebrow (`.caption` — the ONLY caps on the sheet) and a single sentence-case explanation,
+    /// so the recognizer-vs-summary distinction is stated once per group instead of per field.
+    private func fieldGroup(
+        eyebrow: String,
+        explanation: String,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                Text(eyebrow)
+                    .marginaliaTextStyle(.caption, in: scheme)
+                Text(explanation)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            content()
+        }
+        .padding(MarginaliaSpacing.md.value)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
+                .fill(Color.marginalia(.surface, in: scheme))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
+                .strokeBorder(Color.marginalia(.hairline, in: scheme), lineWidth: 1)
         }
     }
 
-    private func fieldWithHelp(_ label: String, text: Binding<String>, prompt: String, help: String) -> some View {
+    /// Sentence-case field label over a Marginalia text field — the `ImportMeetingSheet` idiom.
+    private func labeledField(_ label: String, text: Binding<String>, prompt: String) -> some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-            Text(label.uppercased())
-                .marginaliaTextStyle(.caption, in: scheme)
+            Text(label)
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
             MarginaliaTextField(text: text, prompt: prompt, scheme: scheme)
-            Text(help)
-                .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
         }
     }
 }
