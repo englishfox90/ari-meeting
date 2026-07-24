@@ -31,6 +31,10 @@ public actor ToolTurnState {
     /// Meeting ids a tool result has already exposed to the model THIS turn — `get_meeting_summary`
     /// only accepts an id drawn from this set (the model never mints an id, plan §4.1 [P1]).
     public private(set) var surfacedMeetingIds: Set<MeetingID> = []
+    /// Series ids a tool result has already exposed to the model THIS turn — the same [P1]
+    /// discipline as `surfacedMeetingIds`, applied to `find_series`' disambiguation flow: the model
+    /// may drill into a series id ONLY after a listing handed it that id, never one it invented.
+    public private(set) var surfacedSeriesIds: Set<SeriesID> = []
 
     public init() {}
 
@@ -70,6 +74,16 @@ public actor ToolTurnState {
     /// Whether `meetingId` was surfaced by some tool result already this turn.
     public func isSurfaced(_ meetingId: MeetingID) -> Bool {
         surfacedMeetingIds.contains(meetingId)
+    }
+
+    /// Records a series id a tool result legitimately surfaced this turn.
+    public func surface(_ seriesId: SeriesID) {
+        surfacedSeriesIds.insert(seriesId)
+    }
+
+    /// Whether `seriesId` was surfaced by some tool result already this turn.
+    public func isSurfaced(_ seriesId: SeriesID) -> Bool {
+        surfacedSeriesIds.contains(seriesId)
     }
 
     /// Begins one dispatch iteration, enforcing the hard budget
@@ -153,8 +167,8 @@ public struct AskToolset: Sendable {
             ),
             AgenticToolDefinition(
                 name: "find_series",
-                description: "Look up a RECURRING meeting series — a 1:1 with someone, a weekly standup — by its title or the person's name, and read its running ledger: open action items, decisions, recurring themes and per-person threads accumulated across every meeting in it. Use this FIRST for \"how are my 1:1s with X going\", \"what's the status of\", \"recap my <recurring meeting>\" — any question about how an ongoing thread is PROGRESSING. That is a different question from what is scheduled; do not answer it from the calendar.",
-                parametersJSONSchema: #"{"type":"object","properties":{"title_or_topic":{"type":"string"}},"required":["title_or_topic"]}"#
+                description: "Look up RECURRING meeting series — a 1:1 with someone, a weekly standup — by title or person name, and read the running ledger: open action items, decisions, recurring themes and per-person threads accumulated across every meeting in the series. Use this FIRST for \"how are my 1:1s with X going\", \"what's the status of\", \"recap my <recurring meeting>\" — any question about how an ongoing thread is PROGRESSING, which is NOT a calendar question. Pass title_or_topic. If exactly one series matches you get its full ledger; if several match you get the list, and you then call this tool again with series_id from that list to read the one you want.",
+                parametersJSONSchema: #"{"type":"object","properties":{"title_or_topic":{"type":"string"},"series_id":{"type":"string"}}}"#
             ),
             AgenticToolDefinition(
                 name: "get_meeting_summary",
@@ -383,11 +397,17 @@ public struct AskToolset: Sendable {
     // MARK: - find_series
 
     private struct FindSeriesInput: Decodable {
-        var titleOrTopic: String
+        var titleOrTopic: String?
+        var seriesId: String?
         enum CodingKeys: String, CodingKey {
             case titleOrTopic = "title_or_topic"
+            case seriesId = "series_id"
         }
     }
+
+    /// How many series a disambiguation listing enumerates. The listing is short by construction —
+    /// its only job is to let the model pick one and come back by id.
+    private static let maxSeriesListed = 8
 
     /// How many member meetings a series result lists (and surfaces for `get_meeting_summary`).
     /// Deliberately smaller than `RecallBounds.maxCardSeriesMeetings` (50, the card's hydration
@@ -396,20 +416,65 @@ public struct AskToolset: Sendable {
     /// longer series under-lists but never under-counts (No-Fake-State).
     private static let maxSeriesMeetingsListed = 10
 
+    /// Two shapes in one tool (2026-07-23 design call): a NAME resolves to full detail when it is
+    /// unambiguous and to an enumerated listing when it is not, and an id drawn from that listing
+    /// resolves to detail. Ambiguity is never guessed and never a dead end — the model is handed
+    /// the real options and decides which to open, exactly as a person would.
     private func findSeries(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
         guard let input: FindSeriesInput = Self.decode(call.argumentsJSON) else {
-            return "\(AgenticToolResultPrefix.invalidArguments) expected {\"title_or_topic\": string}."
+            return "\(AgenticToolResultPrefix.invalidArguments) expected {\"title_or_topic\": string} or {\"series_id\": string}."
         }
-        let series: Series?
+
+        // Drill-in by id — honored only for an id a listing already handed the model [P1].
+        if let rawId = input.seriesId?.trimmingCharacters(in: .whitespacesAndNewlines), !rawId.isEmpty {
+            let seriesId = SeriesID(rawId)
+            guard await state.isSurfaced(seriesId) else {
+                return "Unknown series id — only an id listed earlier this turn by find_series can be used here."
+            }
+            guard let resolved = await (try? tools.series(withId: seriesId)) ?? nil else {
+                return "That series no longer exists."
+            }
+            return await seriesDetail(resolved, state: state)
+        }
+
+        let query = input.titleOrTopic?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !query.isEmpty else {
+            return "\(AgenticToolResultPrefix.invalidArguments) pass \"title_or_topic\" (a series title or person name), or \"series_id\" from an earlier listing."
+        }
+
+        let matches: [Series]
         do {
-            series = try await tools.findSeries(titleContaining: input.titleOrTopic)
+            matches = try await tools.seriesMatching(titleContaining: query, limit: Self.maxSeriesListed)
         } catch {
             return "\(AgenticToolResultPrefix.toolFailed) could not look up that series."
         }
-        guard let series else {
-            return "No unique meeting series matched \"\(input.titleOrTopic)\"."
+        guard let only = matches.first else {
+            return "No meeting series matched \"\(query)\"."
+        }
+        guard matches.count > 1 else {
+            return await seriesDetail(only, state: state)
         }
 
+        // Several matched: enumerate them instead of guessing or refusing. Each id is surfaced so
+        // the model can immediately call find_series again with the one it wants.
+        var lines = ["\(matches.count) meeting series match \"\(query)\". Call find_series again with the series_id of the one you want:"]
+        for series in matches {
+            await state.surface(series.id)
+            let total = await (try? tools.meetingCount(inSeries: series.id)) ?? 0
+            let recent = await (try? tools.meetings(inSeries: series.id, limit: 1)) ?? []
+            let lastNote = recent.first
+                .map { RFC3339.string(from: $0.createdAt) }
+                .flatMap { RecallCardDisplay.friendlyDayOnly($0) }
+                .map { ", most recent \($0)" } ?? ""
+            lines.append("\(series.id.rawValue) / \(series.title) / \(RecallCardDisplay.meetingCountLabel(total))\(lastNote)")
+        }
+        return Self.bound(lines.joined(separator: "\n"))
+    }
+
+    /// The full single-series read: card, member meetings (ids surfaced for `get_meeting_summary`),
+    /// and the running ledger.
+    private func seriesDetail(_ series: Series, state: ToolTurnState) async -> String {
+        await state.surface(series.id)
         let meetings = await (try? tools.meetings(
             inSeries: series.id, limit: Self.maxSeriesMeetingsListed
         )) ?? []

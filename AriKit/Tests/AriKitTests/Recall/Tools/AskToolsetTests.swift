@@ -303,7 +303,7 @@ struct AskToolsetTests {
         #expect(result.contains("Nia 1:1"))
     }
 
-    @Test("find_series: zero/ambiguous match returns an honest string, never a card")
+    @Test("find_series: zero match returns an honest string, never a card")
     func findSeriesZeroMatch() async throws {
         let db = try AppDatabase.makeInMemory()
         let toolset = makeToolset(db)
@@ -311,8 +311,85 @@ struct AskToolsetTests {
         let result = await toolset.dispatch(
             call("find_series", #"{"title_or_topic": "Nonexistent"}"#), state: state
         )
-        #expect(result.contains("No unique meeting series"))
+        #expect(result.contains("No meeting series matched"))
         #expect(await state.cards.isEmpty)
+    }
+
+    // MARK: - find_series: ambiguity lists rather than refusing (2026-07-23 design call)
+
+    /// A second "Nia"-matching series, so a bare name query is genuinely ambiguous.
+    private func addSecondNiaSeries(_ db: AppDatabase) async throws -> Series {
+        let date = Date(timeIntervalSince1970: 1_785_000_000)
+        let meeting = makeMeeting(id: "m-skip", title: "Nia skip-level", createdAt: date)
+        try await db.meetings.upsert(meeting)
+        let series = Series(
+            id: SeriesID("s-nia-skip"), title: "Nia skip-level", createdAt: date, updatedAt: date
+        )
+        try await db.series.upsert(series)
+        try await db.series.addMember(seriesId: series.id, meetingId: meeting.id)
+        return series
+    }
+
+    @Test("find_series: several matches are ENUMERATED with real counts, not guessed or refused")
+    func findSeriesAmbiguousListsOptions() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await makeNiaSeries(db, ledger: "## Open action items\n- Prepare IRR analysis")
+        _ = try await addSecondNiaSeries(db)
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+
+        let result = await toolset.dispatch(call("find_series", #"{"title_or_topic": "Nia"}"#), state: state)
+
+        #expect(result.contains("Nia 1:1"))
+        #expect(result.contains("Nia skip-level"))
+        #expect(result.contains("series_id"), "the model must be told how to drill in")
+        // A listing is not a resolution: no card, no ledger dumped for either candidate.
+        #expect(await state.cards.isEmpty)
+        #expect(!result.contains("Prepare IRR analysis"))
+        // Both ids are surfaced so the follow-up call is legal.
+        #expect(await state.isSurfaced(SeriesID("s-nia")))
+        #expect(await state.isSurfaced(SeriesID("s-nia-skip")))
+    }
+
+    @Test("find_series: drilling into a listed series_id returns that series' full ledger")
+    func findSeriesDrillInAfterListing() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await makeNiaSeries(db, ledger: "## Open action items\n- Prepare IRR analysis")
+        _ = try await addSecondNiaSeries(db)
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+
+        _ = await toolset.dispatch(call("find_series", #"{"title_or_topic": "Nia"}"#), state: state)
+        let result = await toolset.dispatch(call("find_series", #"{"series_id": "s-nia"}"#), state: state)
+
+        #expect(result.contains("Nia 1:1"))
+        #expect(result.contains("Prepare IRR analysis"))
+        guard case .series = await state.cards.first else {
+            Issue.record("expected a .series card on the drill-in")
+            return
+        }
+    }
+
+    @Test("find_series: a series_id the model invented is refused — ids come only from a listing")
+    func findSeriesRejectsUnsurfacedId() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await makeNiaSeries(db, ledger: "## Open action items\n- Prepare IRR analysis")
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+
+        // No listing happened first, so this id was never handed to the model [P1].
+        let result = await toolset.dispatch(call("find_series", #"{"series_id": "s-nia"}"#), state: state)
+        #expect(result.contains("Unknown series id"))
+        #expect(!result.contains("Prepare IRR analysis"))
+    }
+
+    @Test("find_series: an empty call is an honest argument error, never a silent whole-library dump")
+    func findSeriesEmptyArguments() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await makeNiaSeries(db, ledger: nil)
+        let toolset = makeToolset(db)
+        let result = await toolset.dispatch(call("find_series", "{}"), state: ToolTurnState())
+        #expect(result.contains("Invalid arguments"))
     }
 
     @Test("find_series: the ledger is bounded, never an unbounded dump")

@@ -70,6 +70,28 @@ public struct RecallTools: Sendable {
         return matches.count == 1 ? matches.first : nil
     }
 
+    /// EVERY series whose title contains `query` (case-insensitive), newest-updated first, capped
+    /// at `limit`. Unlike `findSeries(titleContaining:)` this does NOT collapse ambiguity to `nil`
+    /// — it is the disambiguation read: the agentic `find_series` tool lists what matched so the
+    /// model can pick one and ask again by id, rather than the tool silently deciding for it or
+    /// refusing to answer (2026-07-23 design call). Ambiguity is still never *guessed*; it is
+    /// surfaced as real, enumerated options.
+    public func seriesMatching(titleContaining query: String, limit: Int) async throws -> [Series] {
+        let needle = Self.normalized(query)
+        guard !needle.isEmpty, limit > 0 else { return [] }
+        let all = try await series.all()
+        return all
+            .filter { Self.normalized($0.title).contains(needle) }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(limit)
+            .map(\.self)
+    }
+
+    /// A single series by id — the follow-up read after `seriesMatching` listed the options.
+    public func series(withId seriesId: SeriesID) async throws -> Series? {
+        try await series.find(seriesId)
+    }
+
     // MARK: - Real, bounded roster reads (never fabricated)
 
     /// Every non-deleted meeting `personId` attended, newest first — via the SAME calendar-email-
