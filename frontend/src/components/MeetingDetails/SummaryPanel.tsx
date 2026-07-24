@@ -374,6 +374,7 @@ export function SummaryPanel({
                 </>
               )}
               <SeriesAttachControl
+                key={meeting.id}
                 meetingId={meeting.id}
                 meetingTitle={meeting.title}
                 seriesInfo={seriesInfo}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { PlusIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,6 +52,15 @@ export function SeriesAttachControl({
   const [newTitle, setNewTitle] = useState(meetingTitle);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // meetingTitle can arrive/settle after this component has already mounted
+  // (or been reused across a client-side navigation); keep the suggested
+  // series name in sync whenever it changes and the popover isn't mid-edit.
+  useEffect(() => {
+    if (!open) {
+      setNewTitle(meetingTitle);
+    }
+  }, [meetingTitle, open]);
 
   const loadList = useCallback(async () => {
     setListLoading(true);
