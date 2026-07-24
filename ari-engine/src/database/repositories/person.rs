@@ -305,6 +305,12 @@ impl PersonRepository {
     /// If `email` matches an existing row, returns it unchanged (never overwrites authored
     /// fields). Else inserts a stub person (display_name = provided name, or the email
     /// localpart if no name given).
+    ///
+    /// Guards against duplicating the owner: the owner's row can be seeded during onboarding
+    /// before any email is known (before a calendar is linked), so an attendee entry for the
+    /// owner's own event won't match by email. If the owner still has no email and this
+    /// attendee's name matches the owner's, treat it as the owner and backfill the owner's
+    /// email so later imports dedupe by email directly.
     pub async fn upsert_stub_from_attendee(
         pool: &SqlitePool,
         email: Option<&str>,
@@ -313,6 +319,25 @@ impl PersonRepository {
         if let Some(email) = email {
             if let Some(existing) = Self::get_by_email(pool, email).await? {
                 return Ok(existing);
+            }
+        }
+
+        if let Some(owner) = Self::get_owner(pool).await? {
+            if owner.email.is_none()
+                && !display_name.trim().is_empty()
+                && owner.display_name.trim().eq_ignore_ascii_case(display_name.trim())
+            {
+                if let Some(email) = email {
+                    let now = Utc::now().to_rfc3339();
+                    sqlx::query("UPDATE persons SET email = ?, updated_at = ? WHERE id = ?")
+                        .bind(email)
+                        .bind(&now)
+                        .bind(&owner.id)
+                        .execute(pool)
+                        .await?;
+                    return Self::get(pool, &owner.id).await?.ok_or(sqlx::Error::RowNotFound);
+                }
+                return Ok(owner);
             }
         }
 
@@ -1314,5 +1339,105 @@ mod profile_fact_sources_tests {
         let old_reloaded = ProfileFactRepository::get_public(&pool, &old.id).await.unwrap().unwrap();
         assert_eq!(old_reloaded.status, "superseded");
         assert_eq!(old_reloaded.superseded_by.as_deref(), Some(new.id.as_str()));
+    }
+}
+
+#[cfg(test)]
+mod owner_dedup_tests {
+    use super::PersonRepository;
+    use crate::models::NewPerson;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
+
+    async fn mem_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA foreign_keys = ON;")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::migrate!("../frontend/src-tauri/migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    /// The bug this guards: the owner is seeded (e.g. onboarding) before any email is
+    /// known, so a later calendar import of an event where the owner is their own
+    /// attendee must resolve to the SAME row, not mint a duplicate person.
+    #[tokio::test]
+    async fn attendee_import_matches_owner_seeded_without_email() {
+        let pool = mem_pool().await;
+        let owner = PersonRepository::set_owner(
+            &pool,
+            &NewPerson {
+                id: None,
+                email: None,
+                display_name: "Paul Fox-Reeks".to_string(),
+                role: None,
+                organization: None,
+                domain: None,
+                notes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let resolved = PersonRepository::upsert_stub_from_attendee(
+            &pool,
+            Some("paul.foxreeks@arivo.com"),
+            "Paul Fox-Reeks",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resolved.id, owner.id, "resolves to the owner row, not a new stub");
+        assert_eq!(resolved.email.as_deref(), Some("paul.foxreeks@arivo.com"), "owner email backfilled");
+
+        let all = PersonRepository::list(&pool).await.unwrap();
+        assert_eq!(all.len(), 1, "no duplicate person row created");
+
+        // A second import (now that the owner has an email) must still resolve to the
+        // same row via the ordinary email-match path.
+        let resolved_again = PersonRepository::upsert_stub_from_attendee(
+            &pool,
+            Some("paul.foxreeks@arivo.com"),
+            "Paul Fox-Reeks",
+        )
+        .await
+        .unwrap();
+        assert_eq!(resolved_again.id, owner.id);
+        assert_eq!(PersonRepository::list(&pool).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn attendee_import_does_not_match_owner_by_coincidental_prefix() {
+        let pool = mem_pool().await;
+        let owner = PersonRepository::set_owner(
+            &pool,
+            &NewPerson {
+                id: None,
+                email: None,
+                display_name: "Paul Fox-Reeks".to_string(),
+                role: None,
+                organization: None,
+                domain: None,
+                notes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let ray = PersonRepository::upsert_stub_from_attendee(
+            &pool,
+            Some("ray.shelton@arivo.com"),
+            "Ray Shelton",
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(ray.id, owner.id, "distinct attendee is not folded into the owner");
+        assert_eq!(PersonRepository::list(&pool).await.unwrap().len(), 2);
     }
 }
