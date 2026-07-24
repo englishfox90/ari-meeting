@@ -176,6 +176,30 @@ public final class PersonDetailViewModel {
         try? await database.profileFacts.withProvenance(factID)
     }
 
+    /// Runs `PersonFactConsolidation` (docs/plans/person-fact-consolidation.md §7) over the
+    /// currently-loaded person's facts, reloads the fact buckets, and returns the honest result
+    /// message for the caller to surface (mirrors `saveIdentity`'s "return a string, caller
+    /// displays it" pattern). `settings`/`secrets`/`clientFactory` are injected by the caller —
+    /// this view model has no Keychain/settings-table access of its own (same reason
+    /// `SettingsViewModel` takes `secrets` as an init param rather than constructing its own).
+    /// No-ops (returns an honest "no person loaded" message) when nothing is loaded yet.
+    public func consolidateFacts(
+        settings: any SettingsReading,
+        secrets: any SecretsReading,
+        clientFactory: @escaping @Sendable (ProviderConfig) throws -> any LLMClient = {
+            try ProviderFactory.make(config: $0)
+        }
+    ) async -> String {
+        guard let id = personId else { return "No person is loaded." }
+        let consolidation = PersonFactConsolidation(
+            db: database, settings: settings, secrets: secrets, clientFactory: clientFactory
+        )
+        let result = await (try? consolidation.consolidateFacts(for: id))
+            ?? ConsolidationResult(merged: 0, factsRetired: 0, kept: 0, message: "Consolidation failed.")
+        await reloadFacts()
+        return result.message
+    }
+
     // MARK: - Auxiliary slice refreshes (best-effort)
 
     private func refreshMeetings(_ id: PersonID) async {

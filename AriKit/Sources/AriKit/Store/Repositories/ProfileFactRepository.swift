@@ -167,6 +167,39 @@ public struct ProfileFactRepository: Sendable {
         }
     }
 
+    // MARK: - Fact consolidation (docs/plans/person-fact-consolidation.md §4.3) — additive
+
+    /// Records that `newFactId` (a `PersonFactConsolidation` `"merge"` result) proposes to retire
+    /// EACH of `oldFactIds` — the N-ary counterpart to `markSupersedes` above. §4.1: calling
+    /// `markSupersedes` repeatedly for the same `newFactId` would overwrite the single
+    /// `supersedesFactId` column and silently lose all but the last pointer, which is exactly the
+    /// "merge 3+ old facts into 1" data-loss trap this table closes. Deferred supersession, same
+    /// as `markSupersedes`: none of the old facts are retired here — `confirmFact` retires them
+    /// all once the new fact is confirmed. Does NOT touch `supersedesFactId` (that column's
+    /// existing pairwise use by `reconcileFacts`'s "supersede" op is untouched).
+    public func recordSupersession(newFactId: ProfileFactID, oldFactIds: [ProfileFactID]) async throws {
+        try await dbWriter.write { db in
+            for oldFactId in oldFactIds {
+                try ProfileFactSupersessionRecord(
+                    newFactId: newFactId.rawValue, oldFactId: oldFactId.rawValue
+                ).save(db)
+            }
+        }
+    }
+
+    /// The old fact ids `newFactId` was recorded (via `recordSupersession`) to supersede — a
+    /// read-visible surface over `profileFactSupersession` (no ordering guarantee beyond
+    /// whatever GRDB's default row order returns; callers needing count/membership only should
+    /// treat this as a set).
+    public func oldFactIds(supersededBy newFactId: ProfileFactID) async throws -> [ProfileFactID] {
+        try await dbWriter.read { db in
+            let records = try ProfileFactSupersessionRecord
+                .filter(Column("newFactId") == newFactId.rawValue)
+                .fetchAll(db)
+            return records.map { ProfileFactID($0.oldFactId) }
+        }
+    }
+
     /// Resets the staleness clock (← `touch_confirmed`, `person.rs:699`) — called both by a future
     /// explicit user-confirm flow and by reconciliation's "keep" decision after fresh transcript
     /// evidence reaffirms a fact. A no-op if `factId` doesn't exist.
@@ -302,8 +335,19 @@ public struct ProfileFactRepository: Sendable {
 
     /// Confirms a pending fact (← Rust `profile_fact_confirm_impl`, `commands.rs:239-276`):
     /// `status = .active`, then resets the staleness clock via `touchConfirmed`. If the fact
-    /// carries a store-internal `supersedesFactId`, the old fact is retired NOW (`.superseded`,
-    /// `supersededBy = id`) — until this moment the old fact stayed active and in use.
+    /// carries a store-internal `supersedesFactId`, that old fact is retired NOW (`.superseded`,
+    /// `supersededBy = id`) — until this moment the old fact stayed active and in use. It also
+    /// retires every OLD fact recorded against this fact in `profileFactSupersession` (§4.3, the
+    /// N-ary counterpart backing `PersonFactConsolidation`'s "merge" op) the same way, and then
+    /// RECURSES into each just-retired fact's own supersession targets (`retireSupersededFacts`)
+    /// — closing the chained-merge gap where a merge-created PENDING fact (itself superseding
+    /// older facts) gets merged again before being confirmed: without the recursive walk,
+    /// confirming the final fact would retire only the immediate intermediate and permanently
+    /// orphan the older facts (nothing would ever point at them again). Both the single-column
+    /// and join-table paths coexist and both recurse the same way: a fact from `reconcileFacts`'s
+    /// "supersede" has a `supersedesFactId` but no `profileFactSupersession` rows (the join-table
+    /// branch is a no-op for it); a fact from a "merge" has N `profileFactSupersession` rows and
+    /// no `supersedesFactId` (the single-column branch is a no-op for it).
     /// `carrySources`/`raiseConfidence` are deferred (plan §2.1) — not implemented here.
     public func confirmFact(_ id: ProfileFactID, at date: Date = Date()) async throws {
         try await dbWriter.write { db in
@@ -312,12 +356,40 @@ public struct ProfileFactRepository: Sendable {
             record.lastConfirmedAt = date
             try record.update(db)
 
-            if let oldFactId = record.supersedesFactId,
-               var oldRecord = try ProfileFactRecord.fetchOne(db, key: oldFactId) {
-                oldRecord.status = FactStatus.superseded.rawValue
-                oldRecord.supersededBy = id.rawValue
-                try oldRecord.update(db)
-            }
+            var visited: Set<String> = [id.rawValue]
+            try Self.retireSupersededFacts(pointingTo: id.rawValue, db: db, visited: &visited)
+        }
+    }
+
+    /// Retires every fact `newFactId` directly supersedes (single-column `supersedesFactId` AND
+    /// `profileFactSupersession` join rows), then recurses into each retired fact's OWN
+    /// supersession targets — a retired fact's `supersededBy` is set to its IMMEDIATE superseder
+    /// (not the original root `newFactId`), so `supersedeChain(from:)` still walks the full chain
+    /// to its terminal fact correctly. Cycle-safe via `visited` (mirrors `supersedeChain(from:)`'s
+    /// precedent).
+    private static func retireSupersededFacts(
+        pointingTo newFactId: String,
+        db: Database,
+        visited: inout Set<String>
+    ) throws {
+        var directTargets: [String] = []
+        if let record = try ProfileFactRecord.fetchOne(db, key: newFactId),
+           let oldFactId = record.supersedesFactId {
+            directTargets.append(oldFactId)
+        }
+        let supersessionRows = try ProfileFactSupersessionRecord
+            .filter(Column("newFactId") == newFactId)
+            .fetchAll(db)
+        directTargets.append(contentsOf: supersessionRows.map(\.oldFactId))
+
+        for oldFactId in directTargets {
+            guard !visited.contains(oldFactId) else { continue }
+            visited.insert(oldFactId)
+            guard var oldRecord = try ProfileFactRecord.fetchOne(db, key: oldFactId) else { continue }
+            oldRecord.status = FactStatus.superseded.rawValue
+            oldRecord.supersededBy = newFactId
+            try oldRecord.update(db)
+            try retireSupersededFacts(pointingTo: oldFactId, db: db, visited: &visited)
         }
     }
 

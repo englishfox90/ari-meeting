@@ -8,6 +8,7 @@
 //  empty state for "Active facts" rather than hiding the section.
 //
 import AriKit
+import AriKitEngineMLX
 import AriViewModels
 import SwiftUI
 
@@ -32,6 +33,12 @@ struct PersonDetailView: View {
     @State private var manualFactText = ""
     @State private var manualFactKind: FactKind = .other
     @State private var isAddingFact = false
+
+    // Fact consolidation (docs/plans/person-fact-consolidation.md §7) — a manual, on-demand,
+    // one-time cleanup pass; never disabled below 2 facts (honest "nothing to consolidate"
+    // message instead), mirroring `identityError`'s transient-message pattern.
+    @State private var isConsolidatingFacts = false
+    @State private var consolidationMessage: String?
 
     init(database: AppDatabase, personId: PersonID) {
         self.database = database
@@ -204,6 +211,8 @@ struct PersonDetailView: View {
 
     private var factsSection: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.lg.value) {
+            factsHeader
+
             if !viewModel.pendingFacts.isEmpty {
                 factBucket(
                     title: "Pending confirmation",
@@ -250,6 +259,42 @@ struct PersonDetailView: View {
                         .marginaliaTextStyle(.caption, in: scheme)
                     factCard(viewModel.otherFacts)
                 }
+            }
+        }
+    }
+
+    /// "Consolidate facts" (docs/plans/person-fact-consolidation.md §7): a manual, on-demand,
+    /// one-time cleanup pass over this person's facts — never disabled below 2 facts (plan's
+    /// recommendation: let a tap honestly report "nothing to consolidate" rather than adding a
+    /// reactive count-gated affordance).
+    private var factsHeader: some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+            HStack {
+                Text("Facts")
+                    .marginaliaTextStyle(.headline, in: scheme)
+                Spacer()
+                Button(isConsolidatingFacts ? "Consolidating…" : "Consolidate facts") {
+                    isConsolidatingFacts = true
+                    consolidationMessage = nil
+                    Task {
+                        consolidationMessage = await viewModel.consolidateFacts(
+                            settings: StoreBackedSettingsReading(database: database),
+                            secrets: KeychainSecretStore(),
+                            clientFactory: { config in
+                                try ProviderFactory.make(
+                                    config: config, mlxClientProvider: AriKitEngineMLX.mlxClientProvider
+                                )
+                            }
+                        )
+                        isConsolidatingFacts = false
+                    }
+                }
+                .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                .disabled(isConsolidatingFacts)
+            }
+            if let consolidationMessage {
+                Text(consolidationMessage)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
             }
         }
     }

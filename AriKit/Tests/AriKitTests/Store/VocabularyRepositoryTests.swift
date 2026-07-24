@@ -87,10 +87,12 @@ struct VocabularyRepositoryTests {
     // MARK: - T-S2
 
     @Test("T-S2 prior migrations are unmodified — v5_vocabulary_term is appended last, not inserted")
-    func priorMigrationsUnmodifiedVocabularyAppendedLast() throws {
-        // The vocabulary migration must be registered LAST — after every prior migration,
-        // including the separately-merged `v5_calendar_series_consent`. Guards against an
-        // in-place edit to, or reordering ahead of, any earlier (frozen) migration.
+    func priorMigrationsUnmodifiedVocabularyAppendedLast() {
+        // The vocabulary migration must be registered after every prior migration, including the
+        // separately-merged `v5_calendar_series_consent`. Guards against an in-place edit to, or
+        // reordering ahead of, any earlier (frozen) migration. `v6_profile_fact_supersession`
+        // (docs/plans/person-fact-consolidation.md §4.2) is a later addition still — appended
+        // after `v5_vocabulary_term`, not inserted ahead of it.
         let migrator = SchemaMigrator.migrator()
         #expect(migrator.migrations == [
             "v1_baseline",
@@ -98,7 +100,8 @@ struct VocabularyRepositoryTests {
             "v3_ask_message_card",
             "v4_ask_message_cards",
             "v5_calendar_series_consent",
-            "v5_vocabulary_term"
+            "v5_vocabulary_term",
+            "v6_profile_fact_supersession"
         ])
 
         // Everything except the trailing vocabulary migration — the "before" state the
@@ -154,7 +157,7 @@ struct VocabularyRepositoryTests {
     @Test("T-S5 enabling past the cap throws and mutates nothing")
     func enablingPastTheCapThrows() async throws {
         let db = try AppDatabase.makeInMemory()
-        for index in 0..<VocabularyBias.maxEnabledTerms {
+        for index in 0 ..< VocabularyBias.maxEnabledTerms {
             try await db.vocabulary.upsert(makeTerm(term: "Term \(index)"))
         }
         #expect(try await db.vocabulary.enabledCount() == VocabularyBias.maxEnabledTerms)

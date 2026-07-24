@@ -341,7 +341,11 @@ public struct PersonReconciliation: Sendable {
 
     // MARK: - Prompt formatting (← `format_person_block`, `reconciliation.rs:462`)
 
-    private static func formatPersonBlock(_ person: Person, facts: [ProfileFact], now: Date) -> String {
+    /// `internal` (module-default access, widened from `private` — docs/plans/
+    /// person-fact-consolidation.md §5): reused verbatim by `PersonFactConsolidation` so both
+    /// prompts show the model the identical id/kind/confidence/status/age format it has already
+    /// proven reliable at parsing, with no risk of the two formatters drifting apart.
+    static func formatPersonBlock(_ person: Person, facts: [ProfileFact], now: Date) -> String {
         let header = "- \(person.displayName) <\(person.email ?? "no email")>"
         guard !facts.isEmpty else {
             return "\(header)\n  (no existing facts)"

@@ -178,9 +178,11 @@ struct SchemaFidelityTests {
         // SQLite's own FTS5 module always creates these regardless of the `content=` option.
         // Phase 3.4 Track H (`arikit-engine-extras.md` §2.3/§6-5) appended `meetingParticipant`.
         // `v5_vocabulary_term` (docs/plans/custom-vocabulary.md §4.1) appended `vocabularyTerm`.
+        // `v6_profile_fact_supersession` (docs/plans/person-fact-consolidation.md §4.2) appended
+        // `profileFactSupersession`.
         #expect(Set(tableNames) == [
             "meeting", "speaker", "speakerSegment", "transcript",
-            "person", "profileFact", "profileFactSource", "meetingParticipant",
+            "person", "profileFact", "profileFactSource", "profileFactSupersession", "meetingParticipant",
             "summary", "meetingNote",
             "series", "seriesLedger", "seriesMember", "calendarEvent", "calendarSyncSetting",
             "recallChunk", "recallIndexState", "askConversation", "askMessage",

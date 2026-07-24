@@ -81,6 +81,23 @@ enum SchemaMigrator {
             )
         }
 
+        // v6 (docs/plans/person-fact-consolidation.md §4.2) — additive-only, `v1_baseline`
+        // through `v5_vocabulary_term` all stay frozen. A many-old-facts-to-one-new-fact join
+        // table backing `PersonFactConsolidation`'s "merge" op:
+        // `ProfileFactRepository.recordSupersession` inserts one row per retired old fact,
+        // closing the single-column `profileFact.supersedesFactId` overwrite gap (§4.1 — calling
+        // `markSupersedes` repeatedly for the same new fact loses all but the last pointer)
+        // without touching that column's existing pairwise-supersede usage by `reconcileFacts`.
+        migrator.registerMigration("v6_profile_fact_supersession") { db in
+            try db.create(table: "profileFactSupersession") { t in
+                t.column("newFactId", .text).notNull()
+                    .references("profileFact", onDelete: .cascade)
+                t.column("oldFactId", .text).notNull()
+                    .references("profileFact", onDelete: .cascade)
+                t.primaryKey(["newFactId", "oldFactId"])
+            }
+        }
+
         return migrator
     }
 
