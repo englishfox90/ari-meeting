@@ -89,6 +89,23 @@ public final class MeetingDetailViewModel {
         meeting = .loaded(updated)
     }
 
+    /// Persists a hand-edited summary body and reflects it locally (the detail screen does
+    /// one-shot reads, so the loaded `summary` is patched in place like `rename` does for the
+    /// title). A call with no loaded summary, a blank body, or an unchanged body is a no-op —
+    /// editing never CREATES a summary, only revises one that really exists (No-Fake-State).
+    /// Referenced moments are re-parsed from the edited body so seek chips stay honest.
+    /// Throws on a real write failure.
+    public func saveSummaryEdit(_ markdown: String) async throws {
+        guard var updated = summary else { return }
+        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, markdown != updated.bodyMarkdown else { return }
+        updated.bodyMarkdown = markdown
+        updated.updatedAt = Date()
+        try await database.summaries.upsert(updated)
+        summary = updated
+        referencedMoments = ReferencedMoments.parse(from: markdown)
+    }
+
     /// Soft-deletes (tombstones) the meeting. The caller is responsible for dismissing the detail
     /// screen afterward (the list refreshes itself via its own observation). Throws on a real
     /// write failure.
