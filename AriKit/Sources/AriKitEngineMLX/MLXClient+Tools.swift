@@ -151,6 +151,14 @@ extension MLXClient: ToolCapableLLMClient {
             // turns would leave it stuck in `outsideThink` after the first turn's close and
             // misclassify every later turn's reasoning as answer text.
             var splitter = ThinkTagSplitter(startsInsideThink: true)
+            // M2 (code review 2026-07-23): holds this turn's non-think text back until the turn's
+            // outcome is known — a turn that goes on to request a tool call DISCARDS its held
+            // chatter (e.g. "Let me check.") instead of letting it stream as answer text; only a
+            // turn with zero tool calls flushes it as the real final answer. `.thinking` is
+            // UNAFFECTED — it always streams live via `absorb`'s passthrough. Consequence (accepted,
+            // plan review): the answer no longer token-streams on MLX — it appears once the final
+            // turn completes.
+            var turnAnswerBuffer = AgenticTurnAnswerBuffer()
 
             var rawTurnText = ""
             var pendingToolCalls: [ToolCall] = []
@@ -163,7 +171,9 @@ extension MLXClient: ToolCapableLLMClient {
                 } else if let chunk = item.chunk {
                     rawTurnText += chunk
                     for event in splitter.consume(chunk) {
-                        continuation.yield(event)
+                        if let toEmit = turnAnswerBuffer.absorb(event) {
+                            continuation.yield(toEmit)
+                        }
                     }
                 }
                 // `.info` (token/perf metrics) is not part of the `AgenticEvent` contract.
@@ -172,7 +182,14 @@ extension MLXClient: ToolCapableLLMClient {
             // tool call, nothing this turn's generation produced should carry pending state into
             // the next turn's brand-new splitter.
             for event in splitter.flush() {
-                continuation.yield(event)
+                if let toEmit = turnAnswerBuffer.absorb(event) {
+                    continuation.yield(toEmit)
+                }
+            }
+            // Resolve the turn's held-back answer text now that its outcome (tool calls or not) is
+            // known (M2) — discarded if this turn requested a tool, flushed otherwise.
+            if let resolved = turnAnswerBuffer.resolve(hadToolCalls: !pendingToolCalls.isEmpty) {
+                continuation.yield(resolved)
             }
 
             guard !pendingToolCalls.isEmpty else {
@@ -234,7 +251,10 @@ extension MLXClient: ToolCapableLLMClient {
         )
         do {
             let result = try await dispatch(call)
-            continuation.yield(.toolFinished(name: name, ok: true))
+            // M1: `dispatch` never throws for a tool-level failure (plan §4.3) — the ACTUAL
+            // outcome lives only in the result string's fixed prefix (`AgenticToolResultPrefix`),
+            // so `ok:` must be derived from it rather than hardcoded `true`.
+            continuation.yield(.toolFinished(name: name, ok: !AgenticToolOutcome.isFailure(result)))
             return result
         } catch {
             // `AgenticToolDispatch` documents itself as "must not throw for tool-level failures"

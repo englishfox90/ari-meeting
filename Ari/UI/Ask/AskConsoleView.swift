@@ -311,11 +311,37 @@ struct AskConsoleView: View {
     }
 }
 
-/// The thinking row (plan §5.5, `ask-meetings-agentic-tools.md`): the honest bouncing-dots
-/// placeholder before ANY reasoning/answer delta has arrived (`text.isEmpty`), live streaming
-/// reasoning text while unfolded, and a collapsed one-line disclosure once the answer starts
-/// (`folded == true`) — the user can re-expand it to read the model's reasoning. Removed entirely
-/// by the view model at `.done` (ephemeral, never persisted).
+/// A shared leading-icon width for every trace row (thinking sections AND tool-activity rows) so
+/// their icons — and therefore their label text — share one consistent leading edge regardless of
+/// which SF Symbol/spinner is showing (owner polish request, 2026-07-23: the two row kinds had
+/// mismatched indentation, breaking the interleaved trace's read as one flow).
+private enum AskTraceRowMetrics {
+    static let iconColumnWidth: CGFloat = 16
+    static let iconTextSpacing = MarginaliaSpacing.sm.value
+}
+
+/// One "Thinking" icon + label, at the shared trace leading edge (`AskTraceRowMetrics`) — factored
+/// out so a folded disclosure's label and an unfolded row's label align identically.
+private struct AskThinkingRowHeader: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: AskTraceRowMetrics.iconTextSpacing) {
+            Image(systemName: "ellipsis.bubble")
+                .frame(width: AskTraceRowMetrics.iconColumnWidth, alignment: .center)
+                .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+            Text("Thinking")
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+        }
+    }
+}
+
+/// The thinking row (plan §5.5, `ask-meetings-agentic-tools.md`; interleaved-trace amendment
+/// 2026-07-23): the honest bouncing-dots placeholder before ANY reasoning/answer delta has arrived
+/// (`text.isEmpty`), live streaming reasoning text while unfolded, and a collapsed one-line
+/// disclosure once the answer starts (`folded == true`) — the user can re-expand it to read the
+/// model's reasoning. An ask can show SEVERAL of these rows (one per interleaved section); all are
+/// RETAINED after `.done` (owner decision), never removed, session-view-only.
 private struct AskThinkingRow: View {
     let text: String
     let folded: Bool
@@ -331,37 +357,30 @@ private struct AskThinkingRow: View {
                         .italic()
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, MarginaliaSpacing.xs.value)
+                        .padding(.leading, AskTraceRowMetrics.iconColumnWidth + AskTraceRowMetrics.iconTextSpacing)
                 }
             } label: {
-                HStack(spacing: MarginaliaSpacing.xs.value) {
-                    Image(systemName: "ellipsis.bubble")
-                        .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
-                    Text("Thinking")
-                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                }
+                AskThinkingRowHeader()
             }
         } else if text.isEmpty {
             AskThinkingPulse()
         } else {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-                HStack(spacing: MarginaliaSpacing.xs.value) {
-                    Image(systemName: "ellipsis.bubble")
-                        .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
-                    Text("Thinking")
-                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                }
+                AskThinkingRowHeader()
                 Text(text)
                     .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                     .italic()
+                    .padding(.leading, AskTraceRowMetrics.iconColumnWidth + AskTraceRowMetrics.iconTextSpacing)
             }
         }
     }
 }
 
-/// One tool's dispatch lifecycle (plan §5.5): a small icon + its Swift-computed `displayLabel` +
-/// a spinner while `running`, swapped for a checkmark (success) or a subtle failure mark once
-/// finished. Shown only for a tool that actually ran (No-Fake-State) — never a fabricated progress
-/// indicator. Removed entirely by the view model at `.done` (ephemeral, never persisted).
+/// One tool's dispatch lifecycle (plan §5.5), at the shared trace leading edge
+/// (`AskTraceRowMetrics`, 2026-07-23 alignment polish): a small icon + its Swift-computed
+/// `displayLabel` + a spinner while `running`, swapped for a checkmark (success) or a subtle
+/// failure mark once finished. Shown only for a tool that actually ran (No-Fake-State) — never a
+/// fabricated progress indicator. RETAINED after `.done` (owner decision), never removed.
 private struct AskToolActivityRow: View {
     let label: String
     let running: Bool
@@ -369,8 +388,9 @@ private struct AskToolActivityRow: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        HStack(spacing: MarginaliaSpacing.sm.value) {
+        HStack(spacing: AskTraceRowMetrics.iconTextSpacing) {
             statusIcon
+                .frame(width: AskTraceRowMetrics.iconColumnWidth, alignment: .center)
             Text(label)
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
         }

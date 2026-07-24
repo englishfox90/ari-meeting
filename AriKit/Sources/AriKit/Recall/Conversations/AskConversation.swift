@@ -88,6 +88,31 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+extension AskMessage {
+    private enum CodingKeys: String, CodingKey {
+        case id, conversationId, role, content, sources, card, cards, createdAt
+    }
+
+    /// Mirrors `RecallResponse`'s own custom decoder (`RecallWireTypes.swift`, L6 code review
+    /// finding 2026-07-23): the synthesized `Decodable` would otherwise require the `cards` key to
+    /// be present, but a message persisted before this field existed (or decoded from any source
+    /// that omits it) has no such key. Missing `cards` falls back to `[card]` (or `[]`), never a
+    /// decode failure.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(AskMessageID.self, forKey: .id)
+        conversationId = try container.decode(AskConversationID.self, forKey: .conversationId)
+        role = try container.decode(String.self, forKey: .role)
+        content = try container.decode(String.self, forKey: .content)
+        sources = try container.decode([RecallSource].self, forKey: .sources)
+        let decodedCard = try container.decodeIfPresent(RecallCardPayload.self, forKey: .card)
+        cards = try container.decodeIfPresent([RecallCardPayload].self, forKey: .cards)
+            ?? (decodedCard.map { [$0] } ?? [])
+        card = decodedCard ?? cards.first
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+    }
+}
+
 /// A conversation with its full message history (← Rust `AskConversationDetailDto`,
 /// conversations.rs:75-78), ordered oldest-first (matches the Rust `messages` query's
 /// `ORDER BY created_at ASC`, `ask_conversation.rs:96`).

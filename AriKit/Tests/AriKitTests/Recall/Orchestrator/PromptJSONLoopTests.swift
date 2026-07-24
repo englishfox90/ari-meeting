@@ -130,8 +130,10 @@ struct PromptJSONLoopTests {
         #expect(await client.callCount == 1)
     }
 
-    @Test("two consecutive unparseable tool-shaped replies are treated as the final answer")
-    func twoConsecutiveUnparseableToolShapedRepliesBecomeFinalAnswer() async throws {
+    @Test(
+        "M5: two consecutive unparseable tool-shaped replies now THROW a descriptive error, instead of handing the model's raw garbage JSON to the user as an answer"
+    )
+    func twoConsecutiveUnparseableToolShapedRepliesThrow() async throws {
         let db = try AppDatabase.makeInMemory()
         let client = ScriptedPlainLLM(replies: [
             "```json\n{\"tool\": broken json here",
@@ -140,11 +142,53 @@ struct PromptJSONLoopTests {
         let toolset = makeToolset(db)
         let state = ToolTurnState()
 
-        let (answer, _) = try await RecallEngine.runPromptJSONLoop(
-            client: client, prepared: makePrepared(), toolset: toolset, state: state
-        )
-        #expect(answer.contains("still broken"))
+        await #expect(throws: RecallEngineError.self) {
+            _ = try await RecallEngine.runPromptJSONLoop(
+                client: client, prepared: makePrepared(), toolset: toolset, state: state
+            )
+        }
         #expect(await client.callCount == 2)
+    }
+
+    @Test("M1: a tool result with the \"Tool failed:\" prefix reports .toolFinished(ok: false), not a hardcoded true")
+    func toolFailureResultReportsOkFalse() async throws {
+        let db = try AppDatabase.makeInMemory()
+        // `get_meeting_summary` with a meeting id never surfaced this turn returns an "Unknown
+        // meeting id" string — not one of the 3 failure prefixes, so this asserts the SUCCESS side
+        // first, then a real failing case below via `find_person`'s repository-level failure path
+        // is exercised indirectly through the fixed prefix contract itself (AskToolsetTests already
+        // covers each tool's own honest strings; this test asserts the ORCHESTRATOR reports `ok:`
+        // faithfully from whatever string a tool call actually returns).
+        let client = ScriptedPlainLLM(replies: [
+            "```json\n{\"tool\": \"unknown_tool_name\", \"args\": {}}\n```",
+            "Final answer."
+        ])
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+        let log = EventLog()
+
+        _ = try await RecallEngine.runPromptJSONLoop(
+            client: client, prepared: makePrepared(), toolset: toolset, state: state
+        ) { event in await log.append(event) }
+
+        let events = await log.events
+        #expect(events.contains {
+            if case .toolFinished(name: "unknown_tool_name", ok: false) = $0 {
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    @Test(
+        "M5: a tool call whose JSON string argument contains a literal brace still parses (string/escape-aware brace counting)"
+    )
+    func toolCallWithBraceInsideStringArgumentParses() throws {
+        let text = "```json\n{\"tool\": \"search_transcripts\", \"args\": {\"query\": \"a { b\"}}\n```"
+        let parsed = try #require(RecallEngine.parseToolCall(from: text))
+        #expect(parsed.tool == "search_transcripts")
+        #expect(parsed.argumentsJSON.contains("a { b"))
     }
 
     @Test("the iteration cap is honored — the loop never exceeds RecallBounds.maxAgenticIterations turns")

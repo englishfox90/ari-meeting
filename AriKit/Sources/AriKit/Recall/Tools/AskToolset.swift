@@ -21,6 +21,13 @@ public actor ToolTurnState {
     public private(set) var sources: [RecallSource] = []
     public private(set) var cards: [RecallCardPayload] = []
     public private(set) var iterations = 0
+    /// Cumulative character count of every tool-result string returned so far this ask (M4, code
+    /// review 2026-07-23) — a SEPARATE budget from `iterations`: 8 iterations × the per-tool
+    /// `RecallBounds.maxToolResultChars` (16k) cap could otherwise total ~128k characters, enough
+    /// to overflow the local model's context window even though each individual result was
+    /// bounded. Reuses `RecallBounds.maxContextChars` (48k, the shell's own overall context
+    /// budget) rather than inventing a new constant.
+    public private(set) var toolResultCharsUsed = 0
     /// Meeting ids a tool result has already exposed to the model THIS turn — `get_meeting_summary`
     /// only accepts an id drawn from this set (the model never mints an id, plan §4.1 [P1]).
     public private(set) var surfacedMeetingIds: Set<MeetingID> = []
@@ -78,6 +85,19 @@ public actor ToolTurnState {
 
     private static func dedupeKey(for source: RecallSource) -> String {
         "\(source.meetingId)|\(source.matchContext.prefix(80))"
+    }
+
+    /// Whether the cumulative tool-result character budget still has room for ANOTHER dispatch —
+    /// checked BEFORE running a tool (M4), so a request that would push the running total over
+    /// `RecallBounds.maxContextChars` is refused instead of executed.
+    func hasRemainingToolResultBudget() -> Bool {
+        toolResultCharsUsed < RecallBounds.maxContextChars
+    }
+
+    /// Adds `charCount` to the cumulative tool-result budget — called once per dispatch, AFTER the
+    /// tool actually ran, with the length of its own (already per-tool-bounded) result string.
+    func accumulateToolResultChars(_ charCount: Int) {
+        toolResultCharsUsed += charCount
     }
 }
 
@@ -158,29 +178,42 @@ public struct AskToolset: Sendable {
 
     // MARK: - Dispatch (← `AgenticToolDispatch`, the frozen Slice-0 contract)
 
+    /// The exhaustion string shared by BOTH the per-ask iteration cap and the cumulative
+    /// tool-result character budget (M4) — from the model's point of view they mean the same
+    /// thing: stop calling tools and answer from what has already been returned.
+    private static let budgetExhaustedResult = "\(AgenticToolResultPrefix.budgetExhausted) Answer now from the information you already have."
+
     /// Executes one requested tool call. Never throws — an unknown tool, invalid arguments, a
     /// budget exhaustion, or a repository failure all return an honest string result so the model
     /// can recover (plan §4.3).
     public func dispatch(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
         guard await state.beginIteration() else {
-            return "Tool budget exhausted. Answer now from the information you already have."
+            return Self.budgetExhaustedResult
         }
-        switch call.name {
+        // M4: a SEPARATE cumulative-character budget, checked BEFORE the tool runs — independent
+        // of the iteration cap above (8 small results never trip this; a few large ones can,
+        // before the 8th iteration ever arrives).
+        guard await state.hasRemainingToolResultBudget() else {
+            return Self.budgetExhaustedResult
+        }
+        let result: String = switch call.name {
         case "search_transcripts":
-            return await searchTranscripts(call, state: state)
+            await searchTranscripts(call, state: state)
         case "find_person":
-            return await findPerson(call, state: state)
+            await findPerson(call, state: state)
         case "find_meeting":
-            return await findMeeting(call, state: state)
+            await findMeeting(call, state: state)
         case "get_meeting_summary":
-            return await getMeetingSummary(call, state: state)
+            await getMeetingSummary(call, state: state)
         case "todays_events":
-            return await todaysEvents(call, state: state)
+            await todaysEvents(call, state: state)
         case "list_recent_meetings":
-            return await listRecentMeetings(call, state: state)
+            await listRecentMeetings(call, state: state)
         default:
-            return "Unknown tool: \(call.name)"
+            "\(AgenticToolResultPrefix.unknownTool) \(call.name)"
         }
+        await state.accumulateToolResultChars(Recall.scalars(result).count)
+        return result
     }
 
     // MARK: - search_transcripts
@@ -192,10 +225,10 @@ public struct AskToolset: Sendable {
 
     private func searchTranscripts(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
         guard let input: SearchTranscriptsInput = Self.decode(call.argumentsJSON) else {
-            return "Invalid arguments: expected {\"query\": string}."
+            return "\(AgenticToolResultPrefix.invalidArguments) expected {\"query\": string}."
         }
         let query = input.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return "Invalid arguments: \"query\" must not be empty." }
+        guard !query.isEmpty else { return "\(AgenticToolResultPrefix.invalidArguments) \"query\" must not be empty." }
         let limit = min(max(input.limit ?? 8, 1), 8)
 
         let results: [TranscriptSearchResult]
@@ -206,7 +239,7 @@ public struct AskToolset: Sendable {
                 try await hybridSearch.globalSearch(query)
             }
         } catch {
-            return "Tool failed: could not search transcripts."
+            return "\(AgenticToolResultPrefix.toolFailed) could not search transcripts."
         }
         guard !results.isEmpty else { return "No matching transcript excerpts found for that query." }
 
@@ -246,13 +279,13 @@ public struct AskToolset: Sendable {
 
     private func findPerson(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
         guard let input: FindPersonInput = Self.decode(call.argumentsJSON) else {
-            return "Invalid arguments: expected {\"name\": string}."
+            return "\(AgenticToolResultPrefix.invalidArguments) expected {\"name\": string}."
         }
         let person: Person?
         do {
             person = try await tools.findPerson(nameContaining: input.name)
         } catch {
-            return "Tool failed: could not look up that person."
+            return "\(AgenticToolResultPrefix.toolFailed) could not look up that person."
         }
         guard let person else {
             return "No unique person matched \"\(input.name)\"."
@@ -308,13 +341,13 @@ public struct AskToolset: Sendable {
 
     private func findMeeting(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
         guard let input: FindMeetingInput = Self.decode(call.argumentsJSON) else {
-            return "Invalid arguments: expected {\"title_or_topic\": string}."
+            return "\(AgenticToolResultPrefix.invalidArguments) expected {\"title_or_topic\": string}."
         }
         let meeting: Meeting?
         do {
             meeting = try await tools.findMeeting(titleContaining: input.titleOrTopic)
         } catch {
-            return "Tool failed: could not look up that meeting."
+            return "\(AgenticToolResultPrefix.toolFailed) could not look up that meeting."
         }
         guard let meeting else {
             return "No unique meeting matched \"\(input.titleOrTopic)\"."
@@ -344,7 +377,7 @@ public struct AskToolset: Sendable {
 
     private func getMeetingSummary(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
         guard let input: GetMeetingSummaryInput = Self.decode(call.argumentsJSON) else {
-            return "Invalid arguments: expected {\"meeting_id\": string}."
+            return "\(AgenticToolResultPrefix.invalidArguments) expected {\"meeting_id\": string}."
         }
         let meetingId = MeetingID(input.meetingId)
         // [P1] Only a meeting id a tool result ALREADY surfaced this turn is honored — the model
@@ -356,7 +389,7 @@ public struct AskToolset: Sendable {
         do {
             summary = try await tools.summaryMarkdown(for: meetingId)
         } catch {
-            return "Tool failed: could not read that meeting's summary."
+            return "\(AgenticToolResultPrefix.toolFailed) could not read that meeting's summary."
         }
         guard let summary else {
             return "That meeting has no saved summary yet."
@@ -374,7 +407,7 @@ public struct AskToolset: Sendable {
     private func todaysEvents(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
         let input: TodaysEventsInput = Self.decode(call.argumentsJSON) ?? TodaysEventsInput(hour: nil, attendee: nil)
         if let hour = input.hour, !(0 ... 23).contains(hour) {
-            return "Invalid arguments: \"hour\" must be 0-23."
+            return "\(AgenticToolResultPrefix.invalidArguments) \"hour\" must be 0-23."
         }
         let attendee = input.attendee?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasAttendeeFilter = attendee.map { !$0.isEmpty } ?? false
@@ -387,7 +420,7 @@ public struct AskToolset: Sendable {
                 events = try await tools.calendarEvents(today: input.hour)
             }
         } catch {
-            return "Tool failed: could not read the calendar."
+            return "\(AgenticToolResultPrefix.toolFailed) could not read the calendar."
         }
         guard !events.isEmpty else { return "No matching events found on today's calendar." }
 
@@ -439,7 +472,7 @@ public struct AskToolset: Sendable {
         do {
             all = try await meetings.all()
         } catch {
-            return "Tool failed: could not list meetings."
+            return "\(AgenticToolResultPrefix.toolFailed) could not list meetings."
         }
         // `meetings.all()` is already newest-first; the allowed-set filter (series scope) preserves
         // that ordering since it only removes elements.

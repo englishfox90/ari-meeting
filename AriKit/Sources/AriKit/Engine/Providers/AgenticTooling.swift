@@ -58,6 +58,33 @@ public enum AgenticEvent: Sendable, Equatable {
     case toolFinished(name: String, ok: Bool)
 }
 
+/// The exact fixed prefixes `AskToolset.dispatch` uses for an honest (never-thrown) tool-level
+/// failure (plan §4.3) — defined ONCE here so `AskToolset`'s literal result strings and
+/// `AgenticToolOutcome.isFailure` below can never drift apart (code review finding M1,
+/// `ask-meetings-agentic-tools.md`, 2026-07-23).
+public enum AgenticToolResultPrefix {
+    public static let toolFailed = "Tool failed:"
+    public static let invalidArguments = "Invalid arguments:"
+    public static let unknownTool = "Unknown tool:"
+    /// NOT counted as a failure by `AgenticToolOutcome.isFailure` — the requested tool never ran
+    /// at all (the per-ask budget was already spent), so there is nothing about ITS execution to
+    /// mark `ok: false`; the caller-visible signal is the string itself.
+    public static let budgetExhausted = "Tool budget exhausted."
+}
+
+/// Classifies an `AgenticToolDispatch` result string as success/failure by its fixed prefix — the
+/// only honest way to derive `.toolFinished(ok:)` given the dispatch contract documents itself as
+/// never throwing for a tool-level failure (finding M1): without this, `ok:` was hardcoded `true`
+/// everywhere a dispatch call returned normally, so a tool that actually failed still rendered a
+/// green checkmark in the UI.
+public enum AgenticToolOutcome {
+    public static func isFailure(_ result: String) -> Bool {
+        result.hasPrefix(AgenticToolResultPrefix.toolFailed)
+            || result.hasPrefix(AgenticToolResultPrefix.invalidArguments)
+            || result.hasPrefix(AgenticToolResultPrefix.unknownTool)
+    }
+}
+
 /// Optional refinement of `LLMClient` — NO existing conformer changes. The recall orchestrator
 /// downcasts (`client as? any ToolCapableLLMClient`) to pick the native tool loop (ladder rung 1,
 /// plan §4.4); only `MLXClient` adopts this in the current plan.

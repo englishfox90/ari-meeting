@@ -111,6 +111,9 @@ extension RecallEngine {
             return RecallResponse(answer: reconciled, sources: sources, cards: cards)
         }
 
+        // L5: see the streaming entry point's identical guard below.
+        try Task.checkCancellation()
+
         // Rung 3: the exact, byte-identical pre-agentic pipeline.
         return try await answerMeetingsLocallySingleShot(
             question: question, meetingId: nil, seriesId: seriesId, history: history
@@ -158,13 +161,39 @@ extension RecallEngine {
                         return
                     }
 
-                    // Rung 3: forward the REAL, live-streaming pre-agentic pipeline verbatim. Any
-                    // `.thinking`/`.toolActivity` already forwarded above stays visible — only
-                    // ANSWER TEXT (`.delta`) is guaranteed never to mix between rungs, and none was
-                    // ever forwarded (committed == false, by construction).
+                    // L5: a user-initiated cancel racing a rung-1/2 throw must not still launch
+                    // rung 3 — without this guard, a cancelled ask could briefly kick off the
+                    // retrieval pipeline for a question the user already abandoned.
+                    guard !Task.isCancelled else {
+                        continuation.finish(throwing: CancellationError())
+                        return
+                    }
+
+                    // Rung 3: forward the REAL, live-streaming pre-agentic pipeline verbatim, with
+                    // a defense-in-depth `ThinkTagSplitter` (M3, plan §5.2) over its `.delta` text in
+                    // case a non-MLX model leaks `<think>` tags — a clean stream (no tags) passes
+                    // through byte-identical. Any `.thinking`/`.toolActivity` already forwarded above
+                    // stays visible — only ANSWER TEXT (`.delta`) is guaranteed never to mix between
+                    // rungs, and none was ever forwarded (committed == false, by construction).
+                    var rung3Splitter = ThinkTagSplitter()
                     for try await event in answerMeetingsLocallyStreamSingleShot(
                         question: question, meetingId: nil, seriesId: seriesId, history: history
                     ) {
+                        if case let .delta(text) = event {
+                            for splitEvent in rung3Splitter.consume(text) {
+                                if let mapped = Self.streamEvent(forSplit: splitEvent) {
+                                    continuation.yield(mapped)
+                                }
+                            }
+                            continue
+                        }
+                        if case .done = event {
+                            for splitEvent in rung3Splitter.flush() {
+                                if let mapped = Self.streamEvent(forSplit: splitEvent) {
+                                    continuation.yield(mapped)
+                                }
+                            }
+                        }
                         continuation.yield(event)
                     }
                     continuation.finish()
@@ -198,6 +227,22 @@ extension RecallEngine {
             continuation.yield(.toolActivity(
                 ToolActivity(toolName: name, displayLabel: AskToolset.displayLabel(for: name), phase: .finished(ok: ok))
             ))
+        }
+    }
+
+    /// Maps a `ThinkTagSplitter`-produced event back to the `RecallStreamEvent` rung 3 forwards
+    /// (M3) — only `.thinking`/`.answerDelta` are ever produced by the splitter; `nil` for an empty
+    /// string (mirrors `forwardAgenticEvent`'s own empty-delta guard).
+    private static func streamEvent(forSplit event: AgenticEvent) -> RecallStreamEvent? {
+        switch event {
+        case let .thinking(text):
+            guard !text.isEmpty else { return nil }
+            return .thinking(text)
+        case let .answerDelta(text):
+            guard !text.isEmpty else { return nil }
+            return .delta(text)
+        case .toolStarted, .toolFinished:
+            return nil
         }
     }
 
@@ -305,7 +350,10 @@ extension RecallEngine {
                 await onEvent(.toolStarted(name: toolName))
                 let call = AgenticToolCall(id: UUID().uuidString, name: toolName, argumentsJSON: argumentsJSON)
                 let result = await toolset.dispatch(call, state: state)
-                await onEvent(.toolFinished(name: toolName, ok: true))
+                // M1: `dispatch` never throws for a tool-level failure (plan §4.3) — the ACTUAL
+                // outcome lives only in the result string's fixed prefix, so `ok:` must be derived
+                // from it rather than hardcoded `true`.
+                await onEvent(.toolFinished(name: toolName, ok: !AgenticToolOutcome.isFailure(result)))
                 conversation += "\n\nTool result (\(toolName)): \(result)\n\nContinue, or answer the question directly now."
                 continue
             }
@@ -313,20 +361,54 @@ extension RecallEngine {
             if looksToolShaped(reply) {
                 consecutiveUnparseableToolShaped += 1
                 if consecutiveUnparseableToolShaped >= 2 {
-                    await onEvent(.answerDelta(reply))
-                    return (reply, true)
+                    // M5: two consecutive tool-shaped-but-unparseable replies now THROW a
+                    // descriptive error instead of handing the model's raw (garbage) JSON to the
+                    // user as if it were a real answer — an uncommitted throw here lands in the
+                    // existing rung-3 fallback (a real answer attempt), strictly better than
+                    // surfacing model JSON.
+                    throw RecallEngineError.generationFailed(
+                        "The model repeatedly produced an unparseable tool call instead of a valid tool request or a plain-text answer."
+                    )
                 }
                 conversation += "\n\nYour last reply was not valid JSON for a tool call. Reply with ONLY a fenced ```json tool call, or plain text to answer the question."
                 continue
             }
 
-            await onEvent(.answerDelta(reply))
-            return (reply, true)
+            let answer = await stripThinkTags(from: reply, onEvent: onEvent)
+            await onEvent(.answerDelta(answer))
+            return (answer, true)
         }
 
         let exhausted = "I wasn't able to finish gathering information from your saved meetings in time — try a narrower question."
         await onEvent(.answerDelta(exhausted))
         return (exhausted, true)
+    }
+
+    /// M3: routes `text` through a FRESH `ThinkTagSplitter` (symmetric default mode), forwarding
+    /// any `.thinking` span live via `onEvent` and returning the concatenated tag-free answer text
+    /// — the value actually returned/persisted as rung 2's answer. For text with no `<think>` tags
+    /// this is a byte-identical passthrough (the splitter's own contract).
+    private static func stripThinkTags(
+        from text: String,
+        onEvent: @Sendable (AgenticEvent) async -> Void
+    ) async -> String {
+        var splitter = ThinkTagSplitter()
+        var answer = ""
+        func absorb(_ events: [AgenticEvent]) async {
+            for event in events {
+                switch event {
+                case let .thinking(thinkingText):
+                    await onEvent(.thinking(thinkingText))
+                case let .answerDelta(answerText):
+                    answer += answerText
+                case .toolStarted, .toolFinished:
+                    break
+                }
+            }
+        }
+        await absorb(splitter.consume(text))
+        await absorb(splitter.flush())
+        return answer
     }
 
     /// The tool-definitions block + protocol instructions appended to the system prompt for the
@@ -363,19 +445,39 @@ extension RecallEngine {
         text.contains("\"tool\"") || text.contains("```json")
     }
 
+    /// String/escape-aware balanced-brace scan (M5): a `{`/`}` inside a JSON string value (e.g. a
+    /// `search_transcripts` query containing a literal brace, `{"args":{"query":"a { b"}}`) must
+    /// never perturb the depth count — the ORIGINAL naive counter would close the object early on
+    /// that inner `{` and fail to parse a perfectly valid tool call.
     private static func firstBalancedJSONObject(in text: String) -> String? {
         guard let openIndex = text.firstIndex(of: "{") else { return nil }
         var depth = 0
         var index = openIndex
+        var insideString = false
+        var previousWasEscape = false
         while index < text.endIndex {
             let character = text[index]
-            if character == "{" {
-                depth += 1
-            }
-            if character == "}" {
-                depth -= 1
-                if depth == 0 {
-                    return String(text[openIndex ... index])
+            if insideString {
+                if previousWasEscape {
+                    previousWasEscape = false
+                } else if character == "\\" {
+                    previousWasEscape = true
+                } else if character == "\"" {
+                    insideString = false
+                }
+            } else {
+                switch character {
+                case "\"":
+                    insideString = true
+                case "{":
+                    depth += 1
+                case "}":
+                    depth -= 1
+                    if depth == 0 {
+                        return String(text[openIndex ... index])
+                    }
+                default:
+                    break
                 }
             }
             index = text.index(after: index)
