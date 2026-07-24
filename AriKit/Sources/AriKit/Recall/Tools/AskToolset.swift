@@ -113,17 +113,23 @@ public struct AskToolset: Sendable {
     /// Series-scope pre-binding: when non-`nil`, `search_transcripts`/`list_recent_meetings` are
     /// restricted to this set of member meetings (mirrors `HybridSearch.globalSearchScoped`).
     let allowedMeetingIds: Set<MeetingID>?
+    /// The current instant, injected so `calendar_events`' tense logic ("already ended",
+    /// `upcoming_only`) is testable at a FIXED time. Without this a test asserting "an 11:00 event
+    /// has ended" would pass or fail depending on the wall-clock hour the suite happened to run at.
+    let clock: @Sendable () -> Date
 
     public init(
         tools: RecallTools,
         hybridSearch: HybridSearch,
         meetings: MeetingRepository,
-        allowedMeetingIds: Set<MeetingID>? = nil
+        allowedMeetingIds: Set<MeetingID>? = nil,
+        clock: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.tools = tools
         self.hybridSearch = hybridSearch
         self.meetings = meetings
         self.allowedMeetingIds = allowedMeetingIds
+        self.clock = clock
     }
 
     // MARK: - Tool definitions (plan §4.1 — terse, written for a 4B model)
@@ -151,9 +157,9 @@ public struct AskToolset: Sendable {
                 parametersJSONSchema: #"{"type":"object","properties":{"meeting_id":{"type":"string"}},"required":["meeting_id"]}"#
             ),
             AgenticToolDefinition(
-                name: "todays_events",
-                description: "Today's calendar events. If the question names a person, ALWAYS pass attendee=<name>. If it names a time, pass hour (0-23, e.g. 18 for 6pm). A calendar event means something is SCHEDULED, never that it was recorded or discussed.",
-                parametersJSONSchema: #"{"type":"object","properties":{"hour":{"type":"integer"},"attendee":{"type":"string"}}}"#
+                name: "calendar_events",
+                description: "The user's calendar. Defaults to TODAY only. For anything about the future — \"next\", \"upcoming\", \"tomorrow\", \"this week\" — you MUST pass days_ahead (e.g. 14) and upcoming_only=true, or you will only see today and miss the answer. If the question names a person, ALWAYS pass attendee=<name>. If it names a time of day, pass hour (0-23, e.g. 18 for 6pm). A calendar event means something is SCHEDULED, never that it was recorded or discussed.",
+                parametersJSONSchema: #"{"type":"object","properties":{"hour":{"type":"integer"},"attendee":{"type":"string"},"days_ahead":{"type":"integer"},"days_back":{"type":"integer"},"upcoming_only":{"type":"boolean"}}}"#
             ),
             AgenticToolDefinition(
                 name: "list_recent_meetings",
@@ -170,7 +176,7 @@ public struct AskToolset: Sendable {
         case "find_person": "Looking up person"
         case "find_meeting": "Looking up meeting"
         case "get_meeting_summary": "Reading meeting summary"
-        case "todays_events": "Checking today's calendar"
+        case "calendar_events": "Checking the calendar"
         case "list_recent_meetings": "Listing recent meetings"
         default: "Running \(toolName)"
         }
@@ -205,8 +211,8 @@ public struct AskToolset: Sendable {
             await findMeeting(call, state: state)
         case "get_meeting_summary":
             await getMeetingSummary(call, state: state)
-        case "todays_events":
-            await todaysEvents(call, state: state)
+        case "calendar_events":
+            await calendarEvents(call, state: state)
         case "list_recent_meetings":
             await listRecentMeetings(call, state: state)
         default:
@@ -397,32 +403,77 @@ public struct AskToolset: Sendable {
         return Self.bound(summary)
     }
 
-    // MARK: - todays_events
+    // MARK: - calendar_events
 
-    private struct TodaysEventsInput: Decodable {
+    private struct CalendarEventsInput: Decodable {
         var hour: Int?
         var attendee: String?
+        var daysAhead: Int?
+        var daysBack: Int?
+        var upcomingOnly: Bool?
+        enum CodingKeys: String, CodingKey {
+            case hour
+            case attendee
+            case daysAhead = "days_ahead"
+            case daysBack = "days_back"
+            case upcomingOnly = "upcoming_only"
+        }
     }
 
-    private func todaysEvents(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
-        let input: TodaysEventsInput = Self.decode(call.argumentsJSON) ?? TodaysEventsInput(hour: nil, attendee: nil)
+    /// Hard ceiling on how far ahead/back one call may look — the store holds −30/+90 days, but an
+    /// unbounded window would let a single call return months of events and blow the per-result
+    /// budget. Clamped (not rejected) so an over-eager `days_ahead: 365` still answers honestly
+    /// over the window it did search, which the result text states outright.
+    private static let maxCalendarWindowDays = 30
+
+    private func calendarEvents(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
+        let input: CalendarEventsInput = Self.decode(call.argumentsJSON) ?? CalendarEventsInput()
         if let hour = input.hour, !(0 ... 23).contains(hour) {
             return "\(AgenticToolResultPrefix.invalidArguments) \"hour\" must be 0-23."
         }
         let attendee = input.attendee?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasAttendeeFilter = attendee.map { !$0.isEmpty } ?? false
+        let upcomingOnly = input.upcomingOnly ?? false
+        // Default window is TODAY (`0`/`0`) — the pre-2026-07-23 behavior, preserved so an
+        // unqualified "what's on my calendar" doesn't suddenly dump a fortnight. A forward-looking
+        // question must say so via `days_ahead`; `upcoming_only` alone also implies a forward
+        // question, so it widens the default to a fortnight rather than uselessly meaning
+        // "the rest of today" (a weak model reliably passes one or the other, not always both).
+        let defaultAhead = upcomingOnly ? 14 : 0
+        let daysAhead = min(max(input.daysAhead ?? defaultAhead, 0), Self.maxCalendarWindowDays)
+        let daysBack = min(max(input.daysBack ?? 0, 0), Self.maxCalendarWindowDays)
+        let now = clock()
+        let window = RecallTools.calendarWindow(daysBack: daysBack, daysAhead: daysAhead, now: now)
+        let isTodayOnly = daysAhead == 0 && daysBack == 0
         let wasFiltered = hasAttendeeFilter || input.hour != nil
-        let events: [CalendarEvent]
+
+        var events: [CalendarEvent]
         do {
             if hasAttendeeFilter, let attendee {
-                events = try await tools.calendarEventsToday(matchingAttendeeName: attendee)
+                events = try await tools.calendarEvents(in: window, matchingAttendeeName: attendee)
+                // The attendee path applies its own ambiguity discipline over the whole window, so
+                // `upcoming_only` is applied here rather than pushed into that query.
+                if upcomingOnly {
+                    events = events.filter { $0.endTime > now }
+                }
             } else {
-                events = try await tools.calendarEvents(today: input.hour)
+                events = try await tools.calendarEvents(
+                    in: window, hour: input.hour, upcomingOnly: upcomingOnly, now: now
+                )
             }
         } catch {
             return "\(AgenticToolResultPrefix.toolFailed) could not read the calendar."
         }
-        guard !events.isEmpty else { return "No matching events found on today's calendar." }
+        guard !events.isEmpty else {
+            // An honest empty result that also tells the model how to widen the search — without
+            // this, a today-clamped miss on a "when do I next…" question reads as a definitive
+            // "you have nothing", which is exactly the 2026-07-23 failure.
+            let scope = Self.windowLabel(daysBack: daysBack, daysAhead: daysAhead, upcomingOnly: upcomingOnly)
+            let hint = isTodayOnly
+                ? " If the question is about the future, call this tool again with days_ahead (e.g. 14) and upcoming_only=true."
+                : ""
+            return "No matching events found on the calendar \(scope).\(hint)"
+        }
 
         // Card-attachment selectivity (2026-07-23 live-test failure A): a FILTERED call (attendee
         // and/or hour supplied) is what the question was actually about, so those events' cards
@@ -432,11 +483,20 @@ public struct AskToolset: Sendable {
         // otherwise attaching none avoids stacking one card per event on an unrelated question.
         let attachCards = wasFiltered || events.count <= 2
 
-        var lines: [String] = []
+        // State the searched window and the ordering outright. Without it the model cannot tell a
+        // one-day result from a fortnight's, and "the first line is the soonest" is exactly the
+        // fact a "when do I NEXT…" question turns on — leaving it implicit invites the model to
+        // pick whichever event it read most recently.
+        let scope = Self.windowLabel(daysBack: daysBack, daysAhead: daysAhead, upcomingOnly: upcomingOnly)
+        var lines: [String] = ["Calendar \(scope), earliest first:"]
         for event in events {
             let localTime = RecallCardDisplay.friendlyDate(RFC3339.string(from: event.startTime)) ?? "time unavailable"
             let attendeeNames = event.attendees.compactMap(\.name)
-            var line = "\"\(event.title)\" at \(localTime) — attendees: \(attendeeNames.joined(separator: ", "))."
+            // Swift-computed day/tense annotation, never left to model date arithmetic (the same
+            // reasoning as `RecallEngine+Tools.relativeDayAnnotation`). "already ended" is the fix
+            // for the 2026-07-23 report that an 11:00 event was offered at 20:00 as what's next.
+            let dayNote = Self.relativeDayNote(for: event, now: now)
+            var line = "\"\(event.title)\" at \(localTime)\(dayNote) — attendees: \(attendeeNames.joined(separator: ", "))."
             if let linkedMeetingId = event.meetingId {
                 await state.surface(linkedMeetingId)
                 line += " This event has a recorded meeting (id \(linkedMeetingId.rawValue))."
@@ -456,6 +516,39 @@ public struct AskToolset: Sendable {
             }
         }
         return Self.bound(lines.joined(separator: "\n"))
+    }
+
+    /// A short, honest description of the window a `calendar_events` call actually searched — used
+    /// in BOTH the empty and non-empty results so "nothing found" can never be read as "nothing
+    /// exists" when only today was searched.
+    private static func windowLabel(daysBack: Int, daysAhead: Int, upcomingOnly: Bool) -> String {
+        let base: String = switch (daysBack, daysAhead) {
+        case (0, 0): "today"
+        case (0, 1): "today and tomorrow"
+        case (0, _): "for the next \(daysAhead) days"
+        case (_, 0): "for the last \(daysBack) days through today"
+        default: "from \(daysBack) day(s) ago through \(daysAhead) day(s) ahead"
+        }
+        return upcomingOnly ? "\(base) (not-yet-finished events only)" : base
+    }
+
+    /// " (today)" / " (tomorrow)" / " (already ended)" — real, Swift-computed, never inferred by
+    /// the model. An event on today's date that has already finished gets BOTH facts, since "today"
+    /// alone would still read as available.
+    private static func relativeDayNote(for event: CalendarEvent, now: Date) -> String {
+        let calendar = Calendar.current
+        var parts: [String] = []
+        if calendar.isDateInToday(event.startTime) {
+            parts.append("today")
+        } else if calendar.isDateInTomorrow(event.startTime) {
+            parts.append("tomorrow")
+        } else if calendar.isDateInYesterday(event.startTime) {
+            parts.append("yesterday")
+        }
+        if event.endTime <= now {
+            parts.append("already ended")
+        }
+        return parts.isEmpty ? "" : " (\(parts.joined(separator: ", ")))"
     }
 
     // MARK: - list_recent_meetings

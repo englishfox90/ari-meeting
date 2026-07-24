@@ -368,7 +368,7 @@ struct RecallEngineAgenticTests {
     }
 
     @Test(
-        "6pm attendees: todays_events(hour: 18) → a .calendarEvent card, attendee names in the answer, zero sources, no recorded/discussed claim"
+        "6pm attendees: calendar_events(hour: 18) → a .calendarEvent card, attendee names in the answer, zero sources, no recorded/discussed claim"
     )
     func sixPMAttendeesIntegration() async throws {
         let db = try AppDatabase.makeInMemory()
@@ -386,7 +386,7 @@ struct RecallEngineAgenticTests {
         ))
 
         let client = ScriptedDispatchingToolClient(
-            calls: [.init(name: "todays_events", argumentsJSON: #"{"hour": 18}"#)],
+            calls: [.init(name: "calendar_events", argumentsJSON: #"{"hour": 18}"#)],
             finalAnswer: "James Nance and Sarah Ammon are attending the 6pm meeting (Evening review), which is scheduled but not yet recorded."
         )
         let engine = makeEngine(db, client: client, modelConfig: RecallModelConfig(provider: "mlx", model: "mlx"))
@@ -451,7 +451,7 @@ struct RecallEngineAgenticTests {
     }
 
     @Test(
-        "Card/answer contradiction regression: a resolved todays_events card's facts have no competing excerpt block that could contradict them"
+        "Card/answer contradiction regression: a resolved calendar_events card's facts have no competing excerpt block that could contradict them"
     )
     func cardAnswerContradictionRegression() async throws {
         let db = try AppDatabase.makeInMemory()
@@ -463,7 +463,7 @@ struct RecallEngineAgenticTests {
         ))
 
         let client = ScriptedDispatchingToolClient(
-            calls: [.init(name: "todays_events", argumentsJSON: "{}")],
+            calls: [.init(name: "calendar_events", argumentsJSON: "{}")],
             finalAnswer: "James Nance is on today's calendar for \"Today sync\"."
         )
         let engine = makeEngine(db, client: client, modelConfig: RecallModelConfig(provider: "mlx", model: "mlx"))

@@ -49,12 +49,28 @@ extension RecallEngine {
         // calendar today" into a confident-sounding "No". `calendarEventsToday` already returns `[]`
         // for zero OR ambiguous (>1 distinct attendee name) matches — same ambiguity-safe discipline
         // as `findPerson`.
-        let todaysEvents = try await tools.calendarEventsToday(matchingAttendeeName: nameQuery)
+        //
+        // The window is today→+14 days, NOT today (2026-07-23 bug): "when do I next have my 1:1
+        // with Erin" resolved against today alone, so tomorrow's 1:1 was fetched from the store and
+        // discarded, and the answer became a confident "not today" built on an event that had
+        // already ended hours earlier.
+        let now = Date()
+        let windowEvents = try await tools.calendarEvents(
+            in: RecallTools.calendarWindow(daysBack: 0, daysAhead: 14, now: now),
+            matchingAttendeeName: nameQuery
+        )
         let person = try await tools.findPerson(nameContaining: nameQuery)
 
-        if let event = todaysEvents.first {
-            return try await resolveCalendarEventToday(
-                event: event, person: person, tools: tools, nameQuery: nameQuery
+        // Prefer the soonest event that has NOT finished — that is what "next"/"do I have" means.
+        // Only when nothing is still upcoming do we fall back to the most recent already-ended
+        // event in the window, which the fact line then labels as past rather than passing off as
+        // available (`relativeDayAnnotation` supplies "(today)"/"(tomorrow)"/"(already ended)").
+        let nextEvent = windowEvents.first { $0.endTime > now }
+            ?? windowEvents.last { $0.endTime <= now }
+
+        if let event = nextEvent {
+            return try await resolveCalendarEvent(
+                event: event, person: person, tools: tools, nameQuery: nameQuery, now: now
             )
         }
 
@@ -62,16 +78,17 @@ extension RecallEngine {
         return try await resolvePersonHistory(person: person, tools: tools)
     }
 
-    /// Calendar precedence: a "today" question is most directly answered by what's actually
-    /// scheduled today. This is a DIFFERENT fact from "recorded meetings" — a calendar entry means
+    /// Calendar precedence: a scheduling question is most directly answered by what's actually on
+    /// the calendar. This is a DIFFERENT fact from "recorded meetings" — a calendar entry means
     /// "scheduled," never "happened" or "discussed" (plan decision, 2026-07-23). When a `Person`
     /// record ALSO resolves, both real facts are stated, clearly separated, never merged into one
     /// sentence that could imply the calendar event was recorded/discussed.
-    private static func resolveCalendarEventToday(
+    private static func resolveCalendarEvent(
         event: CalendarEvent,
         person: Person?,
         tools: RecallTools,
-        nameQuery: String
+        nameQuery: String,
+        now: Date
     ) async throws -> ResolvedEntity {
         let attendeeNames = event.attendees.compactMap(\.name)
         let startTimeRFC3339 = RFC3339.string(from: event.startTime)
@@ -99,8 +116,16 @@ extension RecallEngine {
         // so directly here, independent of whether a `Person` row also resolves (person and
         // event-linkage are separate facts).
         let linkedNote = event.meetingId != nil ? " This event has a recorded meeting." : ""
-        let calendarFact = "Calendar: \(matchedAttendee) is an attendee on \"\(event.title)\" today"
-            + (localTime.map { " at \($0)" } ?? "") + ", among \(attendeeNames.count) attendee(s) total."
+        // The DAY is stated from the event's own date — it used to be the hard-coded word "today",
+        // which was simply false for any other day and made a forward-looking window impossible to
+        // express (2026-07-23). `dayAnnotation` adds the Swift-computed "(today)"/"(tomorrow)"/
+        // "(already ended)" tense so the model never has to derive it from date arithmetic.
+        // `localTime` is already "Jul 24, 2026 at 11:00 AM" — a full local date AND time, so the
+        // day is carried by the event's own value rather than a hard-coded word.
+        let whenLabel = localTime ?? "an unavailable date"
+        let calendarFact = "Calendar: \(matchedAttendee) is an attendee on \"\(event.title)\" on "
+            + "\(whenLabel)\(calendarDayAnnotation(for: event, now: now)), "
+            + "among \(attendeeNames.count) attendee(s) total."
             + linkedNote
 
         var recordedFact = ""
@@ -201,6 +226,24 @@ extension RecallEngine {
     /// "last met Jul 23, 2026" sitting right next to "Today's date is ... July 23, 2026" was NOT
     /// reliably connected into "yes, that's today" by the model; LLM date arithmetic is not
     /// something to depend on for a fact Swift can just state.
+    /// The calendar-event flavour of `relativeDayAnnotation`: it also spans FORWARD ("(tomorrow)")
+    /// and states tense ("(already ended)"), which a recorded-meeting date never needs. Both facts
+    /// can apply at once — an event earlier today is "(today, already ended)", the distinction the
+    /// 2026-07-23 report turned on (an 11:00 event offered at 20:00 as what was next).
+    private static func calendarDayAnnotation(for event: CalendarEvent, now: Date) -> String {
+        let calendar = Calendar.current
+        var parts: [String] = []
+        if calendar.isDateInToday(event.startTime) {
+            parts.append("today")
+        } else if calendar.isDateInTomorrow(event.startTime) {
+            parts.append("tomorrow")
+        }
+        if event.endTime <= now {
+            parts.append("already ended")
+        }
+        return parts.isEmpty ? "" : " (\(parts.joined(separator: ", ")))"
+    }
+
     private static func relativeDayAnnotation(for date: Date) -> String? {
         let calendar = Calendar.current
         if calendar.isDateInToday(date) {

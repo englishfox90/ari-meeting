@@ -13,14 +13,14 @@ Supersedes the retrieve-always integration shape of `docs/plans/ask-meetings-too
 **Goal:** rebuild the global/series-scope Ask pipeline as *route → (agentic tool loop) → answer*:
 
 1. Retrieval (`HybridSearch`) becomes a **tool** (`search_transcripts`) the model calls when it needs transcript evidence — never an unconditional 48k-char injection.
-2. Deterministic entity lookups (`RecallTools`) become tools too (`find_person`, `find_meeting`, `todays_events`, …), each attaching a typed `RecallCardPayload` when it resolves a real entity.
+2. Deterministic entity lookups (`RecallTools`) become tools too (`find_person`, `find_meeting`, `calendar_events`, …), each attaching a typed `RecallCardPayload` when it resolves a real entity.
 3. Model **thinking** is enabled for Ask (Qwen3 `<think>` blocks) and streamed to the UI as a distinct, muted "thinking" style — ephemeral, never persisted.
 4. Tool activity ("Searching transcripts…", "Looked up Landon Star") streams to the UI honestly (No-Fake-State: shown only when a tool actually ran).
 
 **Target queries (acceptance bar, §8.6):**
 - "Remind me about that meeting I had with Landon earlier" → `find_person` → person/meeting card + summary recap.
 - "What are the action items of this meeting" (meeting-scoped) → action items with `[Sn]`/`@ref` citations — **unchanged single-shot path**, see §4.5.
-- "Who is in the 6pm meeting later" → NEW `todays_events` tool (event-by-time/today's-agenda — no data path exists today: `RecallTools.calendarEventsToday(matchingAttendeeName:)` requires an attendee-name query, `RecallTools.swift:155-178`) → calendar-event card + attendee answer.
+- "Who is in the 6pm meeting later" → NEW `calendar_events` tool (event-by-time/today's-agenda — no data path exists today: `RecallTools.calendarEventsToday(matchingAttendeeName:)` requires an attendee-name query, `RecallTools.swift:155-178`) → calendar-event card + attendee answer.
 
 **Seam:** entirely inside the already-Swift Recall stack. Integration points: `RecallEngine.prepare`/`answerMeetingsLocally`/`answerMeetingsLocallyStream` (`AriKit/Sources/AriKit/Recall/Orchestrator/RecallEngine.swift:104-306`, `RecallStream.swift:34-80`), the provider layer (`Engine/Providers/LLMClient.swift`), `MLXClient` (`AriKitEngineMLX/MLXClient.swift`), and the Ask VM/UI (`AriViewModels/Ask/`, `Ari/UI`). Not a re-implementation of a frozen Rust feature: the Rust `agent.rs` loop was Claude-API-only, never ported (`RecallEngine.swift:11-17,137-141`); this design is provider-tiered, on-device-first, and structurally different. Its **bounds** are ported as invariants (§6): `MAX_ITERATIONS=8`, `MAX_SOURCES=24`, `MAX_TRANSCRIPT_CHARS=8_000`, `MAX_TOOL_RESULT_CHARS=16_000` (`ari-engine/src/recall/agent.rs:31-35`).
 
@@ -157,7 +157,7 @@ See §4.2–§4.4. `RecallEngine` gains an `askToolset` computed property (mirro
 | `find_person` | `{name: string}` | `RecallTools.findPerson` + `meetings(withPerson:)` (`RecallTools.swift:45-99`) | Name, role/org, real meeting count, last-met date (± "(today)"/"(yesterday)" per `RecallEngine+Tools.swift:204-213`), **plus their ≤3 most recent meetings as `id / title / date` lines [P1]** — without this, `get_meeting_summary` is unreachable from a person lookup (the "Landon recap" flow, §8.6.1). Honest `"No unique person matched"` on nil | `.person` |
 | `find_meeting` | `{title_or_topic: string}` | `RecallTools.findMeeting` + `hasSummary` | Title, date, hasSummary, id (surfaced [P1]); on miss, honest no-match | `.meeting` |
 | `get_meeting_summary` | `{meeting_id: string}` | `RecallTools.summaryMarkdown(for:)` (§3.3) | Summary markdown ≤ 8k chars; only for meeting IDs previously surfaced by another tool this turn (checked against `ToolTurnState.surfacedMeetingIds` — the model never mints IDs) | — |
-| `todays_events` | `{hour?: int 0-23, attendee?: string}` | NEW `RecallTools.calendarEvents(today:)` + email/name attendee filter (§3.3) | Per event: title, local start time, attendee names, linked-recording flag (+ linked meeting id surfaced when present [P1]); scheduled-≠-recorded wording baked in (`RecallEngine+Tools.swift:65-104` conventions) | `.calendarEvent` |
+| `calendar_events` | `{hour?: int 0-23, attendee?: string, days_ahead?: int, days_back?: int, upcoming_only?: bool}` | `RecallTools.calendarEvents(in:hour:upcomingOnly:now:)` + email/name attendee filter (§3.3). Window defaults to today; `days_ahead`/`days_back` are clamped to 30 days. **2026-07-23:** the tool was `todays_events` and could ONLY see today, so "when do I next have my 1:1 with Erin" could not be answered at all — tomorrow's event was read from the store and discarded. `upcoming_only` filters `endTime > now`, so an event that already ended earlier today is never offered as what's next | Per event: title, local start time, attendee names, linked-recording flag (+ linked meeting id surfaced when present [P1]); scheduled-≠-recorded wording baked in (`RecallEngine+Tools.swift:65-104` conventions) | `.calendarEvent` |
 | `list_recent_meetings` | `{limit?: int≤10}` | `db.meetings.all()` prefix (already newest-first, non-deleted, `RecallTools.swift:97`) | id, title, date per row (ids surfaced [P1]) | — |
 
 **[P1] Principal amendment — surfaced-ID plumbing:** every tool that exposes a meeting ID in its result text also records it via `ToolTurnState.surface(_:)`; `get_meeting_summary` validates against that set. This closes the gap where `find_person → get_meeting_summary` (target query 1) would otherwise be structurally impossible.
@@ -260,7 +260,7 @@ Thinking text renders in a visually distinct muted style: Marginalia muted-ink t
 
 ### 8.2 `AskToolsetTests` (in-memory `AppDatabase`)
 - Each tool: happy path, zero-match honest text, ambiguous-match honest text, bounded output (oversized summary truncated at 8k; search result ≤16k).
-- `todays_events`: hour filter (18 → only 6 pm events), attendee email match, non-today events excluded, scheduled-≠-recorded wording present.
+- `calendar_events`: hour filter (18 → only 6 pm events), attendee email match, non-today events excluded, scheduled-≠-recorded wording present.
 - `get_meeting_summary` rejects a meeting ID not previously surfaced this turn; accepts one surfaced by `find_person` [P1].
 - `ToolTurnStateTests`: source dedup, hard cap at 24 with stable `[Sn]` indices (port of `agent.rs` `register_source_dedups_and_caps` test, `agent.rs:571`), iteration budget returns the exhaustion string at call 9, card dedup, surfaced-ID set accumulation [P1].
 
@@ -285,11 +285,11 @@ A `ScriptedToolLLM` fake that replays a fixed `[AgenticEvent]` script and assert
 ### 8.6 Target-query integration tests (seeded in-memory DB, scripted model)
 1. **Landon recap** — seed person "Landon Star" + calendar-linked meeting + summary; script `find_person` → `get_meeting_summary` → answer. Assert `.person` card attached, the meeting ID flowed through the surfaced-ID gate [P1], answer references the summary, no invented `[Sn]`.
 2. **Meeting-scoped action items** — re-assert the untouched single-shot path: full transcript in prompt, `@ref` in-range kept, `[Sn]` verified (extends existing `RecallEngineTests` meeting-scope cases; guards this plan against regressing it).
-3. **6 pm attendees** — seed a today-18:00 event with attendees, no recording; script `todays_events(hour: 18)`. Assert `.calendarEvent` card, attendee names in answer, zero sources, and the answer never claims the meeting was recorded/discussed.
+3. **6 pm attendees** — seed a today-18:00 event with attendees, no recording; script `calendar_events(hour: 18)`. Assert `.calendarEvent` card, attendee names in answer, zero sources, and the answer never claims the meeting was recorded/discussed.
 
 ### 8.7 Regression tests for the two live failures (2026-07-23)
 - **Wrong-person-from-excerpts**: seed two people with similar contexts; agentic path with only `find_person("<A>")` called → prompt contains NO unrequested excerpts about person B (assert the assembled prompt lacks the `"Authoritative local meeting sources"` block entirely and contains no B-content), answer scripted from tool result only.
-- **Card/answer contradiction**: `todays_events` resolves an event; assert the terminal `.done` card's attendee/time facts and the (scripted-model-checked) prompt contain no competing excerpt block that could contradict — structurally, the only calendar facts in context are the tool result that produced the card.
+- **Card/answer contradiction**: `calendar_events` resolves an event; assert the terminal `.done` card's attendee/time facts and the (scripted-model-checked) prompt contain no competing excerpt block that could contradict — structurally, the only calendar facts in context are the tool result that produced the card.
 
 ### 8.8 VM/UI tests
 - `AskViewModelTests`: `.thinking` accumulates into the thinking row; first `.delta` folds it; `.done` removes it; `.toolActivity` rows appear/complete; thinking/tool rows never persisted (assert `appendMessageOp` receives only answer/sources/cards); superseding ask drops in-flight thinking/tool rows.

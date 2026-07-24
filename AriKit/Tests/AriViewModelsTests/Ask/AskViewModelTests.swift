@@ -678,7 +678,7 @@ struct AskViewModelTests {
         }
         #expect(
             message ==
-                "Ask Meetings can answer only from saved local Ari Meeting transcripts, plus real calendar scheduling facts for today's events (event times and attendees) when supplied — a calendar entry means something is scheduled, never that it was recorded or discussed. It cannot access email, accounts, internet search, files outside Ari Meeting, or calendar dates other than today."
+                "Ask Meetings can answer only from saved local Ari Meeting transcripts, plus real calendar scheduling facts for your scheduled events (event times and attendees) when supplied — a calendar entry means something is scheduled, never that it was recorded or discussed. It cannot access email, accounts, internet search, or files outside Ari Meeting."
         )
         #expect(!showSettings)
     }
@@ -767,7 +767,7 @@ struct AskViewModelTests {
         viewModel.send()
 
         controllable.continuation.yield(.toolActivity(
-            ToolActivity(toolName: "todays_events", displayLabel: "Checking today's calendar", phase: .started)
+            ToolActivity(toolName: "calendar_events", displayLabel: "Checking the calendar", phase: .started)
         ))
         await waitUntil {
             viewModel.items.contains {
@@ -787,14 +787,14 @@ struct AskViewModelTests {
         }), case let .toolActivity(toolName, label, running, _) = runningItem.kind else {
             Issue.record("expected a running toolActivity row"); return
         }
-        #expect(toolName == "todays_events")
-        #expect(label == "Checking today's calendar")
+        #expect(toolName == "calendar_events")
+        #expect(label == "Checking the calendar")
         #expect(running)
 
         controllable.continuation.yield(.toolActivity(
             ToolActivity(
-                toolName: "todays_events",
-                displayLabel: "Checking today's calendar",
+                toolName: "calendar_events",
+                displayLabel: "Checking the calendar",
                 phase: .finished(ok: true)
             )
         ))
@@ -998,7 +998,7 @@ struct AskViewModelTests {
         viewModel.send()
 
         controllable.continuation.yield(.toolActivity(
-            ToolActivity(toolName: "todays_events", displayLabel: "Checking today's calendar", phase: .started)
+            ToolActivity(toolName: "calendar_events", displayLabel: "Checking the calendar", phase: .started)
         ))
         await waitUntil {
             viewModel.items.contains {
@@ -1011,8 +1011,8 @@ struct AskViewModelTests {
         }
         controllable.continuation.yield(.toolActivity(
             ToolActivity(
-                toolName: "todays_events",
-                displayLabel: "Checking today's calendar",
+                toolName: "calendar_events",
+                displayLabel: "Checking the calendar",
                 phase: .finished(ok: true)
             )
         ))

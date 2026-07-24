@@ -152,20 +152,37 @@ public struct RecallTools: Sendable {
     /// containing `nameQuery`, that's ambiguous — return `[]` rather than guessing which person
     /// was meant. A single matching attendee across one or more of today's events resolves
     /// normally (sorted by `startTime`, oldest first).
-    public func calendarEventsToday(matchingAttendeeName nameQuery: String) async throws -> [CalendarEvent] {
+    public func calendarEventsToday(
+        matchingAttendeeName nameQuery: String,
+        now: Date = Date()
+    ) async throws -> [CalendarEvent] {
+        try await calendarEvents(
+            in: Self.calendarWindow(daysBack: 0, daysAhead: 0, now: now),
+            matchingAttendeeName: nameQuery
+        )
+    }
+
+    /// The window-scoped generalization of `calendarEventsToday(matchingAttendeeName:)` — same
+    /// attendee/email matching and same ambiguity discipline, over an arbitrary date `range`
+    /// instead of only the device-local today (2026-07-23 bug: "when do I NEXT have my 1:1 with
+    /// Erin" could not be answered at all, because every calendar read in this type clamped to
+    /// today and silently discarded tomorrow's event — see `calendarEvents(in:hour:upcomingOnly:)`).
+    public func calendarEvents(
+        in range: ClosedRange<Date>,
+        matchingAttendeeName nameQuery: String
+    ) async throws -> [CalendarEvent] {
         let needle = Self.normalized(nameQuery)
         guard !needle.isEmpty else { return [] }
         // (2026-07-23, plan §3.3) A query containing "@" is treated as an email fragment and
         // matched against `attendee.email` (case-insensitively) instead of `attendee.name` — an
-        // agentic tool call may pass either shape (`todays_events(attendee:)`), and an email is a
+        // agentic tool call may pass either shape (`calendar_events(attendee:)`), and an email is a
         // strictly more precise identifier than a display name when both are available.
         let matchesByEmail = needle.contains("@")
-        let all = try await calendarEvents.all()
-        let todays = all.filter { Calendar.current.isDateInToday($0.startTime) }
+        let inWindow = try await calendarEvents.events(startingIn: range)
 
         var matchedDistinctNames: Set<String> = []
         var matches: [CalendarEvent] = []
-        for event in todays {
+        for event in inWindow {
             let attendeeMatches = event.attendees.filter { attendee in
                 if matchesByEmail {
                     guard let email = attendee.email else { return false }
@@ -197,15 +214,60 @@ public struct RecallTools: Sendable {
     /// not a guess (No-Fake-State). This is the missing data path for "who is in the 6pm meeting
     /// later" (plan §1, target query 3) — `calendarEventsToday(matchingAttendeeName:)` alone
     /// requires an attendee-name query and cannot answer a pure time-of-day question.
-    public func calendarEvents(today hourFilter: Int? = nil) async throws -> [CalendarEvent] {
-        let all = try await calendarEvents.all()
-        let todays = all.filter { Calendar.current.isDateInToday($0.startTime) }
-        let filtered: [CalendarEvent] = if let hourFilter {
-            todays.filter { Calendar.current.component(.hour, from: $0.startTime) == hourFilter }
+    public func calendarEvents(today hourFilter: Int? = nil, now: Date = Date()) async throws -> [CalendarEvent] {
+        try await calendarEvents(
+            in: Self.calendarWindow(daysBack: 0, daysAhead: 0, now: now),
+            hour: hourFilter
+        )
+    }
+
+    /// Real calendar events starting inside `range` (device-local whole days — build it with
+    /// `calendarWindow(daysBack:daysAhead:now:)`), optionally narrowed to a local `hour` (0–23;
+    /// "6pm" → 18) and/or to events that have not finished yet (`upcomingOnly`). Sorted by
+    /// `startTime`, oldest first. Never fabricated — an empty result is an honest "nothing found".
+    ///
+    /// This is the forward-looking read the today-clamped variants above could not express
+    /// (2026-07-23 bug: "when do I NEXT have my 1:1 with Erin" returned only today's agenda,
+    /// because tomorrow's event was fetched from the store and then filtered away). The store
+    /// itself holds −30/+90 days (`CalendarSyncEngine.backgroundPastDays`/`backgroundFutureDays`),
+    /// so a forward window is a pure read — no sync change is involved.
+    ///
+    /// `upcomingOnly` filters on `endTime > now`, NOT `startTime > now`: a meeting that is
+    /// currently in progress is honestly still "upcoming/current", while one that already ended
+    /// earlier today is not (2026-07-23: an 11:00 event was reported as the answer to "when do I
+    /// next…" at 20:00, because nothing anywhere compared against the current time).
+    public func calendarEvents(
+        in range: ClosedRange<Date>,
+        hour hourFilter: Int? = nil,
+        upcomingOnly: Bool = false,
+        now: Date = Date()
+    ) async throws -> [CalendarEvent] {
+        let inWindow = try await calendarEvents.events(startingIn: range)
+        let hourFiltered: [CalendarEvent] = if let hourFilter {
+            inWindow.filter { Calendar.current.component(.hour, from: $0.startTime) == hourFilter }
         } else {
-            todays
+            inWindow
         }
+        let filtered = upcomingOnly ? hourFiltered.filter { $0.endTime > now } : hourFiltered
         return filtered.sorted { $0.startTime < $1.startTime }
+    }
+
+    /// A device-local whole-day window: from the START of the day `daysBack` days before `now` to
+    /// the END of the day `daysAhead` days after it. `daysBack: 0, daysAhead: 0` is exactly "today"
+    /// (equivalent to the `Calendar.isDateInToday` filter these tools used before the window read
+    /// existed). Whole-day boundaries — never `now ± N×86400` — so a window is the same set of
+    /// calendar days regardless of the time of day it is computed at, and so DST transitions do not
+    /// shift it by an hour.
+    public static func calendarWindow(daysBack: Int, daysAhead: Int, now: Date = Date()) -> ClosedRange<Date> {
+        let calendar = Calendar.current
+        let startDay = calendar.date(byAdding: .day, value: -max(daysBack, 0), to: now) ?? now
+        let endDay = calendar.date(byAdding: .day, value: max(daysAhead, 0), to: now) ?? now
+        let start = calendar.startOfDay(for: startDay)
+        // `endOfDay` as the last instant of `endDay`, via the start of the FOLLOWING day minus one
+        // second — `Calendar` has no `endOfDay`, and a naive `start + 86399` is wrong across DST.
+        let endExclusive = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: endDay)) ?? endDay
+        let end = endExclusive.addingTimeInterval(-1)
+        return start ... Swift.max(start, end)
     }
 
     /// Bounded read of a meeting's saved summary text — `nil` when there is none (real, never

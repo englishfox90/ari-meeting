@@ -55,7 +55,7 @@ extension RecallEngineError: LocalizedError {
         case .questionTooLong:
             "Questions must be 1,000 characters or fewer."
         case .unsupportedQuestion:
-            "Ask Meetings can answer only from saved local Ari Meeting transcripts, plus real calendar scheduling facts for today's events (event times and attendees) when supplied — a calendar entry means something is scheduled, never that it was recorded or discussed. It cannot access email, accounts, internet search, files outside Ari Meeting, or calendar dates other than today."
+            "Ask Meetings can answer only from saved local Ari Meeting transcripts, plus real calendar scheduling facts for your scheduled events (event times and attendees) when supplied — a calendar entry means something is scheduled, never that it was recorded or discussed. It cannot access email, accounts, internet search, or files outside Ari Meeting."
         case let .modelNotConfigured(message):
             message
         case .loopbackViolation:
@@ -368,13 +368,21 @@ public struct RecallEngine: Sendable {
         )
     }
 
-    /// A real, human-readable "today" line (e.g. "Thursday, July 23, 2026") from the device's
-    /// actual current date — the one honest anchor the model needs for "today"/"this week"
-    /// questions, distinct from any meeting/source date in the retrieved context.
-    static func todayLine() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE, MMMM d, yyyy"
-        return formatter.string(from: Date())
+    /// A real, human-readable "today" line (e.g. "Thursday, July 23, 2026, and the current local
+    /// time is 8:14 PM") from the device's actual current date — the one honest anchor the model
+    /// needs for "today"/"this week" questions, distinct from any meeting/source date in the
+    /// retrieved context.
+    ///
+    /// The TIME half matters as much as the date (2026-07-23): asked "when do I next have my 1:1
+    /// with Erin" at 20:00, the model offered an 11:00 event from the same morning, because a
+    /// date-only anchor gives it no way to tell a past event from an upcoming one.
+    static func todayLine(now: Date = Date()) -> String {
+        let dayFormatter = DateFormatter()
+        dayFormatter.dateFormat = "EEEE, MMMM d, yyyy"
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeStyle = .short
+        timeFormatter.dateStyle = .none
+        return "\(dayFormatter.string(from: now)), and the current local time is \(timeFormatter.string(from: now))"
     }
 
     // MARK: - Meeting-scoped retrieval (← `TranscriptsRepository::

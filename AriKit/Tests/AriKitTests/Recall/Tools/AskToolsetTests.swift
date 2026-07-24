@@ -18,7 +18,11 @@ struct AskToolsetTests {
         }
     }
 
-    private func makeToolset(_ db: AppDatabase, allowedMeetingIds: Set<MeetingID>? = nil) -> AskToolset {
+    private func makeToolset(
+        _ db: AppDatabase,
+        allowedMeetingIds: Set<MeetingID>? = nil,
+        now: Date? = nil
+    ) -> AskToolset {
         AskToolset(
             tools: RecallTools(
                 meetings: db.meetings, persons: db.persons, series: db.series,
@@ -29,7 +33,8 @@ struct AskToolsetTests {
                 transcripts: db.transcripts, embedder: UnavailableEmbedder()
             ),
             meetings: db.meetings,
-            allowedMeetingIds: allowedMeetingIds
+            allowedMeetingIds: allowedMeetingIds,
+            clock: { now ?? Date() }
         )
     }
 
@@ -234,9 +239,9 @@ struct AskToolsetTests {
         #expect(!result.contains("Secret content"))
     }
 
-    // MARK: - todays_events
+    // MARK: - calendar_events
 
-    @Test("todays_events: hour filter narrows to events matching that local hour")
+    @Test("calendar_events: hour filter narrows to events matching that local hour")
     func todaysEventsHourFilter() async throws {
         let db = try AppDatabase.makeInMemory()
         let calendar = Calendar.current
@@ -260,12 +265,12 @@ struct AskToolsetTests {
 
         let toolset = makeToolset(db)
         let state = ToolTurnState()
-        let result = await toolset.dispatch(call("todays_events", #"{"hour": 18}"#), state: state)
+        let result = await toolset.dispatch(call("calendar_events", #"{"hour": 18}"#), state: state)
         #expect(result.contains("Evening sync"))
         #expect(!result.contains("Morning standup"))
     }
 
-    @Test("todays_events: attendee email match works, and non-today events are excluded")
+    @Test("calendar_events: attendee email match works, and non-today events are excluded")
     func todaysEventsAttendeeEmailMatch() async throws {
         let db = try AppDatabase.makeInMemory()
         let now = Date()
@@ -283,12 +288,139 @@ struct AskToolsetTests {
 
         let toolset = makeToolset(db)
         let state = ToolTurnState()
-        let result = await toolset.dispatch(call("todays_events", #"{"attendee": "james@example.com"}"#), state: state)
+        let result = await toolset.dispatch(call("calendar_events", #"{"attendee": "james@example.com"}"#), state: state)
         #expect(result.contains("Today's sync"))
         #expect(!result.contains("Yesterday's sync"))
     }
 
-    @Test("todays_events: scheduled-≠-recorded wording is present for an unlinked event")
+    // MARK: - calendar_events: the forward window (2026-07-23 regression)
+    //
+    // Reported live: "When do I next have my 1:1 with Erin" (asked at ~20:00, with the 1:1 on
+    // TOMORROW's calendar) answered "I don't see a 1:1 with Erin scheduled for today" and offered
+    // an 11:00 event from that morning that had already ended. Three defects in one: no forward
+    // window existed, nothing compared against the current time, and the prompt said "today's
+    // calendar". These tests pin the first two.
+
+    /// The exact reported scenario, end to end: a big group meeting earlier TODAY that has already
+    /// ended, plus the real 1:1 TOMORROW — both with the same attendee, so the window query's
+    /// ambiguity guard (one distinct name) still resolves.
+    private func makeErinScenario(_ db: AppDatabase, now: Date) async throws {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: now)
+        let elevenAM = try #require(calendar.date(byAdding: .hour, value: 11, to: startOfToday))
+        let tomorrowNineAM = try #require(calendar.date(byAdding: .day, value: 1, to: startOfToday)
+            .flatMap { calendar.date(byAdding: .hour, value: 9, to: $0) })
+
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("e-sprint"), calendarId: "cal-1", title: "Puddles Sprint Review",
+            startTime: elevenAM, endTime: elevenAM.addingTimeInterval(3600), isAllDay: false,
+            attendees: [
+                Attendee(name: "Erin Paxton", email: "erin.paxton@arivo.com"),
+                Attendee(name: "Charles King", email: "charles.king@arivo.com")
+            ]
+        ))
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("e-1on1"), calendarId: "cal-1", title: "Paul / Erin 1:1",
+            startTime: tomorrowNineAM, endTime: tomorrowNineAM.addingTimeInterval(1800), isAllDay: false,
+            attendees: [Attendee(name: "Erin Paxton", email: "erin.paxton@arivo.com")]
+        ))
+    }
+
+    @Test("calendar_events: days_ahead surfaces TOMORROW's 1:1 that a today-only call cannot see")
+    func calendarEventsForwardWindowFindsTomorrow() async throws {
+        let db = try AppDatabase.makeInMemory()
+        // 20:00 today — after the morning event has ended, exactly as reported.
+        let now = try #require(Calendar.current.date(
+            byAdding: .hour, value: 20, to: Calendar.current.startOfDay(for: Date())
+        ))
+        try await makeErinScenario(db, now: now)
+        let toolset = makeToolset(db, now: now)
+
+        // Today-only (the old, only-possible call) genuinely cannot see the 1:1 …
+        let todayOnly = await toolset.dispatch(
+            call("calendar_events", #"{"attendee": "Erin"}"#), state: ToolTurnState()
+        )
+        #expect(!todayOnly.contains("1:1"))
+
+        // … but a forward window does, which is the whole fix.
+        let forward = await toolset.dispatch(
+            call("calendar_events", #"{"attendee": "Erin", "days_ahead": 14, "upcoming_only": true}"#),
+            state: ToolTurnState()
+        )
+        #expect(forward.contains("Paul / Erin 1:1"))
+        #expect(forward.contains("tomorrow"))
+    }
+
+    @Test("calendar_events: upcoming_only drops an event that already ended earlier today")
+    func calendarEventsUpcomingOnlyDropsEndedEvent() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = try #require(Calendar.current.date(
+            byAdding: .hour, value: 20, to: Calendar.current.startOfDay(for: Date())
+        ))
+        try await makeErinScenario(db, now: now)
+        let toolset = makeToolset(db, now: now)
+
+        let result = await toolset.dispatch(
+            call("calendar_events", #"{"attendee": "Erin", "days_ahead": 14, "upcoming_only": true}"#),
+            state: ToolTurnState()
+        )
+        // The 11:00 event is inside the window and matches the attendee — it is excluded purely
+        // because it is over. Reported failure: it was offered as the answer to "when do I next…".
+        #expect(!result.contains("Puddles Sprint Review"))
+    }
+
+    @Test("calendar_events: an already-ended event is labelled, never presented as available")
+    func calendarEventsLabelsEndedEvent() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = try #require(Calendar.current.date(
+            byAdding: .hour, value: 20, to: Calendar.current.startOfDay(for: Date())
+        ))
+        try await makeErinScenario(db, now: now)
+        let toolset = makeToolset(db, now: now)
+
+        // Without `upcoming_only`, the morning event IS returned — but must carry its real tense.
+        let result = await toolset.dispatch(
+            call("calendar_events", #"{"attendee": "Erin"}"#), state: ToolTurnState()
+        )
+        #expect(result.contains("Puddles Sprint Review"))
+        #expect(result.contains("already ended"))
+    }
+
+    @Test("calendar_events: a today-only miss states its scope and how to widen it, never a bare no")
+    func calendarEventsEmptyResultIsHonestAboutScope() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = try #require(Calendar.current.date(
+            byAdding: .hour, value: 20, to: Calendar.current.startOfDay(for: Date())
+        ))
+        try await makeErinScenario(db, now: now)
+        let toolset = makeToolset(db, now: now)
+
+        let result = await toolset.dispatch(
+            call("calendar_events", #"{"attendee": "Nobody Here"}"#), state: ToolTurnState()
+        )
+        // The scope searched must be stated — "no events" from a today-only search is not evidence
+        // that nothing is scheduled, and the model must be told it can look further ahead.
+        #expect(result.contains("today"))
+        #expect(result.contains("days_ahead"))
+    }
+
+    @Test("calendar_events: the searched window is stated on a non-empty result too")
+    func calendarEventsStatesWindowOnResults() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = try #require(Calendar.current.date(
+            byAdding: .hour, value: 20, to: Calendar.current.startOfDay(for: Date())
+        ))
+        try await makeErinScenario(db, now: now)
+        let toolset = makeToolset(db, now: now)
+
+        let result = await toolset.dispatch(
+            call("calendar_events", #"{"attendee": "Erin", "days_ahead": 14}"#), state: ToolTurnState()
+        )
+        #expect(result.contains("for the next 14 days"))
+        #expect(result.contains("earliest first"))
+    }
+
+    @Test("calendar_events: scheduled-≠-recorded wording is present for an unlinked event")
     func todaysEventsScheduledWording() async throws {
         let db = try AppDatabase.makeInMemory()
         let now = Date()
@@ -299,12 +431,12 @@ struct AskToolsetTests {
         ))
         let toolset = makeToolset(db)
         let state = ToolTurnState()
-        let result = await toolset.dispatch(call("todays_events", "{}"), state: state)
+        let result = await toolset.dispatch(call("calendar_events", "{}"), state: state)
         #expect(result.contains("Scheduled only"))
         #expect(await state.cards.count == 1)
     }
 
-    // MARK: - todays_events: card-attachment selectivity (2026-07-23 live-test failure A)
+    // MARK: - calendar_events: card-attachment selectivity (2026-07-23 live-test failure A)
 
     private func seedTodaysEvents(_ db: AppDatabase, count: Int) async throws {
         let now = Date()
@@ -318,13 +450,13 @@ struct AskToolsetTests {
         }
     }
 
-    @Test("todays_events: unfiltered call over a full agenda (>2 events) attaches NO cards, but text lists every event")
+    @Test("calendar_events: unfiltered call over a full agenda (>2 events) attaches NO cards, but text lists every event")
     func todaysEventsUnfilteredFullAgendaAttachesNoCards() async throws {
         let db = try AppDatabase.makeInMemory()
         try await seedTodaysEvents(db, count: 7)
         let toolset = makeToolset(db)
         let state = ToolTurnState()
-        let result = await toolset.dispatch(call("todays_events", "{}"), state: state)
+        let result = await toolset.dispatch(call("calendar_events", "{}"), state: state)
 
         #expect(await state.cards.isEmpty, "an unfiltered agenda call over many events must attach no cards")
         for index in 0 ..< 7 {
@@ -332,17 +464,17 @@ struct AskToolsetTests {
         }
     }
 
-    @Test("todays_events: unfiltered call over a tiny agenda (≤2 events) attaches cards")
+    @Test("calendar_events: unfiltered call over a tiny agenda (≤2 events) attaches cards")
     func todaysEventsUnfilteredTinyAgendaAttachesCards() async throws {
         let db = try AppDatabase.makeInMemory()
         try await seedTodaysEvents(db, count: 2)
         let toolset = makeToolset(db)
         let state = ToolTurnState()
-        _ = await toolset.dispatch(call("todays_events", "{}"), state: state)
+        _ = await toolset.dispatch(call("calendar_events", "{}"), state: state)
         #expect(await state.cards.count == 2)
     }
 
-    @Test("todays_events: a FILTERED call (hour) attaches cards even though the full agenda is large")
+    @Test("calendar_events: a FILTERED call (hour) attaches cards even though the full agenda is large")
     func todaysEventsFilteredByHourAttachesCards() async throws {
         let db = try AppDatabase.makeInMemory()
         try await seedTodaysEvents(db, count: 7)
@@ -359,11 +491,11 @@ struct AskToolsetTests {
 
         let toolset = makeToolset(db)
         let state = ToolTurnState()
-        _ = await toolset.dispatch(call("todays_events", #"{"hour": 18}"#), state: state)
+        _ = await toolset.dispatch(call("calendar_events", #"{"hour": 18}"#), state: state)
         #expect(await state.cards.count == 1, "the hour-filtered event is what the question was about")
     }
 
-    @Test("todays_events: a FILTERED call (attendee) attaches cards even though the full agenda is large")
+    @Test("calendar_events: a FILTERED call (attendee) attaches cards even though the full agenda is large")
     func todaysEventsFilteredByAttendeeAttachesCards() async throws {
         let db = try AppDatabase.makeInMemory()
         try await seedTodaysEvents(db, count: 7)
@@ -376,11 +508,11 @@ struct AskToolsetTests {
 
         let toolset = makeToolset(db)
         let state = ToolTurnState()
-        _ = await toolset.dispatch(call("todays_events", #"{"attendee": "Landon"}"#), state: state)
+        _ = await toolset.dispatch(call("calendar_events", #"{"attendee": "Landon"}"#), state: state)
         #expect(await state.cards.count == 1)
     }
 
-    @Test("todays_events: cards never exceed the global per-ask cap even across repeated filtered calls")
+    @Test("calendar_events: cards never exceed the global per-ask cap even across repeated filtered calls")
     func todaysEventsRespectsGlobalCardCap() async throws {
         let db = try AppDatabase.makeInMemory()
         let now = Date()
@@ -396,7 +528,7 @@ struct AskToolsetTests {
         let state = ToolTurnState()
         for index in 0 ..< 6 {
             _ = await toolset.dispatch(
-                call("todays_events", #"{"attendee": "james\#(index)@example.com"}"#), state: state
+                call("calendar_events", #"{"attendee": "james\#(index)@example.com"}"#), state: state
             )
         }
         #expect(await state.cards.count == RecallBounds.maxCardsPerAsk)

@@ -31,7 +31,13 @@ public enum RecallIntentClassifier {
     /// Recognizes trigger phrases for a person-meetings lookup. Order matters only in that longer,
     /// more specific triggers are tried first so a shorter trigger can't swallow part of a longer
     /// one's match range.
-    private static let personTriggers = ["meetings with ", "meeting with ", "meet with "]
+    /// "1:1 with X" and its spellings are person triggers too (2026-07-23: "when do I next have my
+    /// 1:1 with Erin" matched none of the "meeting with" shapes, so the classifier returned `nil`
+    /// and no calendar fact was resolved at all) — a 1:1 IS a meeting with a person.
+    private static let personTriggers = [
+        "meetings with ", "meeting with ", "meet with ",
+        "one-on-one with ", "one on one with ", "1:1 with ", "1-1 with "
+    ]
 
     /// Recognizes trigger phrases for a single-meeting lookup by title/topic. Tried only after
     /// `personTriggers`/series matching fail, so "meeting with Sarah about the budget" resolves as
