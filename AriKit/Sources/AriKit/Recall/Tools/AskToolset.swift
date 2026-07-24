@@ -1,5 +1,5 @@
 //
-//  AskToolset.swift — the 6 tool-first Ask Meetings tools + their per-ask accumulation state
+//  AskToolset.swift — the tool-first Ask Meetings tools + their per-ask accumulation state
 //  (plan §3.2/§4.1, `docs/plans/ask-meetings-agentic-tools.md`).
 //
 //  Tool EXECUTION is always deterministic Swift code (repository reads via `RecallTools`/
@@ -101,7 +101,7 @@ public actor ToolTurnState {
     }
 }
 
-/// The fixed, 6-tool set + dispatch implementation for tool-first Ask Meetings (plan §4.1). A
+/// The fixed tool set + dispatch implementation for tool-first Ask Meetings (plan §4.1). A
 /// `Sendable` value type over `RecallTools`/`HybridSearch`/`MeetingRepository` — mirrors every
 /// other Recall subsystem's "value type over injected handles" convention. No LLM concept here:
 /// this is exactly what `RecallTools` already is, just packaged as `AgenticToolDefinition` +
@@ -152,6 +152,11 @@ public struct AskToolset: Sendable {
                 parametersJSONSchema: #"{"type":"object","properties":{"title_or_topic":{"type":"string"}},"required":["title_or_topic"]}"#
             ),
             AgenticToolDefinition(
+                name: "find_series",
+                description: "Look up a RECURRING meeting series — a 1:1 with someone, a weekly standup — by its title or the person's name, and read its running ledger: open action items, decisions, recurring themes and per-person threads accumulated across every meeting in it. Use this FIRST for \"how are my 1:1s with X going\", \"what's the status of\", \"recap my <recurring meeting>\" — any question about how an ongoing thread is PROGRESSING. That is a different question from what is scheduled; do not answer it from the calendar.",
+                parametersJSONSchema: #"{"type":"object","properties":{"title_or_topic":{"type":"string"}},"required":["title_or_topic"]}"#
+            ),
+            AgenticToolDefinition(
                 name: "get_meeting_summary",
                 description: "Read the saved summary for a meeting id you already saw in another tool's result this turn.",
                 parametersJSONSchema: #"{"type":"object","properties":{"meeting_id":{"type":"string"}},"required":["meeting_id"]}"#
@@ -175,6 +180,7 @@ public struct AskToolset: Sendable {
         case "search_transcripts": "Searching transcripts"
         case "find_person": "Looking up person"
         case "find_meeting": "Looking up meeting"
+        case "find_series": "Reading the series ledger"
         case "get_meeting_summary": "Reading meeting summary"
         case "calendar_events": "Checking the calendar"
         case "list_recent_meetings": "Listing recent meetings"
@@ -209,6 +215,8 @@ public struct AskToolset: Sendable {
             await findPerson(call, state: state)
         case "find_meeting":
             await findMeeting(call, state: state)
+        case "find_series":
+            await findSeries(call, state: state)
         case "get_meeting_summary":
             await getMeetingSummary(call, state: state)
         case "calendar_events":
@@ -372,6 +380,79 @@ public struct AskToolset: Sendable {
         return Self.bound("\(meeting.id.rawValue) / \(meeting.title) / \(date)\(summaryNote)")
     }
 
+    // MARK: - find_series
+
+    private struct FindSeriesInput: Decodable {
+        var titleOrTopic: String
+        enum CodingKeys: String, CodingKey {
+            case titleOrTopic = "title_or_topic"
+        }
+    }
+
+    /// How many member meetings a series result lists (and surfaces for `get_meeting_summary`).
+    /// Deliberately smaller than `RecallBounds.maxCardSeriesMeetings` (50, the card's hydration
+    /// cap): this list shares one bounded tool result with the ledger, which is the substance of
+    /// the answer. The TOTAL is always reported honestly from `meetingCount(inSeries:)`, so a
+    /// longer series under-lists but never under-counts (No-Fake-State).
+    private static let maxSeriesMeetingsListed = 10
+
+    private func findSeries(_ call: AgenticToolCall, state: ToolTurnState) async -> String {
+        guard let input: FindSeriesInput = Self.decode(call.argumentsJSON) else {
+            return "\(AgenticToolResultPrefix.invalidArguments) expected {\"title_or_topic\": string}."
+        }
+        let series: Series?
+        do {
+            series = try await tools.findSeries(titleContaining: input.titleOrTopic)
+        } catch {
+            return "\(AgenticToolResultPrefix.toolFailed) could not look up that series."
+        }
+        guard let series else {
+            return "No unique meeting series matched \"\(input.titleOrTopic)\"."
+        }
+
+        let meetings = await (try? tools.meetings(
+            inSeries: series.id, limit: Self.maxSeriesMeetingsListed
+        )) ?? []
+        // The REAL total, not `meetings.count` — that array is capped above.
+        let totalCount = await (try? tools.meetingCount(inSeries: series.id)) ?? meetings.count
+        let lastMeetingDate = meetings.first.map { RFC3339.string(from: $0.createdAt) }
+        await state.attach(.series(SeriesCardPayload(
+            seriesId: series.id.rawValue,
+            title: series.title,
+            meetingCount: totalCount,
+            lastMeetingDate: lastMeetingDate
+        )))
+
+        var header = "\(series.title) — \(RecallCardDisplay.meetingCountLabel(totalCount)) recorded in this series"
+        if let friendly = RecallCardDisplay.friendlyDayOnly(lastMeetingDate) {
+            header += ", most recent \(friendly)"
+        }
+        var lines = ["\(header)."]
+
+        if !meetings.isEmpty {
+            lines.append("Meetings in this series (newest first):")
+            for meeting in meetings {
+                // Surfaced so `get_meeting_summary` can follow up on any one of them [P1].
+                await state.surface(meeting.id)
+                let date = RecallCardDisplay.friendlyDayOnly(RFC3339.string(
+                    from: meeting.createdAt
+                )) ?? "date unavailable"
+                lines.append("\(meeting.id.rawValue) / \(meeting.title) / \(date)")
+            }
+        }
+
+        // The ledger is the substance of a "how is this going" answer — the accumulated open
+        // actions/decisions/themes/threads. Absent is stated honestly rather than papered over.
+        let ledger = await (try? tools.seriesLedgerMarkdown(for: series.id)) ?? nil
+        if let ledger {
+            lines.append("Running ledger for this series (accumulated across the meetings above):")
+            lines.append(ledger)
+        } else {
+            lines.append("This series has no ledger yet — answer only from the meetings listed above.")
+        }
+        return Self.bound(lines.joined(separator: "\n"))
+    }
+
     // MARK: - get_meeting_summary
 
     private struct GetMeetingSummaryInput: Decodable {
@@ -469,9 +550,17 @@ public struct AskToolset: Sendable {
             // this, a today-clamped miss on a "when do I next…" question reads as a definitive
             // "you have nothing", which is exactly the 2026-07-23 failure.
             let scope = Self.windowLabel(daysBack: daysBack, daysAhead: daysAhead, upcomingOnly: upcomingOnly)
-            let hint = isTodayOnly
-                ? " If the question is about the future, call this tool again with days_ahead (e.g. 14) and upcoming_only=true."
-                : ""
+            // Widening advice, scaled to what was actually searched. A short forward window coming
+            // back empty is NOT evidence that nothing is scheduled — reported live 2026-07-23: the
+            // model chose days_ahead=7, missed a 1:1 that was on the calendar for the following
+            // week, and reported "no upcoming meetings" as though it had checked everything.
+            let hint: String = if isTodayOnly {
+                " If the question is about the future, call this tool again with days_ahead (e.g. 14) and upcoming_only=true."
+            } else if daysAhead < Self.maxCalendarWindowDays {
+                " This window may simply be too short — call this tool again with a larger days_ahead (up to \(Self.maxCalendarWindowDays)) before concluding nothing is scheduled."
+            } else {
+                ""
+            }
             return "No matching events found on the calendar \(scope).\(hint)"
         }
 

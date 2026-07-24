@@ -8,7 +8,7 @@ import Foundation
 import Testing
 @testable import AriKit
 
-@Suite("AskToolset — the 6 tool-first Ask Meetings tools")
+@Suite("AskToolset — the tool-first Ask Meetings tools")
 struct AskToolsetTests {
     private struct UnavailableEmbedder: RecallEmbedder {
         struct Unavailable: Error {}
@@ -239,6 +239,100 @@ struct AskToolsetTests {
         #expect(!result.contains("Secret content"))
     }
 
+    // MARK: - find_series (2026-07-23 regression)
+    //
+    // Reported live: "How are my 1:1 with Nia going?" — a real "Nia 1:1" series with 2 meetings and
+    // a full ledger (open actions, decisions, recurring themes, per-person threads) existed, but the
+    // agentic toolset had NO series tool, so the ledger was reachable only from inside a
+    // series-scoped thread. The model fell back to the calendar and answered a *scheduling*
+    // question ("no 1:1s scheduled this week") instead of the *status* question asked.
+
+    private func makeNiaSeries(_ db: AppDatabase, ledger: String?) async throws -> Series {
+        let older = Date(timeIntervalSince1970: 1_784_000_000)
+        let newer = older.addingTimeInterval(86_400)
+        let adhoc = makeMeeting(id: "m-adhoc", title: "Adhoc with Nia", createdAt: older)
+        let checkin = makeMeeting(id: "m-checkin", title: "1:1 Check-in & Strategic Planning Review", createdAt: newer)
+        try await db.meetings.upsert(adhoc)
+        try await db.meetings.upsert(checkin)
+
+        let series = Series(
+            id: SeriesID("s-nia"), title: "Nia 1:1", ledgerMarkdown: ledger,
+            ledgerVersion: ledger == nil ? nil : 1, createdAt: older, updatedAt: newer
+        )
+        try await db.series.upsert(series)
+        try await db.series.addMember(seriesId: series.id, meetingId: adhoc.id)
+        try await db.series.addMember(seriesId: series.id, meetingId: checkin.id)
+        return series
+    }
+
+    @Test("find_series: returns the running ledger — the substance of a \"how is it going\" answer")
+    func findSeriesReturnsLedger() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await makeNiaSeries(db, ledger: """
+        ## Open action items
+        - Nia Ahio — Prepare IRR analysis for email project (Next Week)
+        ## Recurring themes
+        - Feasibility vs. Timeline
+        """)
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+
+        let result = await toolset.dispatch(call("find_series", #"{"title_or_topic": "Nia"}"#), state: state)
+
+        #expect(result.contains("Nia 1:1"))
+        #expect(result.contains("Prepare IRR analysis"), "the ledger content must reach the model")
+        #expect(result.contains("Feasibility vs. Timeline"))
+        // Both member meetings listed AND surfaced, so get_meeting_summary can follow up [P1].
+        #expect(result.contains("Adhoc with Nia"))
+        #expect(await state.isSurfaced(MeetingID("m-checkin")))
+        guard case .series = await state.cards.first else {
+            Issue.record("expected a .series card")
+            return
+        }
+    }
+
+    @Test("find_series: a series with no ledger says so honestly, never fabricates one")
+    func findSeriesWithoutLedgerIsHonest() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await makeNiaSeries(db, ledger: nil)
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+
+        let result = await toolset.dispatch(call("find_series", #"{"title_or_topic": "Nia"}"#), state: state)
+        #expect(result.contains("no ledger yet"))
+        #expect(result.contains("Nia 1:1"))
+    }
+
+    @Test("find_series: zero/ambiguous match returns an honest string, never a card")
+    func findSeriesZeroMatch() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+        let result = await toolset.dispatch(
+            call("find_series", #"{"title_or_topic": "Nonexistent"}"#), state: state
+        )
+        #expect(result.contains("No unique meeting series"))
+        #expect(await state.cards.isEmpty)
+    }
+
+    @Test("find_series: the ledger is bounded, never an unbounded dump")
+    func findSeriesLedgerIsBounded() async throws {
+        let db = try AppDatabase.makeInMemory()
+        _ = try await makeNiaSeries(db, ledger: String(repeating: "ledger detail ", count: 4000))
+        let toolset = makeToolset(db)
+        let result = await toolset.dispatch(
+            call("find_series", #"{"title_or_topic": "Nia"}"#), state: ToolTurnState()
+        )
+        #expect(Recall.scalars(result).count <= RecallBounds.maxToolResultChars)
+    }
+
+    @Test("find_series is offered to the model — a status question has a non-calendar tool to reach for")
+    func findSeriesIsExposed() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let names = makeToolset(db).definitions.map(\.name)
+        #expect(names.contains("find_series"))
+    }
+
     // MARK: - calendar_events
 
     @Test("calendar_events: hour filter narrows to events matching that local hour")
@@ -402,6 +496,25 @@ struct AskToolsetTests {
         // that nothing is scheduled, and the model must be told it can look further ahead.
         #expect(result.contains("today"))
         #expect(result.contains("days_ahead"))
+    }
+
+    @Test("calendar_events: a short forward window coming back empty advises widening, not concluding")
+    func calendarEventsShortWindowMissAdvisesWidening() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = try #require(Calendar.current.date(
+            byAdding: .hour, value: 20, to: Calendar.current.startOfDay(for: Date())
+        ))
+        try await makeErinScenario(db, now: now)
+        let toolset = makeToolset(db, now: now)
+
+        // Reported live: the model picked days_ahead=7, missed a 1:1 the following week, and
+        // answered "no upcoming meetings" as though the whole calendar had been checked.
+        let result = await toolset.dispatch(
+            call("calendar_events", #"{"attendee": "Nia", "days_ahead": 7, "upcoming_only": true}"#),
+            state: ToolTurnState()
+        )
+        #expect(result.contains("for the next 7 days"))
+        #expect(result.contains("larger days_ahead"))
     }
 
     @Test("calendar_events: the searched window is stated on a non-empty result too")

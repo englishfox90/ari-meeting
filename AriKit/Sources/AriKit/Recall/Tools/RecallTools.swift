@@ -270,6 +270,25 @@ public struct RecallTools: Sendable {
         return start ... Swift.max(start, end)
     }
 
+    /// Bounded read of a series' running ledger markdown — the accumulated open action items,
+    /// decisions, recurring themes and per-person threads the series-detail screen shows. `nil`
+    /// when the series has no ledger yet (real, never fabricated).
+    ///
+    /// Before 2026-07-23 this content was reachable ONLY from inside a series-scoped thread
+    /// (`RecallEngine.validate` injects it when `seriesId` is set). A global ask like "how are my
+    /// 1:1s with Nia going" therefore could not see it at all, and the model fell back to the
+    /// calendar and answered a scheduling question instead of the status question asked.
+    /// Truncated at `RecallBounds.maxAgenticTranscriptChars`, matching `summaryMarkdown(for:)`.
+    public func seriesLedgerMarkdown(for seriesId: SeriesID) async throws -> String? {
+        guard let body = try await series.find(seriesId)?.ledgerMarkdown else { return nil }
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let scalars = Recall.scalars(trimmed)
+        guard scalars.count > RecallBounds.maxAgenticTranscriptChars else { return trimmed }
+        let head = Recall.string(fromScalars: scalars.prefix(RecallBounds.maxAgenticTranscriptChars))
+        return "\(head)…"
+    }
+
     /// Bounded read of a meeting's saved summary text — `nil` when there is none (real, never
     /// fabricated). Truncated at `RecallBounds.maxAgenticTranscriptChars` so a tool-fetched summary
     /// can never blow the agentic loop's per-tool-result budget (plan §4.1's `get_meeting_summary`).
