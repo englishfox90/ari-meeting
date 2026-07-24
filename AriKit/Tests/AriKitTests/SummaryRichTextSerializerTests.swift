@@ -87,6 +87,31 @@ struct SummaryRichTextSerializerTests {
         }
     }
 
+    @Test("two blank-line-separated same-kind lists stay two lists (no silent merge)")
+    func adjacentSameKindListsDoNotMerge() {
+        // Bullets: two one-item lists must survive as two blocks, not one two-item list.
+        let bullets = "- a\n\n- b"
+        #expect(roundTrip(bullets) == bullets)
+        #expect(MarginaliaMarkdown.parse(roundTrip(bullets)).count == 2)
+
+        // Numbered: each sibling list restarts its numbering from 1.
+        let numbered = "1. a\n2. b\n\n1. c"
+        #expect(roundTrip(numbered) == numbered)
+        let blocks = MarginaliaMarkdown.parse(roundTrip(numbered))
+        #expect(blocks == [.numberedList(["a", "b"]), .numberedList(["c"])])
+    }
+
+    @Test("adjacent same-emphasis runs canonicalize (accepted, documented — not block-stable)")
+    func acceptedEmphasisCanonicalization() {
+        // §2.3 intent: `**a****b**` never appears — adjacent same-emphasis runs coalesce. This
+        // rewrites the paragraph STRING, so it is deliberately NOT in `allFixtures` (it is not
+        // block-stable: the parser stores emphasis markers verbatim). It IS a fixed point, so a
+        // stored summary tidies at most once, and the deferred backfill's verify-before-write
+        // (parse-equal) would simply skip such a row rather than rewrite it.
+        #expect(roundTrip("**a****b**") == "**ab**")
+        #expect(roundTrip(roundTrip("**a****b**")) == roundTrip("**a****b**")) // fixed point
+    }
+
     // MARK: - 22-26: no-loss + attribute-authoritative + degenerate inputs
 
     @Test("unrecognized constructs (fenced code, blockquote, `#foo`) survive as literal paragraph text")
@@ -163,6 +188,14 @@ struct SummaryRichTextSerializerTests {
         "First line\nline two",
         "- First item\n- Second item",
         "3. Alpha\n5. Beta",
+        // Two SIBLING lists of the same kind, blank-line separated — must NOT merge into one
+        // list on reparse (the block-stable-invariant hole the reviewer found).
+        "- a\n\n- b",
+        "- a\n\n- b\n\n- c",
+        "1. a\n2. b\n\n1. c",
+        // Different-kind adjacent lists: the parser stops at the kind switch, so they never
+        // merge; still worth pinning that the round trip keeps them two blocks.
+        "- a\n\n1. b",
         "**bold** *italic* ***both*** plain",
         "Times: [03:09], @ref(04:10), and @mref(m3@05:11) matter.",
         mixedCorpusFixture,

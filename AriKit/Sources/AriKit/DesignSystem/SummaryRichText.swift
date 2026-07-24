@@ -37,20 +37,38 @@ public enum SummaryRichText {
             result += block
         }
 
+        // Tracks whether the previous block was a list, and of which kind — so two SIBLING
+        // lists of the SAME kind separated by a blank line in the source get a real block
+        // boundary between them (an empty separator paragraph). Without it, their items would
+        // present as one contiguous run of same-kind paragraphs and `serialize` would re-emit
+        // them adjacent, which re-parses as ONE merged list — breaking the block-stable
+        // round-trip invariant (test 20). Different-kind adjacent lists don't merge (the
+        // parser's per-kind scan stops), so no separator is needed there.
+        var previousListKind: SummaryBlockKind?
         for block in blocks {
             switch block {
             case let .heading(level, text):
                 appendBlock(.heading(level: level), rawContent: text)
+                previousListKind = nil
             case let .paragraph(text):
                 appendBlock(.paragraph, rawContent: text)
+                previousListKind = nil
             case let .bulletList(items):
+                if previousListKind == .bulletItem {
+                    appendBlock(.paragraph, rawContent: "") // list-break boundary
+                }
                 for item in items {
                     appendBlock(.bulletItem, rawContent: "•\t" + item)
                 }
+                previousListKind = .bulletItem
             case let .numberedList(items):
+                if previousListKind == .numberedItem {
+                    appendBlock(.paragraph, rawContent: "") // list-break boundary
+                }
                 for (offset, item) in items.enumerated() {
                     appendBlock(.numberedItem, rawContent: "\(offset + 1).\t" + item)
                 }
+                previousListKind = .numberedItem
             case .table:
                 // Tables never reach the presenter in practice — `SummaryEditDocument` carves
                 // them into verbatim slabs before any prose chunk is handed to `present`. Skip
@@ -237,20 +255,27 @@ public enum SummaryRichText {
 
     /// Joins serialized paragraphs into one document: consecutive SAME-kind list items join
     /// with a single `\n` (no blank line); everything else gets a blank line between it and
-    /// its neighbor. Empty pieces contribute nothing (their blank-line shaping already falls
-    /// out of this same rule between the real neighbors on either side).
+    /// its neighbor. An empty piece contributes no text but acts as a BOUNDARY: it forces a
+    /// blank line between the real neighbors on either side, so two same-kind list blocks that
+    /// `present` separated with an empty paragraph stay two lists (not merged) on reparse.
     private static func join(_ pieces: [(kind: SummaryBlockKind, text: String)]) -> String {
         var result = ""
         var previousKind: SummaryBlockKind?
-        for (kind, text) in pieces where !text.isEmpty {
+        var boundarySincePrevious = false
+        for (kind, text) in pieces {
+            if text.isEmpty {
+                boundarySincePrevious = true
+                continue
+            }
             if result.isEmpty {
                 result = text
-            } else if isListKind(kind), kind == previousKind {
+            } else if isListKind(kind), kind == previousKind, !boundarySincePrevious {
                 result += "\n" + text
             } else {
                 result += "\n\n" + text
             }
             previousKind = kind
+            boundarySincePrevious = false
         }
         return result
     }
