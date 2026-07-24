@@ -404,6 +404,11 @@ final class AppEnvironment {
             // `hintProvider`, `diarizationService`, `runner`, `notifications`) — never
             // `self`/`AppEnvironment` — so the coordinator's `@Sendable` operation closures
             // type-check under Swift 6 strict concurrency.
+            // A local (non-isolated) Sendable `Logger` value — the coordinator's
+            // `ReconcileFactsOperation` closure is `@Sendable`, so it cannot reach the
+            // main-actor-isolated `Self.logger` static property; this local mirrors the discipline
+            // of capturing only Sendable values, never `self`.
+            let reconcileLogger = Logger(subsystem: "com.arivo.ari", category: "summary.reconcile")
             let coordinator = MeetingProcessingCoordinator(
                 resolveAudioURL: { mid in
                     guard let meeting = try? await db.meetings.find(mid) else { return nil }
@@ -437,6 +442,14 @@ final class AppEnvironment {
                 },
                 notifySummaryGenerated: { mid, elapsed in
                     await notifications.summaryGenerated(meetingId: mid, elapsed: elapsed)
+                },
+                reconcileFacts: { mid in
+                    let result = try? await PersonReconciliation(
+                        db: db, settings: settingsReader, secrets: summarySecrets, clientFactory: clientFactory
+                    ).reconcileFacts(forMeeting: mid)
+                    if let result {
+                        reconcileLogger.debug("fact reconciliation: \(result.message, privacy: .public)")
+                    }
                 }
             )
             processingCoordinator = coordinator

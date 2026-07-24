@@ -20,7 +20,9 @@ struct MeetingProcessingCoordinatorTests {
     private let audioURL = URL(fileURLWithPath: "/tmp/meeting-1.m4a")
 
     private struct StubError: Error, CustomStringConvertible {
-        var description: String { "stub error" }
+        var description: String {
+            "stub error"
+        }
     }
 
     private actor CallSpy<Value: Sendable> {
@@ -41,7 +43,8 @@ struct MeetingProcessingCoordinatorTests {
         generateSummary: @escaping MeetingProcessingCoordinator.GenerateSummaryOperation = { _, _ in },
         speakerCount: @escaping MeetingProcessingCoordinator.SpeakerCountOperation = { _ in nil },
         cancelSummary: @escaping MeetingProcessingCoordinator.CancelSummaryOperation = { _ in },
-        notifySummaryGenerated: MeetingProcessingCoordinator.NotifySummaryGeneratedOperation? = nil
+        notifySummaryGenerated: MeetingProcessingCoordinator.NotifySummaryGeneratedOperation? = nil,
+        reconcileFacts: MeetingProcessingCoordinator.ReconcileFactsOperation? = nil
     ) -> MeetingProcessingCoordinator {
         MeetingProcessingCoordinator(
             resolveAudioURL: resolveAudioURL,
@@ -51,7 +54,8 @@ struct MeetingProcessingCoordinatorTests {
             generateSummary: generateSummary,
             speakerCount: speakerCount,
             cancelSummary: cancelSummary,
-            notifySummaryGenerated: notifySummaryGenerated
+            notifySummaryGenerated: notifySummaryGenerated,
+            reconcileFacts: reconcileFacts
         )
     }
 
@@ -73,7 +77,9 @@ struct MeetingProcessingCoordinatorTests {
             runDiarization: { _, _, _, progress in
                 progress(.preparingModels, 0.0)
                 progress(.diarizing, 0.5)
-                for await _ in gate { break }
+                for await _ in gate {
+                    break
+                }
             },
             generateSummary: { _, count in await summarySpy.record(count) },
             speakerCount: { _ in 2 }
@@ -87,8 +93,12 @@ struct MeetingProcessingCoordinatorTests {
                 observedDiarizing = true
                 break
             }
-            if case .completed = coordinator.phase { break }
-            if case .failed = coordinator.phase { break }
+            if case .completed = coordinator.phase {
+                break
+            }
+            if case .failed = coordinator.phase {
+                break
+            }
             await Task.yield()
         }
         gateContinuation.finish()
@@ -247,7 +257,9 @@ struct MeetingProcessingCoordinatorTests {
             resolveAudioURL: { _ in nil },
             generateSummary: { _, _ in
                 await summarySpy.record()
-                if await summarySpy.callCount == 1 { throw LLMError.nothingToSummarize }
+                if await summarySpy.callCount == 1 {
+                    throw LLMError.nothingToSummarize
+                }
             }
         )
 
@@ -287,9 +299,15 @@ struct MeetingProcessingCoordinatorTests {
 
         let begin = Task { await coordinator.begin(meetingId: meetingId) }
         while true {
-            if case .identifyingSpeakers(.diarizing, _) = coordinator.phase { break }
-            if case .completed = coordinator.phase { break }
-            if case .failed = coordinator.phase { break }
+            if case .identifyingSpeakers(.diarizing, _) = coordinator.phase {
+                break
+            }
+            if case .completed = coordinator.phase {
+                break
+            }
+            if case .failed = coordinator.phase {
+                break
+            }
             await Task.yield()
         }
 
@@ -313,7 +331,9 @@ struct MeetingProcessingCoordinatorTests {
             resolveHint: { _ in .exact(2) },
             runDiarization: { _, _, _, _ in
                 await diarizeSpy.record()
-                for await _ in gate { break }
+                for await _ in gate {
+                    break
+                }
             }
         )
 
@@ -384,5 +404,115 @@ struct MeetingProcessingCoordinatorTests {
             Issue.record("expected a .failed phase")
         }
         #expect(await notifySpy.callCount == 0)
+    }
+
+    // MARK: - Post-summary fact reconciliation hook (Gap 2)
+
+    /// Polls until `spy.callCount` reaches at least `count` or a generous deadline elapses — the
+    /// reconcile op fires from a detached, non-awaited `Task`, so tests must wait for it rather
+    /// than assume it has already run by the time `begin()` returns.
+    private func waitForCallCount(
+        _ spy: CallSpy<some Sendable>,
+        atLeast count: Int
+    ) async {
+        for _ in 0 ..< 200 {
+            if await spy.callCount >= count {
+                return
+            }
+            await Task.yield()
+        }
+    }
+
+    @Test("reconcile hook fires exactly once with the active meeting id after a summary generates")
+    func reconcileFiresAfterSummary() async {
+        let reconcileSpy = CallSpy<MeetingID>()
+        let coordinator = makeCoordinator(
+            generateSummary: { _, _ in },
+            reconcileFacts: { mid in await reconcileSpy.record(mid) }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        #expect(coordinator.phase == .completed)
+        await waitForCallCount(reconcileSpy, atLeast: 1)
+        #expect(await reconcileSpy.callCount == 1)
+        #expect(await reconcileSpy.lastValue == meetingId)
+    }
+
+    @Test("a throwing/hanging reconcile op never changes the terminal phase or blocks notify")
+    func reconcileFailureDoesNotAffectTerminalPhaseOrNotify() async {
+        let reconcileSpy = CallSpy<MeetingID>()
+        let notifySpy = CallSpy<MeetingID>()
+        let coordinator = makeCoordinator(
+            generateSummary: { _, _ in },
+            notifySummaryGenerated: { mid, _ in await notifySpy.record(mid) },
+            reconcileFacts: { mid in
+                await reconcileSpy.record(mid)
+                // Simulate a slow/hanging reconcile — must never be awaited by the coordinator.
+                try? await Task.sleep(for: .seconds(60))
+            }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        // The coordinator must reach .completed and fire notify WITHOUT waiting on reconcile.
+        #expect(coordinator.phase == .completed)
+        #expect(await notifySpy.callCount == 1)
+        await waitForCallCount(reconcileSpy, atLeast: 1)
+        #expect(await reconcileSpy.callCount == 1)
+    }
+
+    @Test("reconcile is NOT invoked when the summary path is skipped (summaryAutomatic == false)")
+    func reconcileSilentWhenAutoSummaryDisabled() async {
+        let reconcileSpy = CallSpy<MeetingID>()
+        let coordinator = makeCoordinator(
+            isAutoSummaryEnabled: { false },
+            reconcileFacts: { mid in await reconcileSpy.record(mid) }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        #expect(coordinator.phase == .completed)
+        // Give any errant fire-and-forget task a chance to land before asserting silence.
+        for _ in 0 ..< 20 {
+            await Task.yield()
+        }
+        #expect(await reconcileSpy.callCount == 0)
+    }
+
+    @Test("reconcile is NOT invoked when summary generation fails (.failed)")
+    func reconcileSilentWhenSummaryFails() async {
+        let reconcileSpy = CallSpy<MeetingID>()
+        let coordinator = makeCoordinator(
+            generateSummary: { _, _ in throw StubError() },
+            reconcileFacts: { mid in await reconcileSpy.record(mid) }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        if case .failed = coordinator.phase {} else {
+            Issue.record("expected a .failed phase")
+        }
+        for _ in 0 ..< 20 {
+            await Task.yield()
+        }
+        #expect(await reconcileSpy.callCount == 0)
+    }
+
+    @Test("reconcile is NOT invoked on cancellation (.idle)")
+    func reconcileSilentOnCancellation() async {
+        let reconcileSpy = CallSpy<MeetingID>()
+        let coordinator = makeCoordinator(
+            generateSummary: { _, _ in throw CancellationError() },
+            reconcileFacts: { mid in await reconcileSpy.record(mid) }
+        )
+
+        await coordinator.begin(meetingId: meetingId)
+
+        #expect(coordinator.phase == .idle)
+        for _ in 0 ..< 20 {
+            await Task.yield()
+        }
+        #expect(await reconcileSpy.callCount == 0)
     }
 }

@@ -30,10 +30,12 @@
 import AriKit
 import Foundation
 import Observation
+import os
 
 @MainActor
 @Observable
 public final class MeetingProcessingCoordinator {
+    private nonisolated static let log = Logger(subsystem: "com.arivo.ari.AriViewModels", category: "summary.reconcile")
     /// Honest pipeline phase (No-Fake-State): every value is real, never a fabricated progress
     /// step. `.failed` is reserved for pipeline-fatal errors only (summary generation failing
     /// outright, a rare case) — a non-fatal diarization failure is recorded in `diarizationNote`
@@ -84,6 +86,11 @@ public final class MeetingProcessingCoordinator {
     /// wall-clock duration — the notifier decides whether it was "long" enough to notify. `nil` in
     /// tests / when no notification stack is wired.
     private let notifySummaryGeneratedOperation: NotifySummaryGeneratedOperation?
+    /// Optional post-generation fact-reconciliation hook (the app wires it to
+    /// `PersonReconciliation.reconcileFacts(forMeeting:)`). Best-effort — fired only after a
+    /// summary actually generated successfully, as a detached, non-awaited `Task` so a slow
+    /// reconcile call never delays reaching `.completed`. `nil` in tests / when unwired.
+    private let reconcileFactsOperation: ReconcileFactsOperation?
 
     public typealias ResolveAudioURLOperation = @Sendable (_ meetingId: MeetingID) async -> URL?
     public typealias ResolveHintOperation = @Sendable (_ meetingId: MeetingID) async -> SpeakerCountHint?
@@ -104,6 +111,7 @@ public final class MeetingProcessingCoordinator {
         _ meetingId: MeetingID,
         _ elapsed: Duration
     ) async -> Void
+    public typealias ReconcileFactsOperation = @Sendable (_ meetingId: MeetingID) async -> Void
 
     /// The only initializer — the app composition root (`AppEnvironment.bootstrap()`) assembles
     /// these closures directly from `diarizationService`/`speakerCountHintProvider`/`summaryRunner`/
@@ -118,7 +126,8 @@ public final class MeetingProcessingCoordinator {
         generateSummary: @escaping GenerateSummaryOperation,
         speakerCount: @escaping SpeakerCountOperation,
         cancelSummary: @escaping CancelSummaryOperation,
-        notifySummaryGenerated: NotifySummaryGeneratedOperation? = nil
+        notifySummaryGenerated: NotifySummaryGeneratedOperation? = nil,
+        reconcileFacts: ReconcileFactsOperation? = nil
     ) {
         resolveAudioURLOperation = resolveAudioURL
         resolveHintOperation = resolveHint
@@ -128,6 +137,7 @@ public final class MeetingProcessingCoordinator {
         speakerCountOperation = speakerCount
         cancelSummaryOperation = cancelSummary
         notifySummaryGeneratedOperation = notifySummaryGenerated
+        reconcileFactsOperation = reconcileFacts
     }
 
     // MARK: - Intents
@@ -318,6 +328,19 @@ public final class MeetingProcessingCoordinator {
         }
         let elapsed = clock.now - started
         phase = .completed
+
+        // Fact reconciliation (Gap 2, docs/plans/summary-pipeline-completion.md): a detached,
+        // non-awaited best-effort `Task` so a slow LLM reconcile call never delays the UI's
+        // completion signal and can never turn into a coordinator failure — errors are swallowed
+        // into the log only.
+        if let reconcileFactsOperation {
+            Task.detached {
+                Self.log.debug("fact reconciliation: starting for meeting \(meetingId.rawValue, privacy: .public)")
+                await reconcileFactsOperation(meetingId)
+                Self.log.debug("fact reconciliation: finished for meeting \(meetingId.rawValue, privacy: .public)")
+            }
+        }
+
         // Fire the post-generation hook AFTER reaching the terminal `.completed` state, so a slow
         // notifier can never delay the UI's completion signal. The notifier itself decides whether
         // `elapsed` clears the "long summary" bar worth notifying about.
