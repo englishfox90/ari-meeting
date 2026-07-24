@@ -68,6 +68,7 @@ struct HomeView: View {
         // title-bar chrome; the ambient wash (canvas → elevated) gives the glass sidebar and
         // toolbar tonal variation to refract (liquid-glass-adoption.md v2).
         .scrollEdgeEffectStyle(.soft, for: .top)
+            .toolbarScrollFade()
         .background(MarginaliaCanvasWash(scheme: scheme))
         .navigationTitle("Home")
         .task { await viewModel.observe() }

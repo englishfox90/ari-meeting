@@ -287,9 +287,15 @@ struct MeetingDetailView: View {
                     .padding(MarginaliaSpacing.xl.value)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // Fades the title/header under the floating window toolbar instead of letting it
-            // scroll directly behind the glass unreadably (same pattern as Home/Settings).
+            // Keeps the title/header from colliding with the floating window toolbar. `.soft` is
+            // the system's progressive fade — a gradient into the ground rather than the abrupt
+            // clip `.hard` produced. On its own it wasn't enough because content also STARTED
+            // right under the toolbar, so the top content margin below gives the fade room to run
+            // before text reaches the controls. (Marginalia sanctions exactly one gradient of our
+            // own — the canvas wash — so the fade here is the system's, not a hand-rolled one.)
             .scrollEdgeEffectStyle(.soft, for: .top)
+            .contentMargins(.top, MarginaliaSpacing.xxl.value, for: .scrollContent)
+            .toolbarScrollFade()
 
             resizableDivider(maxRail: maxRail)
 
@@ -357,6 +363,8 @@ struct MeetingDetailView: View {
                         .padding(MarginaliaSpacing.md.value)
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
+                .contentMargins(.top, MarginaliaSpacing.xxl.value, for: .scrollContent)
+                .toolbarScrollFade()
             case .transcript:
                 VStack(spacing: 0) {
                     transcriptHeader
@@ -969,6 +977,8 @@ struct MeetingDetailView: View {
                     .padding(MarginaliaSpacing.md.value)
             }
             .scrollEdgeEffectStyle(.soft, for: .top)
+            .contentMargins(.top, MarginaliaSpacing.xxl.value, for: .scrollContent)
+            .toolbarScrollFade()
         } else {
             emptyState(title: "No notes", message: "Nothing has been written for this meeting yet.")
         }

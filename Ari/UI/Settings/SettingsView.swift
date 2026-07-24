@@ -74,6 +74,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
+            .toolbarScrollFade()
         .background(MarginaliaCanvasWash(scheme: scheme))
         .navigationTitle("Settings")
         .toolbar {
