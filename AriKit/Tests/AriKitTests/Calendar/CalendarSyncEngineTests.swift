@@ -727,6 +727,56 @@ struct CalendarSyncEngineTests {
         #expect(carol.notes == "Authored by owner")
     }
 
+    @Test(
+        "an attendee matching the owner's own email links the existing owner as a participant — no duplicate person row"
+    )
+    func attendeeImportResolvesOwnerEmailToExistingOwnerRow() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1", calendarTitle: "Work", color: nil, selected: true
+        )
+
+        let owner = try await db.persons.saveOwner(Person(
+            id: PersonID("owner-1"),
+            email: "owner@example.com",
+            displayName: "Owner Example",
+            isOwner: true,
+            createdAt: base,
+            updatedAt: base
+        ))
+
+        let start = base
+        let end = base.addingTimeInterval(1800)
+        let meetingId: MeetingID = "meeting-1"
+        try await db.meetings.upsert(meeting(id: meetingId, createdAt: start.addingTimeInterval(-30)))
+
+        let attendees = [
+            Attendee(name: "Owner Example", email: "owner@example.com"),
+            Attendee(name: "Alice Example", email: "alice@example.com")
+        ]
+        let source = FakeCalendarSource(events: [
+            nativeEvent(id: "ev-1", start: start, end: end, attendees: attendees)
+        ])
+        let engine = CalendarSyncEngine(source: source, database: db)
+        let report = try await engine.syncRange(
+            from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600), now: base
+        )
+
+        #expect(report.autoLinked == 1)
+        #expect(report.importedParticipants == 2)
+
+        // No duplicate person row was created for the owner — exactly one person has isOwner == true,
+        // and exactly one person has the owner's email.
+        let allPersons = try await db.persons.all()
+        #expect(allPersons.filter(\.isOwner).count == 1)
+        #expect(allPersons.filter { $0.email == "owner@example.com" }.count == 1)
+        #expect(allPersons.count == 2) // owner + Alice, no owner duplicate
+
+        let participants = try await db.persons.participants(inMeeting: meetingId)
+        #expect(participants.map(\.id).contains(owner.id))
+        #expect(participants.map(\.displayName).sorted() == ["Alice Example", "Owner Example"])
+    }
+
     // MARK: - 14/15/16. Series auto-detection wiring (calendar-series-intelligence plan §5)
 
     @Test("a full syncRange pass over a recurring linked event reports one new series membership; re-run reports 0")
@@ -789,7 +839,13 @@ struct CalendarSyncEngineTests {
         try await db.meetings.upsert(meeting(id: okMeeting, createdAt: okStart.addingTimeInterval(-30)))
 
         let source = FakeCalendarSource(events: [
-            nativeEvent(id: "ev-fails", start: failStart, end: failEnd, seriesKey: "series-key-fails", hasRecurrence: true),
+            nativeEvent(
+                id: "ev-fails",
+                start: failStart,
+                end: failEnd,
+                seriesKey: "series-key-fails",
+                hasRecurrence: true
+            ),
             nativeEvent(id: "ev-ok", start: okStart, end: okEnd, seriesKey: "series-key-ok", hasRecurrence: true)
         ])
 
@@ -798,7 +854,9 @@ struct CalendarSyncEngineTests {
         let engine = CalendarSyncEngine(
             source: source, database: db,
             detectOverride: { event, now in
-                if event.id.rawValue == "ev-fails" { throw Poisoned() }
+                if event.id.rawValue == "ev-fails" {
+                    throw Poisoned()
+                }
                 return try await detector.detect(for: event, at: now)
             }
         )
@@ -815,8 +873,8 @@ struct CalendarSyncEngineTests {
         #expect(okSuggestions.count == 1)
     }
 
-    // Bounded so a regression that stops the hook from firing fails the test honestly (a timeout)
-    // rather than hanging the suite forever on an unresumed continuation (L8 nit).
+    /// Bounded so a regression that stops the hook from firing fails the test honestly (a timeout)
+    /// rather than hanging the suite forever on an unresumed continuation (L8 nit).
     @Test(
         "'.autoAdded' invokes the fold hook with the meeting id; '.suggested' does not",
         .timeLimit(.minutes(1))
@@ -859,7 +917,9 @@ struct CalendarSyncEngineTests {
 
         actor HookSpy {
             private(set) var invoked: [MeetingID] = []
-            func record(_ id: MeetingID) { invoked.append(id) }
+            func record(_ id: MeetingID) {
+                invoked.append(id)
+            }
         }
         let spy = HookSpy()
 

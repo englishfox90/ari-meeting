@@ -231,6 +231,13 @@ public struct CalendarSyncEngine: Sendable {
     private func runAttendeeImport(in range: ClosedRange<Date>, now: Date) async throws -> Int {
         let events = try await database.calendarEvents.events(startingIn: range)
         var importedCount = 0
+        // Resolved once per pass: if the owner already has an email (set via "Edit owner
+        // profile"), an attendee matching it is the owner, not a distinct person. Without this
+        // check, an event where the owner is their own attendee (the common case — organizer or
+        // invitee of their own meetings) creates a second `Person` row for the same human every
+        // sync, forking facts/participant links onto the wrong id (2026-07-24 incident).
+        let owner = try await database.persons.owner()
+        let ownerEmail = EmailValidation.normalized(owner?.email)
         for event in events {
             guard let meetingId = event.meetingId else { continue }
 
@@ -251,11 +258,16 @@ public struct CalendarSyncEngine: Sendable {
                     continue
                 }
 
-                let person = try await database.persons.upsertStubFromAttendee(
-                    email: hasEmail ? email : nil,
-                    displayName: displayName,
-                    at: now
-                )
+                let person: Person = if hasEmail, let ownerEmail, let owner,
+                                        EmailValidation.normalized(email) == ownerEmail {
+                    owner
+                } else {
+                    try await database.persons.upsertStubFromAttendee(
+                        email: hasEmail ? email : nil,
+                        displayName: displayName,
+                        at: now
+                    )
+                }
                 let alreadyLinked = linkedPersonIds.contains(person.id)
                 try await database.persons.addParticipant(
                     meetingId: meetingId,
