@@ -29,7 +29,8 @@ struct SettingsView: View {
         database: AppDatabase,
         calendarSource: (any CalendarSourcing)? = nil,
         notifications: MeetingNotifications? = nil,
-        recordingSession: RecordingSession? = nil
+        recordingSession: RecordingSession? = nil,
+        onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)? = nil
     ) {
         self.database = database
         // `KeychainSecretStore`/`AppearanceStore` are both stateless value types (no Keychain
@@ -62,7 +63,7 @@ struct SettingsView: View {
             onRecordingRequireConsentChanged: onRecordingRequireConsentChanged
         ))
         _calendarViewModel = State(initialValue: CalendarSettingsViewModel(
-            database: database, source: calendarSource
+            database: database, source: calendarSource, onAutoSeriesMembership: onAutoSeriesMembership
         ))
     }
 

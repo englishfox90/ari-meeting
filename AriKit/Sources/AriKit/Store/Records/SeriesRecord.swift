@@ -24,6 +24,11 @@ struct SeriesRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
     var cadence: String?
     var ownerPersonId: String?
     var templateId: String?
+    /// Consent memory for series auto-detection (calendar-series-intelligence plan §2.1) —
+    /// `'ask'` | `'always'` | `'never'`. Store-internal only, same documented gap as `templateId`
+    /// above (not yet on `AriKit.Models.Series`); `SeriesRepository.upsert(_:)` preserves it
+    /// across a plain `Series` upsert rather than resetting it to the default.
+    var autoAddMode: String
     var createdAt: Date
     var updatedAt: Date
     var isDeleted: Bool
@@ -39,6 +44,7 @@ extension SeriesRecord {
         cadence = series.cadence
         ownerPersonId = series.ownerPersonId?.rawValue
         templateId = nil
+        autoAddMode = "ask"
         createdAt = series.createdAt
         updatedAt = series.updatedAt
         isDeleted = false

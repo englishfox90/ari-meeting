@@ -1,6 +1,9 @@
 //
 //  AskAnswerText.swift — renders a reconciled assistant answer (docs/plans/ari-ask-ui.md §7/§8):
-//  plain-text runs flow as wrapping, lightly-markdown-styled words; `[S<n>]` markers become
+//  the answer is first split into display lines (`AskAnswerLayout` — paragraphs, `- `/`1. ` list
+//  items with hanging markers, `#` headings, blank-line paragraph gaps) so the model's block
+//  structure survives; within each line, plain-text runs flow as wrapping, lightly-markdown-styled
+//  words; `[S<n>]` markers become
 //  tappable citation chips (`AskSourcePopover`) resolved against THIS row's own `sources`, with a
 //  literal `[S<n>]` fallback when `index` is out of range (defensive — the engine already
 //  reconciles citations before the UI ever sees them, plan §0); `@ref(MM:SS)` markers render as
@@ -23,12 +26,33 @@ struct AskAnswerText: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        MarginaliaFlowLayout(spacing: 3, lineSpacing: MarginaliaSpacing.xs.value) {
-            ForEach(Array(flowItems.enumerated()), id: \.offset) { _, item in
-                flowItemView(item)
+        let lines = AskAnswerLayout.lines(text)
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                lineView(line)
+                    .padding(.top, line.startsParagraph ? MarginaliaSpacing.xs.value : 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func lineView(_ line: AskAnswerLine) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: MarginaliaSpacing.xs.value) {
+            switch line.marker {
+            case .bullet:
+                Text("•").marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
+            case let .number(label):
+                Text(label).marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
+            case nil:
+                EmptyView()
+            }
+            MarginaliaFlowLayout(spacing: 3, lineSpacing: MarginaliaSpacing.xs.value) {
+                ForEach(Array(flowItems(for: line).enumerated()), id: \.offset) { _, item in
+                    flowItemView(item, heading: line.isHeading)
+                }
+            }
+        }
     }
 
     private enum FlowItem {
@@ -37,8 +61,8 @@ struct AskAnswerText: View {
         case timestamp(String)
     }
 
-    private var flowItems: [FlowItem] {
-        AskAnswerTokenizer.tokenize(text).flatMap { segment -> [FlowItem] in
+    private func flowItems(for line: AskAnswerLine) -> [FlowItem] {
+        line.segments.flatMap { segment -> [FlowItem] in
             switch segment {
             case let .text(raw):
                 words(in: raw)
@@ -86,10 +110,10 @@ struct AskAnswerText: View {
     }
 
     @ViewBuilder
-    private func flowItemView(_ item: FlowItem) -> some View {
+    private func flowItemView(_ item: FlowItem, heading: Bool) -> some View {
         switch item {
         case let .word(attributed):
-            Text(attributed).marginaliaTextStyle(.body, in: scheme)
+            Text(attributed).marginaliaTextStyle(heading ? .headline : .body, in: scheme)
 
         case let .citation(index):
             if index >= 1, index <= sources.count {

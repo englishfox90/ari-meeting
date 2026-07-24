@@ -3,12 +3,13 @@
 //  → auto-match, one full pass (plan §2.2, §4). Pure orchestration over `CalendarSourcing` +
 //  repositories — zero EventKit import, fully headless (Lane-1 testable with a fake source).
 //
-//  Parity with `sync_range_core` (`sync.rs:28-81`), minus the series-detection and
-//  attendee→person reconcile hooks (`sync.rs:72, 78, 85-131` — deferred to the Series Track I
-//  and F2-bridge slices respectively; both attach at the same range this engine already computes,
-//  plan §4 item 8).
+//  Parity with `sync_range_core` (`sync.rs:28-81`) — the attendee→person reconcile hook landed in
+//  the people-view-parity slice; series auto-detection (`sync.rs:72, 85-105`) lands in
+//  `calendar-series-intelligence.md` §2.2/§7 step 4 as `runSeriesDetection`, inserted between
+//  `runAutoMatch` and `runAttendeeImport` (Rust order).
 //
 import Foundation
+import os
 
 public struct CalendarSyncReport: Sendable, Equatable {
     /// Events returned by the source this pass (parity: `sync.rs:80` return value).
@@ -18,14 +19,24 @@ public struct CalendarSyncReport: Sendable, Equatable {
     /// Participant links established this pass by the calendar attendee→person import (plan §2.6,
     /// `people-view-parity.md`) — honest telemetry, never fabricated (No-Fake-State).
     public var importedParticipants: Int
+    /// NEW series memberships written this pass by `SeriesDetector` — `'suggested'` + `'auto'`
+    /// combined (calendar-series-intelligence plan §2.2). Honest telemetry: a re-run reports 0.
+    /// Defaulted so existing call sites stay source-compatible.
+    public var seriesMemberships: Int
 
-    public init(fetched: Int, pruned: Int, autoLinked: Int, importedParticipants: Int = 0) {
+    public init(
+        fetched: Int, pruned: Int, autoLinked: Int, importedParticipants: Int = 0,
+        seriesMemberships: Int = 0
+    ) {
         self.fetched = fetched
         self.pruned = pruned
         self.autoLinked = autoLinked
         self.importedParticipants = importedParticipants
+        self.seriesMemberships = seriesMemberships
     }
 }
+
+private let seriesDetectionLogger = Logger(subsystem: "com.arivo.ari.AriKit", category: "calendar.series")
 
 public struct CalendarSyncEngine: Sendable {
     /// Auto-match slack window (parity: `sync.rs:16` `AUTO_MATCH_SLACK_MINUTES`).
@@ -36,10 +47,43 @@ public struct CalendarSyncEngine: Sendable {
 
     private let source: any CalendarSourcing
     private let database: AppDatabase
+    /// Fired fire-and-forget when `SeriesDetector` writes a consented `'auto'` membership (the
+    /// `'always'` path only — a merely `'suggested'` one has not been consented to yet, plan
+    /// §2.2). `nil` by default; the app target supplies the ledger-fold hook.
+    private let onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)?
+    /// Test-only (module-internal) override of `SeriesDetector.detect`, so
+    /// `CalendarSyncEngineTests` can deterministically fault-inject a per-event detector failure
+    /// (e.g. a `.failed` outcome the fake throws for one specific event id) without corrupting the
+    /// database — a genuinely dangling foreign-key reference can never arise through any real
+    /// write path in this engine (the schema's own foreign keys guarantee consistency at every
+    /// step), so a literal "poisoned row" isn't reachable except via direct SQL surgery that would
+    /// also break the surrounding sync steps (`syncUpsert`/`pruneStaleEvents`) before detection
+    /// ever ran. `nil` in production, where the real `SeriesDetector` is always used. Not part of
+    /// the public initializer — mirrors `AddToSeriesViewModel.pendingFoldTask`'s
+    /// test-hook-not-public-contract precedent.
+    private let detectOverride: (@Sendable (CalendarEvent, Date) async throws -> SeriesDetector.Outcome)?
 
-    public init(source: any CalendarSourcing, database: AppDatabase) {
+    public init(
+        source: any CalendarSourcing,
+        database: AppDatabase,
+        onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)? = nil
+    ) {
+        self.init(
+            source: source, database: database,
+            onAutoSeriesMembership: onAutoSeriesMembership, detectOverride: nil
+        )
+    }
+
+    init(
+        source: any CalendarSourcing,
+        database: AppDatabase,
+        onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)? = nil,
+        detectOverride: (@Sendable (CalendarEvent, Date) async throws -> SeriesDetector.Outcome)?
+    ) {
         self.source = source
         self.database = database
+        self.onAutoSeriesMembership = onAutoSeriesMembership
+        self.detectOverride = detectOverride
     }
 
     /// Fetch → upsert (link-preserving) → prune-in-range → auto-match. One full pass.
@@ -64,13 +108,15 @@ public struct CalendarSyncEngine: Sendable {
         )
 
         let autoLinked = try await runAutoMatch(in: range)
+        let seriesMemberships = await runSeriesDetection(in: range, now: now)
         let importedParticipants = try await runAttendeeImport(in: range, now: now)
 
         return CalendarSyncReport(
             fetched: events.count,
             pruned: pruned,
             autoLinked: autoLinked,
-            importedParticipants: importedParticipants
+            importedParticipants: importedParticipants,
+            seriesMemberships: seriesMemberships
         )
     }
 
@@ -120,10 +166,55 @@ public struct CalendarSyncEngine: Sendable {
             ) else {
                 continue
             }
-            try await database.calendarEvents.setAutoLink(eventId: event.id, meetingId: meetingId)
-            autoLinkedCount += 1
+            let linked = try await database.calendarEvents.setAutoLink(eventId: event.id, meetingId: meetingId)
+            if linked {
+                autoLinkedCount += 1
+            }
         }
         return autoLinkedCount
+    }
+
+    // MARK: - Series auto-detection (calendar-series-intelligence plan §2.2, feature 1)
+
+    /// For each non-tombstoned event in `range` (read from the persisted rows — same rationale as
+    /// `runAttendeeImport`), runs `SeriesDetector.detect`. Best-effort: a per-event failure is
+    /// logged and never breaks the sync pass or skips detection for subsequent events (parity
+    /// `sync.rs:83-105`). On `.autoAdded`, fires `onAutoSeriesMembership` fire-and-forget — never
+    /// blocking this sync pass on a ledger fold. Returns the count of NEW memberships written
+    /// (`'suggested'` + `'auto'`) — honest telemetry, a re-run reports 0.
+    private func runSeriesDetection(in range: ClosedRange<Date>, now: Date) async -> Int {
+        let events: [CalendarEvent]
+        do {
+            events = try await database.calendarEvents.events(startingIn: range)
+        } catch {
+            seriesDetectionLogger.error("series detection: failed to read events in range: \(error)")
+            return 0
+        }
+
+        let detector = SeriesDetector(database: database)
+        let detect = detectOverride ?? { try await detector.detect(for: $0, at: $1) }
+        var newMemberships = 0
+        for event in events {
+            do {
+                switch try await detect(event, now) {
+                case .skipped:
+                    break
+                case .suggested:
+                    newMemberships += 1
+                case .autoAdded:
+                    newMemberships += 1
+                    if let hook = onAutoSeriesMembership, let meetingId = event.meetingId {
+                        Task.detached(priority: .utility) { await hook(meetingId) }
+                    }
+                }
+            } catch {
+                seriesDetectionLogger.error(
+                    "series detection failed for event \(event.id.rawValue, privacy: .private): \(error)"
+                )
+                continue
+            }
+        }
+        return newMemberships
     }
 
     // MARK: - Attendee→person import (parity: `persons/import.rs` + `people-view-parity.md` §2.6)

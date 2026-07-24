@@ -80,15 +80,7 @@ struct EventDetailSheet: View {
     }
 
     private var timeRangeText: String {
-        if event.isAllDay {
-            return "All day"
-        }
-        let sameDay = Calendar.current.isDate(event.startTime, inSameDayAs: event.endTime)
-        let start = event.startTime.formatted(date: .abbreviated, time: .shortened)
-        let end = sameDay
-            ? event.endTime.formatted(date: .omitted, time: .shortened)
-            : event.endTime.formatted(date: .abbreviated, time: .shortened)
-        return "\(start) – \(end)"
+        CalendarEventFormatting.timeRangeText(for: event)
     }
 
     // MARK: - Location / organizer / notes
@@ -141,36 +133,11 @@ struct EventDetailSheet: View {
                 SectionHeader(title: "ATTENDEES (\(event.attendees.count))")
                 VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
                     ForEach(Array(event.attendees.enumerated()), id: \.offset) { _, attendee in
-                        attendeeRow(attendee)
+                        AttendeeRow(attendee: attendee)
                     }
                 }
             }
         }
-    }
-
-    private func attendeeRow(_ attendee: Attendee) -> some View {
-        HStack(spacing: MarginaliaSpacing.sm.value) {
-            Circle()
-                .fill(Color.marginalia(.elevated, in: scheme))
-                .frame(width: 22, height: 22)
-                .overlay {
-                    Text(initial(for: attendee))
-                        .marginaliaTextStyle(.caption, in: scheme)
-                }
-            VStack(alignment: .leading, spacing: 0) {
-                Text(attendee.name ?? attendee.email ?? "Unknown attendee")
-                    .marginaliaTextStyle(.body, in: scheme)
-                if attendee.name != nil, let email = attendee.email {
-                    Text(email)
-                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
-                }
-            }
-        }
-    }
-
-    private func initial(for attendee: Attendee) -> String {
-        let source = attendee.name ?? attendee.email ?? "?"
-        return String(source.prefix(1)).uppercased()
     }
 
     // MARK: - Linked meeting (renders ONLY from real `event.meetingId`)

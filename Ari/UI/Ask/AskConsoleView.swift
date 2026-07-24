@@ -138,6 +138,13 @@ struct AskConsoleView: View {
                     )
                 }
                 AskAnswerText(text: text, sources: sources, onOpenMeeting: onOpenMeeting)
+                // When the model cited nothing inline, still disclose the REAL sources the engine
+                // retrieved and answered from (they arrive separately from the answer text — the
+                // recall invariant — so this fabricates nothing). Inline chips already cover the
+                // cited case; showing both would be noise.
+                if !streaming, !sources.isEmpty, !Self.hasInlineCitations(text) {
+                    sourcesFooter(sources)
+                }
             }
             .padding(MarginaliaSpacing.sm.value)
             .background {
@@ -147,6 +154,34 @@ struct AskConsoleView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: MarginaliaRadius.card.value, style: .continuous)
                     .strokeBorder(Color.marginalia(.hairline, in: scheme), lineWidth: 1)
+            }
+        }
+    }
+
+    private static func hasInlineCitations(_ text: String) -> Bool {
+        AskAnswerTokenizer.tokenize(text).contains { segment in
+            if case .citation = segment { return true }
+            return false
+        }
+    }
+
+    /// Compact "Sources" disclosure for an answer with no inline `[S<n>]` chips: one tappable
+    /// chip per retrieved source (same popover as inline citations), capped for readability with
+    /// an honest "+N more" count.
+    private func sourcesFooter(_ sources: [RecallSource]) -> some View {
+        let visibleCount = min(sources.count, 8)
+        return VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+            Divider().overlay(Color.marginalia(.hairline, in: scheme))
+            MarginaliaFlowLayout(spacing: MarginaliaSpacing.xs.value, lineSpacing: MarginaliaSpacing.xs.value) {
+                Text("Sources")
+                    .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
+                ForEach(0 ..< visibleCount, id: \.self) { index in
+                    AskSourcePopover(index: index + 1, source: sources[index], onOpenMeeting: onOpenMeeting)
+                }
+                if sources.count > visibleCount {
+                    Text("+\(sources.count - visibleCount) more")
+                        .marginaliaTextStyle(.caption, in: scheme, ink: .inkSecondary)
+                }
             }
         }
     }

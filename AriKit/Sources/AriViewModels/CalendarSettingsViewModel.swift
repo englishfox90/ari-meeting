@@ -62,10 +62,18 @@ public final class CalendarSettingsViewModel {
 
     private let database: AppDatabase
     private let source: (any CalendarSourcing)?
+    /// The F9 series-ledger fold hook, threaded into `CalendarSyncEngine` so VM-triggered syncs
+    /// fold too (calendar-series-intelligence plan §2.4). `nil` by default.
+    private let onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)?
 
-    public init(database: AppDatabase, source: (any CalendarSourcing)? = nil) {
+    public init(
+        database: AppDatabase,
+        source: (any CalendarSourcing)? = nil,
+        onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)? = nil
+    ) {
         self.database = database
         self.source = source
+        self.onAutoSeriesMembership = onAutoSeriesMembership
     }
 
     /// One-shot load. When a source is injected: re-reads the authoritative permission, and — if
@@ -142,7 +150,9 @@ public final class CalendarSettingsViewModel {
     /// Constructed fresh per use from `source` + `database` — cheap (a `Sendable` value type
     /// wrapping two references), so there's no separate stored-engine identity to keep in sync.
     private var engine: CalendarSyncEngine? {
-        source.map { CalendarSyncEngine(source: $0, database: database) }
+        source.map {
+            CalendarSyncEngine(source: $0, database: database, onAutoSeriesMembership: onAutoSeriesMembership)
+        }
     }
 
     private static func row(

@@ -529,6 +529,37 @@ enum SchemaMigrator {
             }
         }
 
+        // v5 (docs/plans/calendar-series-intelligence.md §4, shipped-DB route) — additive-only,
+        // v1–v4 all stay frozen. Three steps, in this order:
+        //  1. Dedupe: real data may carry several calendar events linked to one meeting; keep the
+        //     link on the event with the latest `startTime` (tie-break `id`), clear the rest —
+        //     deterministic, mirrors the legacy importer's pre-pass.
+        //  2. Strict 1:1 backstop: partial UNIQUE index on `calendarEvent.meetingId`
+        //     (`WHERE meetingId IS NOT NULL` so unlinked rows coexist freely). Tombstoned rows
+        //     keep their `meetingId` and are NOT exempted — `CalendarEventRepository` clears
+        //     competitors (tombstoned included) in the same transaction as every link write; the
+        //     index exists as the backstop for any future path that forgets.
+        //  3. Consent memory for series auto-detection: `series.autoAddMode`
+        //     ('ask' | 'always' | 'never'), defaulted 'ask'. Store-internal only (same documented
+        //     gap as `series.templateId` — not yet on `AriKit.Models.Series`).
+        migrator.registerMigration("v5_calendar_series_consent") { db in
+            try db.execute(sql: """
+            UPDATE calendarEvent SET meetingId = NULL, linkSource = NULL
+            WHERE meetingId IS NOT NULL AND id NOT IN (
+                SELECT ce2.id FROM calendarEvent ce2
+                WHERE ce2.meetingId = calendarEvent.meetingId
+                ORDER BY ce2.startTime DESC, ce2.id DESC LIMIT 1
+            )
+            """)
+            try db.execute(sql: """
+            CREATE UNIQUE INDEX idx_calendarEvent_meetingId
+            ON calendarEvent(meetingId) WHERE meetingId IS NOT NULL
+            """)
+            try db.alter(table: "series") { t in
+                t.add(column: "autoAddMode", .text).notNull().defaults(to: "ask")
+            }
+        }
+
         return migrator
     }
 }

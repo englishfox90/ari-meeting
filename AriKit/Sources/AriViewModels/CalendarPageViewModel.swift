@@ -48,17 +48,22 @@ public final class CalendarPageViewModel {
     private let source: (any CalendarSourcing)?
     private let calendar: Calendar
     private let now: @Sendable () -> Date
+    /// The F9 series-ledger fold hook, threaded into `CalendarSyncEngine` so VM-triggered syncs
+    /// fold too (calendar-series-intelligence plan §2.4). `nil` by default.
+    private let onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)?
 
     public init(
         database: AppDatabase,
         source: (any CalendarSourcing)? = nil,
         calendar: Calendar = .current,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)? = nil
     ) {
         self.database = database
         self.source = source
         self.calendar = calendar
         self.now = now
+        self.onAutoSeriesMembership = onAutoSeriesMembership
         weekStart = CalendarWeekLayout.weekDays(containing: now(), calendar: calendar).first
             ?? calendar.startOfDay(for: now())
     }
@@ -107,7 +112,9 @@ public final class CalendarPageViewModel {
         defer { isSyncing = false }
 
         do {
-            let engine = CalendarSyncEngine(source: source, database: database)
+            let engine = CalendarSyncEngine(
+                source: source, database: database, onAutoSeriesMembership: onAutoSeriesMembership
+            )
             _ = try await engine.syncDefaultWindow(now: now())
             refreshError = nil
             await refetch()
