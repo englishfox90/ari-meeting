@@ -36,6 +36,7 @@ struct MeetingDetailView: View {
 
     @State private var viewModel: MeetingDetailViewModel
     @State private var seriesViewModel: AddToSeriesViewModel
+    @State private var linkedEventViewModel: LinkedCalendarEventViewModel
     /// Drives the "Add to series" popover in the meeting header (← the old app's series affordance).
     @State private var showingSeriesPicker = false
     /// The pending title for the "Create new series" field, pre-filled with the meeting title when
@@ -82,6 +83,7 @@ struct MeetingDetailView: View {
         self.initialSeek = initialSeek
         _viewModel = State(initialValue: MeetingDetailViewModel(database: database))
         _seriesViewModel = State(initialValue: AddToSeriesViewModel(database: database))
+        _linkedEventViewModel = State(initialValue: LinkedCalendarEventViewModel(database: database))
     }
 
     private enum NarrowSection: String, CaseIterable, Identifiable {
@@ -142,8 +144,15 @@ struct MeetingDetailView: View {
             // the prior meeting audible with no visible transport to stop it.
             audioController.reset()
             narrowSection = .summary
+            // The F9 ledger fold's reducer (docs/plans/calendar-series-intelligence.md §2.4):
+            // `seriesViewModel` is constructed in `init`, before the environment is readable, so
+            // it's assigned here from the ONE reducer `AppEnvironment.bootstrap()` builds — the
+            // same instance `summaryRunner`'s auto-fold hook and "Rebuild ledger" use
+            // (`AppEnvironment.swift:75-79`). `nil` (no-op fold) while bootstrap hasn't finished.
+            seriesViewModel.ledgerReducer = environment.seriesLedgerReducer
             await viewModel.load(meetingId)
             await seriesViewModel.load(meetingId: meetingId)
+            await linkedEventViewModel.load(meetingId: meetingId)
             // Load templates + restore the picker's selection from whatever summary just
             // resolved (docs/plans/swift-meeting-generation-flow.md, Track 1) — honest: reflects
             // the summary actually on screen, never a fabricated default selection.
@@ -226,6 +235,7 @@ struct MeetingDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             missingAudioNotice
             sourceRecordSection(meeting)
+            LinkedEventCard(viewModel: linkedEventViewModel, meeting: meeting)
             Divider().overlay(Color.marginalia(.hairline, in: scheme))
             listenBackTransport
             transcriptHeader
@@ -304,6 +314,9 @@ struct MeetingDetailView: View {
             Text(meeting.createdAt.formatted(date: .abbreviated, time: .shortened))
                 .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
             seriesAffordance
+            if !seriesViewModel.suggestedSeries.isEmpty {
+                SeriesSuggestionBanner(viewModel: seriesViewModel, meetingId: meetingId)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

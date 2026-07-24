@@ -469,16 +469,46 @@ public struct LegacyDatabaseImporter: Sendable {
         let rows = try reader.dbQueue.read { db in
             try Row.fetchAll(db, sql: "SELECT * FROM calendar_events")
         }
+
+        // Dedupe pre-pass (calendar-series-intelligence plan §4/§7 step 1, feature 4): the legacy
+        // DB can in principle carry multiple events linked to the same meeting ("shouldn't
+        // happen", `calendar.rs:286-287`). Group by meeting_id and keep exactly one winner —
+        // latest `start_time`, tie-broken by `id` — BEFORE any row is upserted, so the outcome is
+        // deterministic (not dependent on `SELECT` row order) and every dropped link is reported.
+        // Without this pre-pass, `CalendarEventRepository.upsert`'s new clear-competitors write
+        // (§2.1) would still land on exactly one winner, but silently and order-dependently.
+        var winners: [String: (rowID: String, startTime: Date?)] = [:]
+        for row in rows {
+            guard let meetingId = row["meeting_id"] as String? else { continue }
+            let id: String = row["id"]
+            let startTime = try? ImportMapping.date(row, "start_time")
+            if let current = winners[meetingId] {
+                if calendarEventDedupeWinner(id: id, startTime: startTime, over: current) {
+                    winners[meetingId] = (id, startTime)
+                }
+            } else {
+                winners[meetingId] = (id, startTime)
+            }
+        }
+
         var imported = 0
         var skipReasons: [String] = []
         for row in rows {
             do {
-                let (model, attendeesMalformed) = try ImportMapping.calendarEvent(from: row)
+                var (model, attendeesMalformed) = try ImportMapping.calendarEvent(from: row)
                 if attendeesMalformed {
                     warnings.append(
                         "calendar_event \(model.id.rawValue): attendees JSON malformed, "
                             + "imported with an empty attendee list"
                     )
+                }
+                if let meetingId = model.meetingId, winners[meetingId.rawValue]?.rowID != model.id.rawValue {
+                    warnings.append(
+                        "calendar_event \(model.id.rawValue): dropped duplicate link to meeting "
+                            + "\(meetingId.rawValue) (a more recently-starting linked event keeps it)"
+                    )
+                    model.meetingId = nil
+                    model.linkSource = nil
                 }
                 try await store.calendarEvents.upsert(model)
                 imported += 1
@@ -487,6 +517,27 @@ public struct LegacyDatabaseImporter: Sendable {
             }
         }
         return tableResult("calendar_events", rows: rows, imported: imported, skipReasons: skipReasons)
+    }
+
+    /// True when the candidate (`id`/`startTime`) should replace `current` as the surviving link
+    /// for a `meeting_id` group: later `start_time` wins; a missing `start_time` always loses to a
+    /// present one; equal (or equally-missing) `start_time` ties are broken by the greater `id`,
+    /// for a fully deterministic outcome independent of `SELECT` row order.
+    private func calendarEventDedupeWinner(
+        id: String,
+        startTime: Date?,
+        over current: (rowID: String, startTime: Date?)
+    ) -> Bool {
+        switch (startTime, current.startTime) {
+        case let (.some(lhs), .some(rhs)):
+            lhs != rhs ? lhs > rhs : id > current.rowID
+        case (.some, .none):
+            true
+        case (.none, .some):
+            false
+        case (.none, .none):
+            id > current.rowID
+        }
     }
 
     // MARK: - `calendar_sync_settings`

@@ -328,7 +328,16 @@ final class AppEnvironment {
             // sync loop (plan §5).
             let source = EventKitCalendarSource()
             calendarSource = source
-            let syncEngine = CalendarSyncEngine(source: source, database: db)
+            // calendar-series-intelligence plan §2.5: the F9 fold hook for series auto-detection's
+            // consented `'always'` path. Captures the LOCAL `ledgerReducer` value (a `Sendable`
+            // struct), never `self`/`AppEnvironment` — same discipline as the coordinator closures
+            // above.
+            let seriesFoldHook: @Sendable (MeetingID) async -> Void = { meetingId in
+                try? await ledgerReducer.foldMeeting(meetingId: meetingId)
+            }
+            let syncEngine = CalendarSyncEngine(
+                source: source, database: db, onAutoSeriesMembership: seriesFoldHook
+            )
             calendarSyncScheduler = CalendarSyncScheduler(source: source, engine: syncEngine, database: db)
 
             // Route tapped notifications back into the app, install the delegate, and start the

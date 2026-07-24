@@ -53,9 +53,22 @@ public struct CalendarEventRepository: Sendable {
     }
 
     /// Insert-or-update, keyed on the stable `CalendarEventID` primary key (the EventKit
-    /// `eventIdentifier`).
+    /// `eventIdentifier`). Enforces strict 1:1 meeting↔event (calendar-series-intelligence plan
+    /// §2.1, feature 4): when persisting a non-nil `meetingId`, first clears it (and
+    /// `linkSource`) off every OTHER event row — tombstoned included, no `isDeleted` filter —
+    /// that currently claims the same meeting, in the same write transaction. This is the
+    /// legacy-importer path; like `setManualLink`, it may steal from anything.
     public func upsert(_ event: CalendarEvent) async throws {
         try await dbWriter.write { db in
+            if let meetingId = event.meetingId {
+                try db.execute(
+                    sql: """
+                    UPDATE calendarEvent SET meetingId = NULL, linkSource = NULL
+                    WHERE meetingId = ? AND id <> ?
+                    """,
+                    arguments: [meetingId.rawValue, event.id.rawValue]
+                )
+            }
             try CalendarEventRecord(event).save(db)
         }
     }
@@ -171,28 +184,70 @@ public struct CalendarEventRepository: Sendable {
 
     /// Set an auto-match link. Re-guards against manual at the write site (parity:
     /// `calendar.rs:324-341`) — never overwrites an existing manual link, even if the caller's
-    /// candidate set is stale.
-    public func setAutoLink(eventId: CalendarEventID, meetingId: MeetingID) async throws {
+    /// candidate set is stale. Strict 1:1 (calendar-series-intelligence plan §2.1, feature 4):
+    /// auto never steals a link FROM a manually-linked event — if `meetingId` is currently
+    /// manually linked (and not tombstoned) to a DIFFERENT event, this is skipped entirely (no
+    /// partial write); manual always wins. Otherwise, any non-manual competitor claiming the same
+    /// meeting is cleared in the same write transaction before the new link is written. Returns
+    /// `true` only when the link row was actually written — callers must not count a skipped call
+    /// as a link (H1 fix: `autoLinked` telemetry must reflect real writes, not attempts).
+    @discardableResult
+    public func setAutoLink(eventId: CalendarEventID, meetingId: MeetingID) async throws -> Bool {
         try await dbWriter.write { db in
             guard var record = try CalendarEventRecord.fetchOne(db, key: eventId.rawValue) else {
-                return
+                return false
             }
             guard record.linkSource == nil || record.linkSource != CalendarLinkSource.manual.rawValue else {
-                return
+                return false
             }
+            // Tombstoned manual competitors don't count as "manually linked elsewhere" — a
+            // deleted event's link is no longer visible anywhere (M1 fix: `linkedEvent(forMeeting:)`
+            // already hides tombstones, so this pre-check must agree or auto-link stays blocked
+            // forever by a row the user can no longer even see).
+            let manuallyLinkedElsewhere = try CalendarEventRecord
+                .filter(Column("meetingId") == meetingId.rawValue)
+                .filter(Column("id") != eventId.rawValue)
+                .filter(Column("linkSource") == CalendarLinkSource.manual.rawValue)
+                .filter(Column("isDeleted") == false)
+                .fetchCount(db) > 0
+            guard !manuallyLinkedElsewhere else { return false }
+
+            // Clears any non-manual competitor (tombstoned or live, as before) PLUS a tombstoned
+            // manual competitor — the pre-check above only lets a *live* manual competitor block
+            // this write, so any manual-linked row still claiming `meetingId` at this point must
+            // be tombstoned, and the partial UNIQUE index (`idx_calendarEvent_meetingId`, which
+            // carries no `isDeleted` filter) would otherwise reject the write below (M1 fix).
+            try db.execute(
+                sql: """
+                UPDATE calendarEvent SET meetingId = NULL, linkSource = NULL
+                WHERE meetingId = ? AND id <> ? AND (linkSource IS NULL OR linkSource <> 'manual' OR isDeleted = 1)
+                """,
+                arguments: [meetingId.rawValue, eventId.rawValue]
+            )
             record.meetingId = meetingId.rawValue
             record.linkSource = CalendarLinkSource.auto.rawValue
             try record.update(db)
+            return true
         }
     }
 
     /// Set a manual link — the one path that is always allowed to override an existing link
-    /// (parity: `calendar.rs:343-354`).
+    /// (parity: `calendar.rs:343-354`). Strict 1:1 (calendar-series-intelligence plan §2.1,
+    /// feature 4): clears `meetingId`/`linkSource` off every OTHER event currently claiming the
+    /// same meeting — tombstoned included, no such-filter — in the same write transaction; manual
+    /// may steal from anything.
     public func setManualLink(eventId: CalendarEventID, meetingId: MeetingID) async throws {
         try await dbWriter.write { db in
             guard var record = try CalendarEventRecord.fetchOne(db, key: eventId.rawValue) else {
                 return
             }
+            try db.execute(
+                sql: """
+                UPDATE calendarEvent SET meetingId = NULL, linkSource = NULL
+                WHERE meetingId = ? AND id <> ?
+                """,
+                arguments: [meetingId.rawValue, eventId.rawValue]
+            )
             record.meetingId = meetingId.rawValue
             record.linkSource = CalendarLinkSource.manual.rawValue
             try record.update(db)
@@ -208,6 +263,43 @@ public struct CalendarEventRepository: Sendable {
             record.meetingId = nil
             record.linkSource = nil
             try record.update(db)
+        }
+    }
+
+    /// The (at most one) non-tombstoned event linked to `meetingId` (← `get_event_by_meeting_id`,
+    /// `calendar.rs:288`). `nil` is honest "no linked event" — never a placeholder.
+    public func linkedEvent(forMeeting meetingId: MeetingID) async throws -> CalendarEvent? {
+        try await dbWriter.read { db in
+            try CalendarEventRecord
+                .filter(Column("meetingId") == meetingId.rawValue)
+                .filter(Column("isDeleted") == false)
+                .fetchOne(db)?
+                .asModel()
+        }
+    }
+
+    /// Observation for the meeting-detail linked-event card (mirrors `observeAll()` above).
+    public func observeLinkedEvent(forMeeting meetingId: MeetingID) -> AsyncStream<CalendarEvent?> {
+        let dbWriter = dbWriter
+        let observation = ValueObservation.tracking { db in
+            try CalendarEventRecord
+                .filter(Column("meetingId") == meetingId.rawValue)
+                .filter(Column("isDeleted") == false)
+                .fetchOne(db)?
+                .asModel()
+        }
+        return AsyncStream { continuation in
+            let task = Task {
+                do {
+                    for try await value in observation.values(in: dbWriter) {
+                        continuation.yield(value)
+                    }
+                } catch {
+                    // See MeetingRepository.observeAll(): a failure ends the stream.
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 

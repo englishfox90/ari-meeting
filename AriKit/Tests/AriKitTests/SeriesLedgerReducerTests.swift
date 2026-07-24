@@ -213,4 +213,32 @@ struct SeriesLedgerReducerTests {
         #expect(persisted?.ledgerMarkdown?.contains("@mref(m2@02:00)") == true)
         #expect(persisted?.ledgerVersion == 1)
     }
+
+    // MARK: - Consent (calendar-series-intelligence plan §5, test 20)
+
+    @Test("foldMeeting no-ops for a meeting whose only membership is 'suggested' — No-Fake-State")
+    func foldMeetingNoOpsForSuggestedOnlyMembership() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let seriesId = try await db.series.createSeries(title: "Brian 1:1", at: epoch)
+        let m1 = makeMeeting(id: "m1", title: "Brian 1:1", createdAt: epoch)
+        try await db.meetings.upsert(m1)
+        try await db.series.addMember(
+            seriesId: seriesId, meetingId: m1.id, linkSource: "suggested", at: epoch
+        )
+        try await db.summaries.upsert(Summary(
+            id: SummaryID("s1"),
+            meetingId: m1.id,
+            bodyMarkdown: "- Ship the beta.",
+            createdAt: epoch,
+            updatedAt: epoch
+        ))
+
+        let (reducer, spy) = makeReducer(db: db)
+        try await reducer.foldMeeting(meetingId: m1.id)
+
+        let prompts = await spy.userPrompts
+        #expect(prompts.isEmpty)
+        let persisted = try await db.series.find(seriesId)
+        #expect(persisted?.ledgerMarkdown == nil)
+    }
 }

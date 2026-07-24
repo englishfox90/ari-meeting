@@ -307,6 +307,9 @@ struct SchemaFidelityTests {
             ExpectedColumn(name: "cadence", type: "TEXT", notNull: false),
             ExpectedColumn(name: "ownerPersonId", type: "TEXT", notNull: false),
             ExpectedColumn(name: "templateId", type: "TEXT", notNull: false),
+            // calendar-series-intelligence plan §2.1/§7 step 4 (feature 1) — consent memory for
+            // series auto-detection, added in place to the still-unshipped `v1_baseline`.
+            ExpectedColumn(name: "autoAddMode", type: "TEXT", notNull: true),
             ExpectedColumn(name: "createdAt", type: "DATETIME", notNull: true),
             ExpectedColumn(name: "updatedAt", type: "DATETIME", notNull: true),
             ExpectedColumn(name: "isDeleted", type: "BOOLEAN", notNull: true),

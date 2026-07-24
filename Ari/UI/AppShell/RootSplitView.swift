@@ -235,13 +235,19 @@ struct RootSplitView: View {
                 calendarSource: environment.calendarSource,
                 recordingSession: environment.recordingSession,
                 selection: $selectedSection,
-                onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) }
+                onOpenMeeting: { path.append($0); askNavStack.append(.meeting($0)) },
+                onAutoSeriesMembership: { [ledgerReducer = environment.seriesLedgerReducer] meetingId in
+                    try? await ledgerReducer?.foldMeeting(meetingId: meetingId)
+                }
             )
         case .settings:
             SettingsView(
                 database: database,
                 calendarSource: environment.calendarSource,
-                notifications: environment.meetingNotifications
+                notifications: environment.meetingNotifications,
+                onAutoSeriesMembership: { [ledgerReducer = environment.seriesLedgerReducer] meetingId in
+                    try? await ledgerReducer?.foldMeeting(meetingId: meetingId)
+                }
             )
         }
     }

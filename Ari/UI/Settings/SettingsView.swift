@@ -28,7 +28,8 @@ struct SettingsView: View {
     init(
         database: AppDatabase,
         calendarSource: (any CalendarSourcing)? = nil,
-        notifications: MeetingNotifications? = nil
+        notifications: MeetingNotifications? = nil,
+        onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)? = nil
     ) {
         self.database = database
         // `KeychainSecretStore`/`AppearanceStore` are both stateless value types (no Keychain
@@ -53,7 +54,7 @@ struct SettingsView: View {
             onNotificationSettingsChanged: onNotificationSettingsChanged
         ))
         _calendarViewModel = State(initialValue: CalendarSettingsViewModel(
-            database: database, source: calendarSource
+            database: database, source: calendarSource, onAutoSeriesMembership: onAutoSeriesMembership
         ))
     }
 

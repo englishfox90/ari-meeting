@@ -21,7 +21,9 @@ struct CalendarSyncEngineTests {
         start: Date,
         end: Date,
         notes: String? = nil,
-        attendees: [Attendee] = []
+        attendees: [Attendee] = [],
+        seriesKey: String? = nil,
+        hasRecurrence: Bool = false
     ) -> NativeEvent {
         NativeEvent(
             id: id,
@@ -32,7 +34,9 @@ struct CalendarSyncEngineTests {
             endTime: end,
             isAllDay: false,
             notes: notes,
-            attendees: attendees
+            attendees: attendees,
+            seriesKey: seriesKey,
+            hasRecurrence: hasRecurrence
         )
     }
 
@@ -403,6 +407,53 @@ struct CalendarSyncEngineTests {
         #expect(event.linkSource == .auto)
     }
 
+    // MARK: - H1: `autoLinked` telemetry must reflect real writes, not attempts
+
+    @Test(
+        "a candidate event that resolves to an already manually-linked meeting reports autoLinked == 0 and stays unlinked, on every pass"
+    )
+    func autoLinkedCountExcludesSkippedManualCollision() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1", calendarTitle: "Work", color: nil, selected: true
+        )
+
+        let start = base
+        let end = base.addingTimeInterval(1800)
+        let meetingId: MeetingID = "meeting-m"
+
+        // Meeting M is already manually linked to event A.
+        try await db.meetings.upsert(meeting(id: meetingId, createdAt: start.addingTimeInterval(-60)))
+        try await db.calendarEvents.syncUpsert(
+            [calendarEvent(id: "ev-a", start: start, end: end)], at: base.addingTimeInterval(-7200)
+        )
+        try await db.calendarEvents.setManualLink(eventId: "ev-a", meetingId: meetingId)
+
+        // Candidate event B, in the same window, whose only auto-match candidate is M — auto-link
+        // must be skipped entirely (manual always wins), and the report must not fabricate a link
+        // that was never written (H1 regression).
+        let source = FakeCalendarSource(events: [
+            nativeEvent(id: "ev-a", start: start, end: end),
+            nativeEvent(id: "ev-b", start: start, end: end)
+        ])
+        let engine = CalendarSyncEngine(source: source, database: db)
+
+        for now in [base, base.addingTimeInterval(60), base.addingTimeInterval(120)] {
+            let report = try await engine.syncRange(
+                from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600), now: now
+            )
+            #expect(report.autoLinked == 0)
+
+            let eventA = try #require(try await db.calendarEvents.find("ev-a"))
+            #expect(eventA.meetingId == meetingId)
+            #expect(eventA.linkSource == .manual)
+
+            let eventB = try #require(try await db.calendarEvents.find("ev-b"))
+            #expect(eventB.meetingId == nil)
+            #expect(eventB.linkSource == nil)
+        }
+    }
+
     // MARK: - 10. Selection gates sync
 
     @Test("only selected calendars are fetched — an unselected calendar's events never sync")
@@ -674,5 +725,163 @@ struct CalendarSyncEngineTests {
         #expect(carol.displayName == "Carol Placeholder")
         #expect(carol.role == "VP Engineering")
         #expect(carol.notes == "Authored by owner")
+    }
+
+    // MARK: - 14/15/16. Series auto-detection wiring (calendar-series-intelligence plan §5)
+
+    @Test("a full syncRange pass over a recurring linked event reports one new series membership; re-run reports 0")
+    func syncRangeDetectsSeriesMembershipOnce() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1", calendarTitle: "Work", color: nil, selected: true
+        )
+        let start = base
+        let end = base.addingTimeInterval(1800)
+        let meetingId: MeetingID = "meeting-1"
+        try await db.meetings.upsert(meeting(id: meetingId, createdAt: start.addingTimeInterval(-30)))
+
+        let source = FakeCalendarSource(events: [
+            nativeEvent(
+                id: "ev-1", start: start, end: end,
+                seriesKey: "series-key-1", hasRecurrence: true
+            )
+        ])
+        let engine = CalendarSyncEngine(source: source, database: db)
+
+        let firstReport = try await engine.syncRange(
+            from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600), now: base
+        )
+        #expect(firstReport.autoLinked == 1)
+        #expect(firstReport.seriesMemberships == 1)
+
+        let suggested = try await db.series.suggestedSeriesIds(forMeeting: meetingId)
+        #expect(suggested.count == 1)
+
+        let secondReport = try await engine.syncRange(
+            from: start.addingTimeInterval(-3600), to: end.addingTimeInterval(3600),
+            now: base.addingTimeInterval(60)
+        )
+        #expect(secondReport.seriesMemberships == 0)
+    }
+
+    @Test("a detector failure on one event does not fail syncRange and does not skip later events")
+    func detectorFailureDoesNotBreakSyncOrSkipLaterEvents() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1", calendarTitle: "Work", color: nil, selected: true
+        )
+
+        // Two real, distinctly-linked recurring events — "ev-fails" and "ev-ok". A genuinely
+        // dangling foreign-key row can never arise through this engine's own write path (the
+        // schema's foreign keys — and the fact that `syncUpsert`/`pruneStaleEvents` re-validate
+        // every persisted row they touch — guarantee that), so the fault is injected at the
+        // module-internal `detectOverride` seam (mirrors `AddToSeriesViewModel.pendingFoldTask`'s
+        // test-hook-not-public-contract precedent): the detector throws for exactly one event id,
+        // and this test asserts `syncRange` still completes and the OTHER event is still detected.
+        let failStart = base
+        let failEnd = base.addingTimeInterval(1800)
+        let failMeeting: MeetingID = "meeting-fails"
+        try await db.meetings.upsert(meeting(id: failMeeting, createdAt: failStart.addingTimeInterval(-30)))
+
+        let okStart = base.addingTimeInterval(20000)
+        let okEnd = okStart.addingTimeInterval(1800)
+        let okMeeting: MeetingID = "meeting-ok"
+        try await db.meetings.upsert(meeting(id: okMeeting, createdAt: okStart.addingTimeInterval(-30)))
+
+        let source = FakeCalendarSource(events: [
+            nativeEvent(id: "ev-fails", start: failStart, end: failEnd, seriesKey: "series-key-fails", hasRecurrence: true),
+            nativeEvent(id: "ev-ok", start: okStart, end: okEnd, seriesKey: "series-key-ok", hasRecurrence: true)
+        ])
+
+        struct Poisoned: Error {}
+        let detector = SeriesDetector(database: db)
+        let engine = CalendarSyncEngine(
+            source: source, database: db,
+            detectOverride: { event, now in
+                if event.id.rawValue == "ev-fails" { throw Poisoned() }
+                return try await detector.detect(for: event, at: now)
+            }
+        )
+
+        let report = try await engine.syncRange(
+            from: failStart.addingTimeInterval(-3600), to: okEnd.addingTimeInterval(3600), now: base
+        )
+
+        // The pass itself never throws, and the event after the failing one is still detected.
+        #expect(report.seriesMemberships == 1)
+        let failingSuggestions = try await db.series.suggestedSeriesIds(forMeeting: failMeeting)
+        #expect(failingSuggestions.isEmpty)
+        let okSuggestions = try await db.series.suggestedSeriesIds(forMeeting: okMeeting)
+        #expect(okSuggestions.count == 1)
+    }
+
+    // Bounded so a regression that stops the hook from firing fails the test honestly (a timeout)
+    // rather than hanging the suite forever on an unresumed continuation (L8 nit).
+    @Test(
+        "'.autoAdded' invokes the fold hook with the meeting id; '.suggested' does not",
+        .timeLimit(.minutes(1))
+    )
+    func autoAddedInvokesHookSuggestedDoesNot() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.calendarEvents.setSyncSetting(
+            calendarId: "cal-1", calendarTitle: "Work", color: nil, selected: true
+        )
+
+        // A pre-existing series with autoAddMode 'always' for the "always" event's key.
+        let alwaysSeriesId = try await db.series.createSeries(title: "Always Series", at: base)
+        try await db.dbWriter.write { conn in
+            guard var record = try SeriesRecord.fetchOne(conn, key: alwaysSeriesId.rawValue) else { return }
+            record.seriesKey = "series-key-always"
+            record.autoAddMode = "always"
+            try record.update(conn)
+        }
+
+        let alwaysStart = base
+        let alwaysEnd = base.addingTimeInterval(1800)
+        let alwaysMeeting: MeetingID = "meeting-always"
+        try await db.meetings.upsert(meeting(id: alwaysMeeting, createdAt: alwaysStart.addingTimeInterval(-30)))
+
+        let askStart = base.addingTimeInterval(20000)
+        let askEnd = askStart.addingTimeInterval(1800)
+        let askMeeting: MeetingID = "meeting-ask"
+        try await db.meetings.upsert(meeting(id: askMeeting, createdAt: askStart.addingTimeInterval(-30)))
+
+        let source = FakeCalendarSource(events: [
+            nativeEvent(
+                id: "ev-always", start: alwaysStart, end: alwaysEnd,
+                seriesKey: "series-key-always", hasRecurrence: true
+            ),
+            nativeEvent(
+                id: "ev-ask", start: askStart, end: askEnd,
+                seriesKey: "series-key-ask", hasRecurrence: true
+            )
+        ])
+
+        actor HookSpy {
+            private(set) var invoked: [MeetingID] = []
+            func record(_ id: MeetingID) { invoked.append(id) }
+        }
+        let spy = HookSpy()
+
+        // The hook is fired `Task.detached` (fire-and-forget, plan §3) — awaiting a continuation
+        // that the hook itself resumes is the deterministic way to observe it fire, without
+        // sleep-polling (the hook's own execution IS the completion signal).
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let engine = CalendarSyncEngine(
+                source: source, database: db,
+                onAutoSeriesMembership: { meetingId in
+                    await spy.record(meetingId)
+                    continuation.resume()
+                }
+            )
+            Task {
+                _ = try? await engine.syncRange(
+                    from: alwaysStart.addingTimeInterval(-3600), to: askEnd.addingTimeInterval(3600), now: base
+                )
+            }
+        }
+
+        let invoked = await spy.invoked
+        #expect(invoked == [alwaysMeeting])
     }
 }

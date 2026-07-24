@@ -14,7 +14,10 @@
 //  Recall Slice 2 (docs/plans/arikit-recall-slice2.md §4) appends `recallChunk`,
 //  `recallIndexState`, `recallFts` (FTS5), and the schema-only `askConversation`/`askMessage`.
 //  `docs/plans/ari-ask-ui.md` Phase 0 later adds `askConversation.seriesId` in place (same
-//  extend-in-place policy, table still unshipped).
+//  extend-in-place policy, table still unshipped). `docs/plans/calendar-series-intelligence.md`
+//  §7 step 1 (feature 4, strict 1:1 meeting↔calendar-event) adds a partial UNIQUE index on
+//  `calendarEvent.meetingId` in place, same policy. `docs/plans/calendar-series-intelligence.md`
+//  §7 step 4 (feature 1, series auto-detection + consent) adds `series.autoAddMode` in place too.
 //
 //  ⚠️ Table order is now parent-before-child throughout, per the slice-1 finding: `person` is
 //  declared BEFORE `speaker` so `speaker.personId REFERENCES person(id)` can be inline from the
@@ -263,6 +266,10 @@ enum SchemaMigrator {
                 // Not yet on `AriKit.Models.Series` — same documented gap as `Meeting.templateId`
                 // (see `Records/SeriesRecord.swift`'s header). Always persisted as `NULL` here.
                 t.column("templateId", .text)
+                // Consent memory for series auto-detection (calendar-series-intelligence plan
+                // §2.1/§7 step 4, feature 1) — 'ask' | 'always' | 'never'. Store-internal only,
+                // same documented gap as `templateId` above (not yet on `AriKit.Models.Series`).
+                t.column("autoAddMode", .text).notNull().defaults(to: "ask")
                 t.column("createdAt", .datetime).notNull()
                 t.column("updatedAt", .datetime).notNull()
                 t.column("isDeleted", .boolean).notNull().defaults(to: false)
@@ -333,6 +340,19 @@ enum SchemaMigrator {
                 t.column("isDeleted", .boolean).notNull().defaults(to: false)
                 t.column("deletedAt", .datetime)
             }
+
+            // Strict 1:1 meeting↔calendar-event (calendar-series-intelligence plan §2.1/§4,
+            // feature 4). Partial UNIQUE index — `WHERE meetingId IS NOT NULL` so any number of
+            // unlinked rows may coexist (SQLite's plain UNIQUE would already tolerate that, since
+            // NULL never equals NULL, but the partial form is explicit and matches the plan).
+            // Tombstoned rows keep their `meetingId` and are NOT exempted here (no `isDeleted`
+            // filter) — `CalendarEventRepository` clears competitors, tombstoned included, before
+            // writing a new link so this index is never violated by a live write path; it exists
+            // as the backstop for any future code path that forgets.
+            try db.execute(sql: """
+            CREATE UNIQUE INDEX idx_calendarEvent_meetingId
+            ON calendarEvent(meetingId) WHERE meetingId IS NOT NULL
+            """)
 
             // `calendarSyncSetting` (§4.8) — config/selection, not a synced text record (the
             // domain-level `CalendarInfo` DTO was deliberately deferred, arikit-models.md §7.7);

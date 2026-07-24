@@ -17,6 +17,15 @@
 import Foundation
 import GRDB
 
+/// The result of `SeriesRepository.findByKeyIncludingDeleted(_:)` — `isDeleted`/`autoAddMode` are
+/// Store-internal (not on the domain `Series` type), so `SeriesDetector` reads them through this
+/// small lookup value instead (calendar-series-intelligence plan §2.1).
+struct SeriesKeyLookup: Sendable, Equatable {
+    let id: SeriesID
+    let isDeleted: Bool
+    let autoAddMode: String
+}
+
 public struct SeriesRepository: Sendable {
     let dbWriter: any DatabaseWriter
 
@@ -57,11 +66,14 @@ public struct SeriesRepository: Sendable {
     }
 
     private static func fetchSummaries(_ db: Database) throws -> [SeriesSummary] {
+        // `sm.linkSource <> 'suggested'` excludes pending-consent memberships (calendar-series-
+        // intelligence plan §2.1) — counts/last-meeting-time shown in UI are accepted members only.
         let rows = try Row.fetchAll(db, sql: """
         SELECT s.id AS id, s.title AS title, s.detectedType AS detectedType, s.cadence AS cadence,
                COUNT(m.id) AS meetingCount, MAX(m.createdAt) AS lastMeetingTime
         FROM series s
         LEFT JOIN seriesMember sm ON sm.seriesId = s.id
+            AND (sm.linkSource IS NULL OR sm.linkSource <> 'suggested')
         LEFT JOIN meeting m ON m.id = sm.meetingId AND m.isDeleted = 0
         WHERE s.isDeleted = 0
         GROUP BY s.id
@@ -86,13 +98,65 @@ public struct SeriesRepository: Sendable {
         }
     }
 
+    /// A series row keyed by its stable recurrence key, INCLUDING tombstoned rows — `seriesKey`
+    /// is UNIQUE, so a tombstoned holder must stay visible to `SeriesDetector` (it must honor the
+    /// user's deletion rather than hit the UNIQUE constraint trying to create a new row for the
+    /// same key). `isDeleted`/`autoAddMode` are Store-internal, so this returns a small lookup
+    /// value rather than adding either to the domain `Series` type (plan §2.1).
+    func findByKeyIncludingDeleted(_ seriesKey: String) async throws -> SeriesKeyLookup? {
+        try await dbWriter.read { db in
+            guard let record = try SeriesRecord
+                .filter(Column("seriesKey") == seriesKey)
+                .fetchOne(db)
+            else { return nil }
+            return SeriesKeyLookup(
+                id: SeriesID(record.id),
+                isDeleted: record.isDeleted,
+                autoAddMode: record.autoAddMode
+            )
+        }
+    }
+
+    /// Creates a brand-new series for a detected recurrence key (`SeriesDetector`'s find-or-create
+    /// path, plan §2.2) — `autoAddMode` starts at `'ask'`, no ledger row. Callers must have
+    /// already confirmed no live or tombstoned row holds this key
+    /// (`findByKeyIncludingDeleted`) — `seriesKey` is UNIQUE.
+    func createSeriesForDetection(seriesKey: String, title: String, at date: Date) async throws -> SeriesID {
+        let id = SeriesID(UUID().uuidString)
+        try await dbWriter.write { db in
+            try SeriesRecord(
+                id: id.rawValue,
+                seriesKey: seriesKey,
+                title: title,
+                detectedType: nil,
+                cadence: nil,
+                ownerPersonId: nil,
+                templateId: nil,
+                autoAddMode: "ask",
+                createdAt: date,
+                updatedAt: date,
+                isDeleted: false,
+                deletedAt: nil
+            ).insert(db)
+        }
+        return id
+    }
+
     /// Insert-or-update the `series` row, keyed on the stable `SeriesID` primary key, and keep
     /// exactly one `seriesLedger` row in step with `ledgerMarkdown`/`ledgerVersion` (see file
     /// header — `structuredJson`/`updatedFromMeetingId` on an existing ledger row are preserved,
     /// never wiped by a plain `Series` upsert).
     public func upsert(_ series: Series) async throws {
         try await dbWriter.write { db in
-            try SeriesRecord(series).save(db)
+            var record = SeriesRecord(series)
+            // `autoAddMode` is Store-internal (not on the domain `Series` type, same documented
+            // gap as `templateId`) — preserve whatever the row already carries across a plain
+            // `Series` upsert (rename, importer pass) rather than resetting consent state back to
+            // the record's default 'ask'. New rows keep the init default.
+            if let existing = try SeriesRecord.fetchOne(db, key: series.id.rawValue) {
+                record.autoAddMode = existing.autoAddMode
+            }
+            try record.save(db)
 
             // Only touch the ledger when the incoming Series actually carries ledger content. A
             // plain Series upsert (a rename, or the importer's series pass which always maps the
@@ -188,11 +252,14 @@ public struct SeriesRepository: Sendable {
 
     // MARK: - Membership (`seriesMember`)
 
-    /// The meetings belonging to a series, in the order they were added.
+    /// The meetings belonging to a series, in the order they were added. Excludes `'suggested'`
+    /// (pending-consent) memberships — calendar-series-intelligence plan §2.1: suggestions are
+    /// invisible to series *content* semantics until confirmed.
     public func meetingIds(inSeries seriesId: SeriesID) async throws -> [MeetingID] {
         try await dbWriter.read { db in
             try SeriesMemberRecord
                 .filter(Column("seriesId") == seriesId.rawValue)
+                .filter(Column("linkSource") == nil || Column("linkSource") != "suggested")
                 .order(Column("createdAt"))
                 .fetchAll(db)
                 .map { MeetingID($0.meetingId) }
@@ -202,14 +269,134 @@ public struct SeriesRepository: Sendable {
     /// The series a meeting belongs to, oldest membership first. The reverse of
     /// `meetingIds(inSeries:)` — the "which series is this meeting in?" read the meeting-detail
     /// "Add to series" control needs. The schema permits multiple memberships (composite-PK link
-    /// table), so this honestly returns all of them rather than assuming one.
+    /// table), so this honestly returns all of them rather than assuming one. Excludes
+    /// `'suggested'` memberships (plan §2.1) — use `suggestedSeriesIds(forMeeting:)` for those.
     public func seriesIds(forMeeting meetingId: MeetingID) async throws -> [SeriesID] {
         try await dbWriter.read { db in
             try SeriesMemberRecord
                 .filter(Column("meetingId") == meetingId.rawValue)
+                .filter(Column("linkSource") == nil || Column("linkSource") != "suggested")
                 .order(Column("createdAt"))
                 .fetchAll(db)
                 .map { SeriesID($0.seriesId) }
+        }
+    }
+
+    // MARK: - Suggestions (pending-consent memberships, calendar-series-intelligence plan §2.1)
+
+    /// The `'suggested'` (pending-consent) series memberships for a meeting — the meeting-detail
+    /// suggestion banner's read.
+    public func suggestedSeriesIds(forMeeting meetingId: MeetingID) async throws -> [SeriesID] {
+        try await dbWriter.read { db in
+            try SeriesMemberRecord
+                .filter(Column("meetingId") == meetingId.rawValue)
+                .filter(Column("linkSource") == "suggested")
+                .order(Column("createdAt"))
+                .fetchAll(db)
+                .map { SeriesID($0.seriesId) }
+        }
+    }
+
+    /// The `'suggested'` (pending-consent) member meetings of a series.
+    public func suggestedMeetingIds(inSeries seriesId: SeriesID) async throws -> [MeetingID] {
+        try await dbWriter.read { db in
+            try SeriesMemberRecord
+                .filter(Column("seriesId") == seriesId.rawValue)
+                .filter(Column("linkSource") == "suggested")
+                .order(Column("createdAt"))
+                .fetchAll(db)
+                .map { MeetingID($0.meetingId) }
+        }
+    }
+
+    /// True if any membership row (any `linkSource`) already links `seriesId`/`meetingId` — the
+    /// idempotency check `SeriesDetector` uses before writing (never overwrite an existing row).
+    func hasAnyMember(seriesId: SeriesID, meetingId: MeetingID) async throws -> Bool {
+        try await dbWriter.read { db in
+            try SeriesMemberRecord.filter(
+                Column("seriesId") == seriesId.rawValue && Column("meetingId") == meetingId.rawValue
+            ).fetchCount(db) > 0
+        }
+    }
+
+    /// Consent transition (the "yes" moment, calendar-series-intelligence plan §2.1): flips the
+    /// membership `linkSource` `'suggested'` → `'auto'` and remembers the choice on the series
+    /// (`autoAddMode` → `'always'`, so future occurrences add silently). One write transaction.
+    public func confirmSuggestedMember(seriesId: SeriesID, meetingId: MeetingID, at date: Date) async throws {
+        try await dbWriter.write { db in
+            guard var member = try SeriesMemberRecord.fetchOne(
+                db,
+                key: ["seriesId": seriesId.rawValue, "meetingId": meetingId.rawValue]
+            ), member.linkSource == "suggested" else { return }
+            member.linkSource = "auto"
+            try member.update(db)
+
+            guard var series = try SeriesRecord.fetchOne(db, key: seriesId.rawValue) else { return }
+            series.autoAddMode = "always"
+            series.updatedAt = date
+            try series.update(db)
+        }
+    }
+
+    /// Consent transition (the "no" moment, plan §2.1): deletes the `'suggested'` row and
+    /// remembers the choice on the series (`autoAddMode` → `'never'`, so it never nags again). A
+    /// series left with zero member rows of any kind (it only ever existed as a suggestion) is
+    /// tombstoned; a series with other real members is left alone. One write transaction.
+    public func declineSuggestedMember(seriesId: SeriesID, meetingId: MeetingID, at date: Date) async throws {
+        try await dbWriter.write { db in
+            guard let member = try SeriesMemberRecord.fetchOne(
+                db,
+                key: ["seriesId": seriesId.rawValue, "meetingId": meetingId.rawValue]
+            ), member.linkSource == "suggested" else { return }
+            try SeriesMemberRecord.deleteOne(
+                db,
+                key: ["seriesId": seriesId.rawValue, "meetingId": meetingId.rawValue]
+            )
+
+            guard var series = try SeriesRecord.fetchOne(db, key: seriesId.rawValue) else { return }
+            series.autoAddMode = "never"
+            series.updatedAt = date
+
+            let remainingMembers = try SeriesMemberRecord
+                .filter(Column("seriesId") == seriesId.rawValue)
+                .fetchCount(db)
+            if remainingMembers == 0 {
+                series.isDeleted = true
+                series.deletedAt = date
+            }
+            try series.update(db)
+        }
+    }
+
+    /// Existence-check + insert in ONE write transaction (M2 fix): the check-then-act race between
+    /// `hasAnyMember`/`addMember` as two separate transactions let two concurrent detections of the
+    /// same `(series, meeting)` pair both observe "absent" and both write, producing a duplicate
+    /// outcome (e.g. two fold-hook fires) even though `addMember`'s `save(db)` itself wouldn't
+    /// throw (composite-PK upsert). This method makes the transaction outcome the single source of
+    /// truth: returns `true` and writes the row only if no membership row for `(seriesId,
+    /// meetingId)` existed yet; returns `false` and writes nothing otherwise.
+    @discardableResult
+    func insertMemberIfAbsent(
+        seriesId: SeriesID,
+        meetingId: MeetingID,
+        occurrenceTime: String? = nil,
+        linkSource: String? = nil,
+        at date: Date = Date()
+    ) async throws -> Bool {
+        try await dbWriter.write { db in
+            let alreadyExists = try SeriesMemberRecord.filter(
+                Column("seriesId") == seriesId.rawValue && Column("meetingId") == meetingId.rawValue
+            ).fetchCount(db) > 0
+            guard !alreadyExists else { return false }
+
+            try SeriesMemberRecord(
+                seriesId: seriesId.rawValue,
+                meetingId: meetingId.rawValue,
+                occurrenceTime: occurrenceTime,
+                linkSource: linkSource,
+                createdAt: date
+            ).insert(db)
+            return true
         }
     }
 
@@ -339,11 +526,14 @@ public struct SeriesRepository: Sendable {
     /// this same ordering from scratch). See `SeriesLedgerReducer.foldMeeting`.
     public func orderedMeetingIds(inSeries seriesId: SeriesID) async throws -> [MeetingID] {
         try await dbWriter.read { db in
+            // `'suggested'` memberships never consume an `@mref` citation index (calendar-series-
+            // intelligence plan §2.1) — they only join in once confirmed.
             let rows = try Row.fetchAll(db, sql: """
             SELECT m.id AS id
             FROM seriesMember sm
             JOIN meeting m ON m.id = sm.meetingId
             WHERE sm.seriesId = ? AND m.isDeleted = 0
+                AND (sm.linkSource IS NULL OR sm.linkSource <> 'suggested')
             ORDER BY m.createdAt ASC, m.id ASC
             """, arguments: [seriesId.rawValue])
             return rows.map { MeetingID($0["id"]) }

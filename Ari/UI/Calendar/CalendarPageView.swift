@@ -29,13 +29,16 @@ struct CalendarPageView: View {
         calendarSource: (any CalendarSourcing)?,
         recordingSession: RecordingSession?,
         selection: Binding<SidebarSection>,
-        onOpenMeeting: @escaping (MeetingID) -> Void
+        onOpenMeeting: @escaping (MeetingID) -> Void,
+        onAutoSeriesMembership: (@Sendable (MeetingID) async -> Void)? = nil
     ) {
         self.database = database
         self.recordingSession = recordingSession
         _selection = selection
         self.onOpenMeeting = onOpenMeeting
-        _viewModel = State(initialValue: CalendarPageViewModel(database: database, source: calendarSource))
+        _viewModel = State(initialValue: CalendarPageViewModel(
+            database: database, source: calendarSource, onAutoSeriesMembership: onAutoSeriesMembership
+        ))
     }
 
     var body: some View {
