@@ -155,6 +155,11 @@ public struct RecallTools: Sendable {
     public func calendarEventsToday(matchingAttendeeName nameQuery: String) async throws -> [CalendarEvent] {
         let needle = Self.normalized(nameQuery)
         guard !needle.isEmpty else { return [] }
+        // (2026-07-23, plan §3.3) A query containing "@" is treated as an email fragment and
+        // matched against `attendee.email` (case-insensitively) instead of `attendee.name` — an
+        // agentic tool call may pass either shape (`todays_events(attendee:)`), and an email is a
+        // strictly more precise identifier than a display name when both are available.
+        let matchesByEmail = needle.contains("@")
         let all = try await calendarEvents.all()
         let todays = all.filter { Calendar.current.isDateInToday($0.startTime) }
 
@@ -162,19 +167,58 @@ public struct RecallTools: Sendable {
         var matches: [CalendarEvent] = []
         for event in todays {
             let attendeeMatches = event.attendees.filter { attendee in
+                if matchesByEmail {
+                    guard let email = attendee.email else { return false }
+                    return Self.normalized(email).contains(needle)
+                }
                 guard let name = attendee.name else { return false }
                 return Self.normalized(name).contains(needle)
             }
             guard !attendeeMatches.isEmpty else { continue }
             matches.append(event)
             for attendee in attendeeMatches {
-                if let name = attendee.name {
-                    matchedDistinctNames.insert(Self.normalized(name))
-                }
+                // Distinct-match key is always the (normalized) NAME when available — even for an
+                // email-matched query — so ambiguity is judged on "how many distinct people", not
+                // "how many distinct email strings" (an attendee with no name still counts via a
+                // normalized-email fallback key).
+                let key = attendee.name.map(Self.normalized) ?? Self.normalized(attendee.email ?? "")
+                matchedDistinctNames.insert(key)
             }
         }
         guard matchedDistinctNames.count <= 1, !matches.isEmpty else { return [] }
         return matches.sorted { $0.startTime < $1.startTime }
+    }
+
+    // MARK: - Agentic-tools additions (plan §3.3, `docs/plans/ask-meetings-agentic-tools.md`)
+
+    /// Real calendar events happening TODAY (device-local calendar day), optionally narrowed to
+    /// events whose `startTime` LOCAL hour matches `hourFilter` (0–23; "6pm" → 18). Sorted by
+    /// `startTime`, oldest first. Never fabricated — an empty result is an honest "nothing found",
+    /// not a guess (No-Fake-State). This is the missing data path for "who is in the 6pm meeting
+    /// later" (plan §1, target query 3) — `calendarEventsToday(matchingAttendeeName:)` alone
+    /// requires an attendee-name query and cannot answer a pure time-of-day question.
+    public func calendarEvents(today hourFilter: Int? = nil) async throws -> [CalendarEvent] {
+        let all = try await calendarEvents.all()
+        let todays = all.filter { Calendar.current.isDateInToday($0.startTime) }
+        let filtered: [CalendarEvent] = if let hourFilter {
+            todays.filter { Calendar.current.component(.hour, from: $0.startTime) == hourFilter }
+        } else {
+            todays
+        }
+        return filtered.sorted { $0.startTime < $1.startTime }
+    }
+
+    /// Bounded read of a meeting's saved summary text — `nil` when there is none (real, never
+    /// fabricated). Truncated at `RecallBounds.maxAgenticTranscriptChars` so a tool-fetched summary
+    /// can never blow the agentic loop's per-tool-result budget (plan §4.1's `get_meeting_summary`).
+    public func summaryMarkdown(for meetingId: MeetingID) async throws -> String? {
+        guard let body = try await summaries.forMeeting(meetingId)?.bodyMarkdown else { return nil }
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let scalars = Recall.scalars(trimmed)
+        guard scalars.count > RecallBounds.maxAgenticTranscriptChars else { return trimmed }
+        let head = Recall.string(fromScalars: scalars.prefix(RecallBounds.maxAgenticTranscriptChars))
+        return "\(head)…"
     }
 
     // MARK: - Helpers

@@ -411,4 +411,60 @@ struct AskConversationStoreTests {
         }
         #expect(rawCardJson == nil)
     }
+
+    // MARK: - Test 8 (`ask-meetings-agentic-tools.md` §5.4): cardsJson round-trip + legacy fallback
+
+    @Test("plural cards round-trip through cardsJson with full equality")
+    func pluralCardsRoundTripThroughCardsJson() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let conversation = try await db.askConversations.create(meetingId: nil, title: nil)
+        let personCard = RecallCardPayload.person(
+            PersonCardPayload(personId: "person-1", displayName: "Sarah Ammon", meetingCount: 3)
+        )
+        let eventCard = RecallCardPayload.calendarEvent(
+            CalendarEventCardPayload(
+                eventId: "event-1", title: "Sync", startTime: "2026-07-23T18:00:00Z",
+                attendeeNames: ["Sarah Ammon"], isLinkedToRecordedMeeting: false
+            )
+        )
+
+        let appended = try await db.askConversations.appendMessage(
+            conversationId: conversation.id, role: "assistant", content: "Found two things.",
+            sources: [], cards: [personCard, eventCard]
+        )
+        #expect(appended.cards == [personCard, eventCard])
+        #expect(appended.card == personCard)
+
+        let detail = try #require(await db.askConversations.get(conversation.id))
+        let readBack = try #require(detail.messages.first { $0.id == appended.id })
+        #expect(readBack.cards == [personCard, eventCard])
+        #expect(readBack.card == personCard)
+    }
+
+    @Test(
+        "the read path prefers cardsJson, falling back to legacy cardJson for a row persisted before cardsJson existed"
+    )
+    func readPathFallsBackToLegacyCardJson() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let conversation = try await db.askConversations.create(meetingId: nil, title: nil)
+        let legacyCard = RecallCardPayload.person(
+            PersonCardPayload(personId: "person-legacy", displayName: "Legacy Person", meetingCount: 1)
+        )
+        // Simulate a message persisted before `cardsJson` existed: write only `cardJson` directly.
+        let appended = try await db.askConversations.appendMessage(
+            conversationId: conversation.id, role: "assistant", content: "Legacy card only.",
+            sources: [], card: legacyCard
+        )
+        try await db.dbWriter.write { rawDb in
+            try rawDb.execute(
+                sql: "UPDATE askMessage SET cardsJson = NULL WHERE id = ?",
+                arguments: [appended.id.rawValue]
+            )
+        }
+
+        let detail = try #require(await db.askConversations.get(conversation.id))
+        let readBack = try #require(detail.messages.first { $0.id == appended.id })
+        #expect(readBack.cards == [legacyCard], "cardsJson is NULL, so the read path must fall back to legacy cardJson")
+        #expect(readBack.card == legacyCard)
+    }
 }
