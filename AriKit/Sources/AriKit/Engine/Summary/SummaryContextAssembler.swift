@@ -75,6 +75,7 @@ public struct SummaryContextAssembler: Sendable {
         await appendCalendarEvent(&block, meetingId: meetingId)
         await appendSpeakersPresent(&block, meetingId: meetingId)
         await appendSeriesLedger(&block, meetingId: meetingId)
+        await appendGlossary(&block)
 
         return block.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -190,6 +191,19 @@ public struct SummaryContextAssembler: Sendable {
 
         block += "### Series ledger (running context from prior meetings in this series)\n"
         block += ledger + "\n"
+    }
+
+    // MARK: - Glossary (docs/plans/custom-vocabulary.md §2.4/§4 Step 4)
+
+    /// Appends the "### Glossary" sub-section, global (not per-meeting) vocabulary terms. Reuses
+    /// the same best-effort convention as the other appenders: a DB failure or an empty/disabled
+    /// vocabulary drops this section entirely, never blocking the rest of the block. Zero enabled
+    /// terms produces no heading at all (`VocabularyGlossary.block` returns `""`).
+    private func appendGlossary(_ block: inout String) async {
+        let terms = await (try? database.vocabulary.enabledTerms()) ?? []
+        let glossary = VocabularyGlossary.block(for: terms)
+        guard !glossary.isEmpty else { return }
+        block += glossary + "\n"
     }
 
     // MARK: - Facts (← `person_facts_clause`, commands.rs:398-414)

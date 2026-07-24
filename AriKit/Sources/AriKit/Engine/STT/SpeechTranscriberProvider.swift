@@ -27,9 +27,12 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import os
 import Speech
 
 public struct SpeechTranscriberProvider: TranscriptionProvider, Sendable {
+    private static let logger = Logger(subsystem: "com.arivo.ari.AriKit", category: "stt.vocabulary")
+
     public let providerName: String = "speechanalyzer"
 
     /// Injectable engine-availability probe (← `SpeechTranscriber.isAvailable`, `Transcribe.swift
@@ -45,23 +48,53 @@ public struct SpeechTranscriberProvider: TranscriptionProvider, Sendable {
     /// `Transcribe.swift:107`).
     let installedLocalesCheck: @Sendable () async -> [Locale]
 
-    public init() {
+    /// Injectable custom-vocabulary seam (docs/plans/custom-vocabulary.md §2.4/§3). Mirrors
+    /// `isAvailableCheck` / `supportedLocale` / `installedLocalesCheck`: `nil` means no biasing at
+    /// all. Defaulted to `{ nil }` so every existing construction site and test keeps today's
+    /// exact (unbiased) behavior. Called EXACTLY ONCE per transcription, before analysis starts —
+    /// never from the per-buffer live forwarding loop (see `transcribe(liveInputs:language:)`).
+    let vocabularyBias: @Sendable () async -> VocabularyBias?
+
+    public init(vocabularyBias: @escaping @Sendable () async -> VocabularyBias? = { nil }) {
         isAvailableCheck = { SpeechTranscriber.isAvailable }
         supportedLocale = { locale in await SpeechTranscriber.supportedLocale(equivalentTo: locale) }
         installedLocalesCheck = { await SpeechTranscriber.installedLocales }
+        self.vocabularyBias = vocabularyBias
     }
 
     /// Test-only initializer with injected seams — mirrors `FoundationModelsClient`'s
     /// `unavailableReason:`/`respond:` pattern so `TranscriptionErrorTests` can force the
-    /// unavailable/unsupported/assets-missing paths headlessly.
+    /// unavailable/unsupported/assets-missing paths headlessly. `vocabularyBias` defaults to
+    /// `{ nil }` so existing call sites (`TranscriptionErrorTests`, etc.) are unaffected.
     init(
         isAvailableCheck: @escaping @Sendable () -> Bool,
         supportedLocale: @escaping @Sendable (Locale) async -> Locale?,
-        installedLocalesCheck: @escaping @Sendable () async -> [Locale]
+        installedLocalesCheck: @escaping @Sendable () async -> [Locale],
+        vocabularyBias: @escaping @Sendable () async -> VocabularyBias? = { nil }
     ) {
         self.isAvailableCheck = isAvailableCheck
         self.supportedLocale = supportedLocale
         self.installedLocalesCheck = installedLocalesCheck
+        self.vocabularyBias = vocabularyBias
+    }
+
+    /// Builds a FRESH `AnalysisContext` per transcription call from `bias` and applies it to
+    /// `analyzer` via `setContext(_:)`. Never stores or shares the context (§3: `AnalysisContext`
+    /// is a reference type; a fresh instance per call sidesteps relying on its internal
+    /// synchronization). A `nil` bias attaches no context at all. A `setContext` failure is logged
+    /// and swallowed — a meeting must never fail to transcribe because a glossary could not be
+    /// attached (§3 "Failure policy for setContext").
+    private static func applyVocabularyBias(_ bias: VocabularyBias?, to analyzer: SpeechAnalyzer) async {
+        guard let bias else { return }
+        let context = AnalysisContext()
+        context.contextualStrings[.general] = bias.contextualStrings
+        do {
+            try await analyzer.setContext(context)
+        } catch {
+            logger.error(
+                "setContext failed, proceeding unbiased: \(String(describing: error), privacy: .public)"
+            )
+        }
     }
 
     // MARK: - TranscriptionProvider
@@ -129,6 +162,11 @@ public struct SpeechTranscriberProvider: TranscriptionProvider, Sendable {
             attributeOptions: [.audioTimeRange, .transcriptionConfidence]
         )
         let analyzer = SpeechAnalyzer(modules: [transcriber])
+
+        // 5b. Custom vocabulary (docs/plans/custom-vocabulary.md §2.4/§3): fetched EXACTLY ONCE,
+        //     before analysis starts. `nil` bias attaches no context at all.
+        let bias = await vocabularyBias()
+        await Self.applyVocabularyBias(bias, to: analyzer)
 
         // 6. Drain results concurrently with feeding the file. The child Task RETURNS its
         //    collected value (not a captured outer `var`), keeping the collector Sendable-clean
@@ -248,6 +286,12 @@ public struct SpeechTranscriberProvider: TranscriptionProvider, Sendable {
                         attributeOptions: [.audioTimeRange, .transcriptionConfidence]
                     )
                     let analyzer = SpeechAnalyzer(modules: [transcriber])
+
+                    // Custom vocabulary (docs/plans/custom-vocabulary.md §2.4/§3): fetched EXACTLY
+                    // ONCE per live session, before the analyzer starts — never inside the
+                    // per-buffer forwarding loop below. `nil` bias attaches no context at all.
+                    let bias = await vocabularyBias()
+                    await Self.applyVocabularyBias(bias, to: analyzer)
 
                     // 4. Drain finalized results concurrently as a STRUCTURED child (`async let`),
                     //    yielding each one through `continuation` as soon as it finalizes — volatile

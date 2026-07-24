@@ -19,8 +19,12 @@ struct SpeechLiveTranscriptionService: LiveTranscriptionService {
 
     let providerName = "speech-transcriber"
 
-    private let provider = SpeechTranscriberProvider()
+    private let provider: SpeechTranscriberProvider
     private let assetManager = SpeechAssetManager()
+
+    init(provider: SpeechTranscriberProvider = SpeechTranscriberProvider()) {
+        self.provider = provider
+    }
 
     func readiness() async -> TranscriberReadiness {
         guard assetManager.isEngineAvailable() else {

@@ -145,4 +145,93 @@ struct SummaryContextAssemblerTests {
         #expect(block.contains("fact-4"))
         #expect(!block.contains("fact-0"))
     }
+
+    // MARK: - T-A3 (docs/plans/custom-vocabulary.md §5) — zero vocabulary terms changes nothing
+
+    @Test("Byte-identical full block with zero vocabulary terms (Step 4 must not change existing output)")
+    func existingBlocksAreByteIdenticalWithZeroTerms() async throws {
+        let db = try AppDatabase.makeInMemory()
+
+        let owner = Person(
+            id: PersonID("owner-1"),
+            email: "paul@arivo.com",
+            displayName: "Paul Fox-Reeks",
+            role: "Manager",
+            organization: "Arivo",
+            isOwner: true,
+            createdAt: epoch,
+            updatedAt: epoch
+        )
+        try await db.persons.upsert(owner)
+
+        let amy = Person(
+            id: PersonID("amy-1"),
+            email: "amy@arivo.com",
+            displayName: "Amy Teuscher",
+            role: "Department Manager",
+            isOwner: false,
+            createdAt: epoch,
+            updatedAt: epoch
+        )
+        try await db.persons.upsert(amy)
+
+        let meeting = makeMeeting(id: "m-full", title: "1:1 with Amy")
+        try await db.meetings.upsert(meeting)
+        try await db.persons.addParticipant(meetingId: meeting.id, personId: amy.id, at: epoch)
+
+        let event = CalendarEvent(
+            id: CalendarEventID("evt-full"),
+            calendarId: "cal-1",
+            title: "1:1 Amy / Paul",
+            startTime: epoch,
+            endTime: epoch.addingTimeInterval(1800),
+            isAllDay: false,
+            notes: "Discuss department reorg.",
+            attendees: [
+                Attendee(name: "Amy Teuscher", email: "amy@arivo.com"),
+                Attendee(name: "Paul Fox-Reeks", email: "paul@arivo.com")
+            ],
+            meetingId: meeting.id,
+            linkSource: .calendar
+        )
+        try await db.calendarEvents.upsert(event)
+
+        let series = Series(
+            id: SeriesID("series-1"),
+            title: "Amy 1:1",
+            ledgerMarkdown: "- Open: finalize reorg plan by Q1.",
+            createdAt: epoch,
+            updatedAt: epoch
+        )
+        try await db.series.upsert(series)
+        try await db.series.addMember(seriesId: series.id, meetingId: meeting.id, at: epoch)
+
+        // No vocabulary terms inserted at all — the DB genuinely has none.
+        let vocabularyTermCountBeforeAssembly = try await db.vocabulary.all().count
+        #expect(vocabularyTermCountBeforeAssembly == 0)
+
+        let block = await SummaryContextAssembler(database: db).contextBlock(for: meeting.id)
+
+        // Same fixture as `fullBlock` above — this is the exact pre-Step-4 output, pinned
+        // byte-for-byte (not just `.contains`), so a `### Glossary` section (or any other stray
+        // byte) introduced by the vocabulary wiring would fail this test.
+        let dateString = SummaryContextAssembler.eventDateFormatter.string(from: event.startTime)
+        let expected = [
+            "### Meeting context (for the summarizer)",
+            "Organization: Arivo (everyone below works at Arivo unless noted).",
+            "Owner: Paul Fox-Reeks, Manager",
+            "Participants:",
+            "- Amy Teuscher (Department Manager)",
+            "### Calendar event (authoritative attendee roster)",
+            "Title: 1:1 Amy / Paul",
+            "Date: \(dateString)",
+            "Description: Discuss department reorg.",
+            "Attendees: Amy Teuscher <amy@arivo.com>, Paul Fox-Reeks <paul@arivo.com>",
+            "### Series ledger (running context from prior meetings in this series)",
+            "- Open: finalize reorg plan by Q1."
+        ].joined(separator: "\n")
+
+        #expect(block == expected)
+        #expect(!block.contains("Glossary"))
+    }
 }

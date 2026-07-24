@@ -206,6 +206,12 @@ final class AppEnvironment {
             // owner unset (the greeting then honestly shows no name), never blocks launch.
             _ = try? await db.persons.ensureOwner(defaultDisplayName: NSFullUserName())
 
+            // Custom vocabulary (docs/plans/custom-vocabulary.md §2.4): one `VocabularySource`
+            // shared by both `SpeechTranscriberProvider` construction sites below (live + file),
+            // so the biasing seam has a single composition-root wiring, not two independently
+            // drifting ones.
+            let vocabularySource = VocabularySource(database: db)
+
             // The real recording vertical (R5 capture + R6 live SpeechTranscriber).
             let recordingsRoot = try Self.recordingsRootURL()
             recordingSession = RecordingSession(
@@ -219,7 +225,9 @@ final class AppEnvironment {
                         }
                     )
                 },
-                transcription: SpeechLiveTranscriptionService()
+                transcription: SpeechLiveTranscriptionService(
+                    provider: SpeechTranscriberProvider(vocabularyBias: { await vocabularySource.bias() })
+                )
             )
 
             // Consent-before-record is a persisted preference (default OFF — the Record tap is
@@ -255,7 +263,7 @@ final class AppEnvironment {
             importSession = MeetingImportSession(
                 database: db,
                 recordingsRoot: recordingsRoot,
-                transcription: SpeechTranscriberProvider()
+                transcription: SpeechTranscriberProvider(vocabularyBias: { await vocabularySource.bias() })
             )
 
             // Local `let`s (not just the stored properties below) so the Track 2 coordinator
