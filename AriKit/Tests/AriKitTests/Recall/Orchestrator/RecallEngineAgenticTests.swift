@@ -788,4 +788,134 @@ struct RecallEngineAgenticTests {
             }
         }
     }
+
+    // MARK: - M3: rung-3 think-tag shield (defense-in-depth ThinkTagSplitter over the fallback's .delta text)
+
+    /// A `ToolCapableLLMClient` whose `respondWithTools` throws immediately (rung 1 never
+    /// commits), but whose plain `stream` (rung 3's real streaming pipeline) leaks a `<think>`
+    /// span in its raw text — proving the M3 shield strips it into `.thinking`, never `.delta`.
+    private actor LeakingThinkTagsClient: ToolCapableLLMClient {
+        nonisolated let kind: ProviderKind = .mlx
+        private let rawText: String
+
+        init(rawText: String) {
+            self.rawText = rawText
+        }
+
+        func generate(_: LLMRequest) async throws -> String {
+            rawText
+        }
+
+        nonisolated func stream(_: LLMRequest) -> AsyncThrowingStream<String, Error> {
+            AsyncThrowingStream { continuation in
+                continuation.yield(rawText)
+                continuation.finish()
+            }
+        }
+
+        nonisolated func respondWithTools(
+            _: LLMRequest, tools _: [AgenticToolDefinition], dispatch _: @escaping AgenticToolDispatch
+        ) -> AsyncThrowingStream<AgenticEvent, Error> {
+            AsyncThrowingStream { continuation in
+                struct Boom: Error {}
+                continuation.finish(throwing: Boom())
+            }
+        }
+    }
+
+    @Test("M3: a <think> span leaked into rung 3's raw text is split into .thinking, never appears inside a .delta")
+    func rung3LeakedThinkTagsAreSplitIntoThinking() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = makeMeeting(id: "m-leak", title: "Leak check")
+        try await db.meetings.upsert(meeting)
+
+        let client = LeakingThinkTagsClient(rawText: "<think>reasoning about the leak</think>The real answer.")
+        let engine = makeEngine(db, client: client, modelConfig: RecallModelConfig(provider: "mlx", model: "mlx"))
+
+        var deltas: [String] = []
+        var thinkingSpans: [String] = []
+        for try await event in engine.answerMeetingsLocallyStream(question: "Anything?") {
+            switch event {
+            case let .delta(text): deltas.append(text)
+            case let .thinking(text): thinkingSpans.append(text)
+            case .toolActivity, .done: break
+            }
+        }
+
+        #expect(deltas.joined() == "The real answer.")
+        #expect(!deltas.joined().contains("<think>"))
+        #expect(!deltas.joined().contains("reasoning about the leak"))
+        #expect(thinkingSpans.joined() == "reasoning about the leak")
+    }
+
+    @Test("M3: clean rung-3 text (no <think> tags) passes through byte-identical — the splitter is a no-op")
+    func rung3CleanTextPassesThroughByteIdentical() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = makeMeeting(id: "m-clean", title: "Clean check")
+        try await db.meetings.upsert(meeting)
+
+        let client = LeakingThinkTagsClient(rawText: "A perfectly ordinary answer with no tags at all.")
+        let engine = makeEngine(db, client: client, modelConfig: RecallModelConfig(provider: "mlx", model: "mlx"))
+
+        var deltas: [String] = []
+        for try await event in engine.answerMeetingsLocallyStream(question: "Anything?") {
+            if case let .delta(text) = event {
+                deltas.append(text)
+            }
+        }
+        #expect(deltas.joined() == "A perfectly ordinary answer with no tags at all.")
+    }
+
+    // MARK: - L5: a cancelled ask never starts rung 3
+
+    /// Suspends `respondWithTools` on a gate before throwing — lets a test cancel the CONSUMER
+    /// while rung 1 is still "in flight", then verify rung 3 (`generate`/`stream`) never runs.
+    private actor GatedThrowingClient: ToolCapableLLMClient {
+        nonisolated let kind: ProviderKind = .mlx
+        private let gate: Gate
+        private(set) var generateCallCount = 0
+
+        init(gate: Gate) {
+            self.gate = gate
+        }
+
+        func generate(_: LLMRequest) async throws -> String {
+            generateCallCount += 1
+            return "should never be called"
+        }
+
+        nonisolated func respondWithTools(
+            _: LLMRequest, tools _: [AgenticToolDefinition], dispatch _: @escaping AgenticToolDispatch
+        ) -> AsyncThrowingStream<AgenticEvent, Error> {
+            AsyncThrowingStream { continuation in
+                let task = Task {
+                    await self.gate.wait()
+                    struct Boom: Error {}
+                    continuation.finish(throwing: Boom())
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+    }
+
+    @Test("L5: a cancelled ask never starts rung 3, even when rung 1 throws before any answer")
+    func cancelledAskNeverStartsRung3() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let gate = Gate()
+        let client = GatedThrowingClient(gate: gate)
+        let engine = makeEngine(db, client: client, modelConfig: RecallModelConfig(provider: "mlx", model: "mlx"))
+
+        let consumerTask = Task {
+            for try await _ in engine.answerMeetingsLocallyStream(question: "Hi") {}
+        }
+        // Let the producer actually enter `respondWithTools` (and start waiting on the gate) before
+        // cancelling the consumer.
+        await Task.yield()
+        await Task.yield()
+        consumerTask.cancel()
+        await gate.release()
+        _ = try? await consumerTask.value
+
+        #expect(await client.generateCallCount == 0)
+    }
 }

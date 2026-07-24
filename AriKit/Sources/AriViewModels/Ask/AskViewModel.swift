@@ -299,6 +299,14 @@ public final class AskViewModel {
                         _ = try await appendMessageOp(
                             conversationId, "assistant", response.answer, response.sources, response.cards
                         )
+                        // This ask is now COMPLETE — its trace is retained in `items`, but its row
+                        // ids must stop being treated as "this ask's in-flight rows": otherwise the
+                        // NEXT ask's `dropInFlightPlaceholders()` (or an error-cleanup path, were one
+                        // to somehow still reference these ids) would remove a fully completed,
+                        // retained trace instead of only ever removing an unfinished one.
+                        currentThinkingItemIds = []
+                        currentToolActivityItemIds = []
+                        openThinkingItemId = nil
                     }
                 }
                 guard streamGeneration == generation else { return }

@@ -178,14 +178,19 @@ struct AskViewModelTests {
         await viewModel.streamTask?.value
 
         #expect(!viewModel.isStreaming)
-        // The thinking row is finally REMOVED at `.done` (ephemeral, never lingers).
-        #expect(!viewModel.items.contains {
+        // The thinking row is RETAINED (folded) at `.done` (owner decision, 2026-07-23, supersedes
+        // the original "removed at .done") — a session-view-only trace, never persisted.
+        let finalThinking = try #require(viewModel.items.first {
             if case .thinking = $0.kind {
                 true
             } else {
                 false
             }
         })
+        guard case let .thinking(_, foldedAtDone) = finalThinking.kind else {
+            Issue.record("expected a retained thinking row"); return
+        }
+        #expect(foldedAtDone)
     }
 
     // MARK: - Test 2: final .done replaces the accumulated raw text
@@ -466,7 +471,7 @@ struct AskViewModelTests {
     }
 
     @Test("the conversation is created once (first message), then user then assistant-with-sources are appended")
-    func conversationPersistsCreateOnceThenAppendsUserAndAssistant() async {
+    func conversationPersistsCreateOnceThenAppendsUserAndAssistant() async throws {
         let createCalls = Mutex<[CreateCall]>([])
         let appendCalls = Mutex<[AppendCall]>([])
         let source = makeSource()
@@ -539,8 +544,17 @@ struct AskViewModelTests {
         #expect(appendSnapshot[0].conversationId == "conversation-1")
         #expect(appendSnapshot[2].conversationId == "conversation-1")
 
-        // The in-memory transcript item also carries the same card (plan §5.2/§5.4 wiring).
-        guard case let .assistant(_, _, _, itemCards) = viewModel.items[1].kind else {
+        // The in-memory transcript item also carries the same card (plan §5.2/§5.4 wiring). Looked
+        // up by kind (not a fixed index): a retained, folded thinking placeholder row now sits
+        // between the user row and the assistant bubble (owner decision, 2026-07-23).
+        let firstAssistantItem = try #require(viewModel.items.first {
+            if case .assistant = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+        guard case let .assistant(_, _, _, itemCards) = firstAssistantItem.kind else {
             Issue.record("expected an assistant row"); return
         }
         #expect(itemCards == [card])
@@ -683,10 +697,10 @@ struct AskViewModelTests {
         #expect(!showSettings)
     }
 
-    // MARK: - Test 15 (`ask-meetings-agentic-tools.md` §8.8): thinking accumulates, folds, removed
+    // MARK: - Test 15 (`ask-meetings-agentic-tools.md` §8.8): thinking accumulates, folds, retained
 
-    @Test("thinking deltas accumulate; first answer delta folds (not removes) the row; .done removes it")
-    func thinkingAccumulatesFoldsThenIsRemoved() async throws {
+    @Test("thinking deltas accumulate; first answer delta folds (not removes) the row; .done RETAINS it, folded")
+    func thinkingAccumulatesFoldsThenIsRetained() async throws {
         let controllable = makeControllableStream()
         let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
 
@@ -747,19 +761,25 @@ struct AskViewModelTests {
         controllable.continuation.finish()
         await viewModel.streamTask?.value
 
-        #expect(!viewModel.items.contains {
+        // RETAINED (folded), not removed (owner decision, 2026-07-23) — the accumulated reasoning
+        // text is still readable via the disclosure.
+        guard case let .thinking(retainedText, retainedFolded) = try #require(viewModel.items.first {
             if case .thinking = $0.kind {
                 true
             } else {
                 false
             }
-        })
+        }).kind else {
+            Issue.record("expected a RETAINED thinking row"); return
+        }
+        #expect(retainedText == "Let me check that.")
+        #expect(retainedFolded)
     }
 
-    // MARK: - Test 16: tool-activity rows appear on start, complete on finish, removed at .done
+    // MARK: - Test 16: tool-activity rows appear on start, complete on finish, RETAINED at .done
 
-    @Test("toolActivity rows appear running on .started, complete on .finished, and are removed at .done")
-    func toolActivityRowsAppearCompleteThenAreRemoved() async {
+    @Test("toolActivity rows appear running on .started, complete on .finished, and are RETAINED at .done")
+    func toolActivityRowsAppearCompleteThenAreRetained() async throws {
         let controllable = makeControllableStream()
         let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
 
@@ -820,18 +840,23 @@ struct AskViewModelTests {
         controllable.continuation.finish()
         await viewModel.streamTask?.value
 
-        // Ephemeral: no toolActivity row survives the terminal event (plan §5.3, never persisted).
-        #expect(!viewModel.items.contains {
+        // RETAINED at `.done` (owner decision, 2026-07-23) — session-view-only, never persisted,
+        // but visible in the transcript for later inspection.
+        guard case let .toolActivity(_, _, retainedRunning, retainedOk) = try #require(viewModel.items.first {
             if case .toolActivity = $0.kind {
                 true
             } else {
                 false
             }
-        })
+        }).kind else {
+            Issue.record("expected a RETAINED toolActivity row"); return
+        }
+        #expect(!retainedRunning)
+        #expect(retainedOk)
     }
 
-    @Test("a tool's failure surfaces ok: false on the completed row, still ephemeral at .done")
-    func toolActivityFailureSurfacesOkFalse() async {
+    @Test("a tool's failure surfaces ok: false on the completed row, RETAINED at .done")
+    func toolActivityFailureSurfacesOkFalse() async throws {
         let controllable = makeControllableStream()
         let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
 
@@ -858,13 +883,17 @@ struct AskViewModelTests {
         controllable.continuation.finish()
         await viewModel.streamTask?.value
 
-        #expect(!viewModel.items.contains {
+        guard case let .toolActivity(_, _, retainedRunning, retainedOk) = try #require(viewModel.items.first {
             if case .toolActivity = $0.kind {
                 true
             } else {
                 false
             }
-        })
+        }).kind else {
+            Issue.record("expected a RETAINED toolActivity row"); return
+        }
+        #expect(!retainedRunning)
+        #expect(!retainedOk)
     }
 
     // MARK: - Test 17: superseding ask drops in-flight thinking + tool rows
@@ -922,13 +951,19 @@ struct AskViewModelTests {
         await viewModel.streamTask?.value
         firstControllable.continuation.finish()
 
-        #expect(!viewModel.items.contains {
-            if case .thinking = $0.kind {
-                true
-            } else {
-                false
-            }
-        })
+        // The FIRST (superseded) ask's thinking/tool rows never reappear — they were dropped
+        // synchronously, scoped to their own ids, and the first ask's task returns early on the
+        // generation guard without ever re-adding them. The SECOND ask's own (empty, since it never
+        // emitted a `.thinking`/`.toolActivity` event before `.done`) placeholder thinking row is
+        // RETAINED, folded (owner decision, 2026-07-23) — exactly one thinking row survives, not
+        // zero.
+        let survivingThinkingRows = viewModel.items.compactMap { item -> (String, Bool)? in
+            guard case let .thinking(text, folded) = item.kind else { return nil }
+            return (text, folded)
+        }
+        #expect(survivingThinkingRows.count == 1)
+        #expect(survivingThinkingRows.first?.0 == "")
+        #expect(survivingThinkingRows.first?.1 == true, "folded at .done, even with no accumulated text")
         #expect(!viewModel.items.contains {
             if case .toolActivity = $0.kind {
                 true
@@ -1041,11 +1076,16 @@ struct AskViewModelTests {
         controllable.continuation.finish()
         await viewModel.streamTask?.value
 
-        // `.done` leaves exactly [user, assistant] — thinking + tool rows are ephemeral, removed.
+        // `.done` RETAINS the trace (owner decision, 2026-07-23) — the same 4-row ordering survives
+        // unchanged, just with the assistant bubble now final (non-streaming).
         let finalKinds = viewModel.items.map(\.kind)
-        #expect(finalKinds.count == 2)
+        #expect(finalKinds.count == 4)
         guard case .user = finalKinds[0] else { Issue.record("expected user first"); return }
-        guard case .assistant = finalKinds[1] else { Issue.record("expected assistant second"); return }
+        guard case let .thinking(_, foldedAtDone) = finalKinds[1]
+        else { Issue.record("expected thinking second"); return }
+        #expect(foldedAtDone)
+        guard case .toolActivity = finalKinds[2] else { Issue.record("expected toolActivity third"); return }
+        guard case .assistant = finalKinds[3] else { Issue.record("expected assistant LAST"); return }
     }
 
     @Test("an empty-delta-only stream never creates a bubble; .done creates it directly")
@@ -1061,9 +1101,22 @@ struct AskViewModelTests {
         viewModel.send()
         await viewModel.streamTask?.value
 
-        // Only [user, assistant] survive — the empty deltas never created a bubble; `.done` created
-        // it directly since none existed yet.
-        #expect(viewModel.items.count == 2)
+        // [user, thinking(RETAINED, folded, still empty — no `.thinking` event ever arrived),
+        // assistant] — the empty deltas never created a bubble; `.done` created it directly since
+        // none existed yet, and RETAINS (folds) the never-populated thinking placeholder rather
+        // than removing it (owner decision, 2026-07-23).
+        #expect(viewModel.items.count == 3)
+        guard case let .thinking(thinkingText, folded) = try #require(viewModel.items.first {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        }).kind else {
+            Issue.record("expected a retained thinking row"); return
+        }
+        #expect(thinkingText.isEmpty)
+        #expect(folded)
         guard case let .assistant(text, _, streaming, _) = try #require(viewModel.items.last).kind else {
             Issue.record("expected an assistant row"); return
         }
@@ -1111,9 +1164,10 @@ struct AskViewModelTests {
         await viewModel.streamTask?.value
         firstControllable.continuation.finish()
 
-        // [user1, user2, assistant2] — the first ask's user row is never removed (only its
-        // ephemeral thinking/tool rows and any bubble are), so 3 rows survive, not 2.
-        #expect(viewModel.items.count == 3)
+        // [user1, user2, thinking2(RETAINED, folded, empty — ask 2 never emitted its own `.thinking`
+        // before `.done`), assistant2] — the first ask's user row is never removed (only its
+        // in-flight thinking row is, by the id-scoped supersession above), so 4 rows survive.
+        #expect(viewModel.items.count == 4)
         guard case let .assistant(text, _, _, _) = try #require(viewModel.items.last).kind else {
             Issue.record("expected an assistant row"); return
         }
@@ -1242,6 +1296,221 @@ struct AskViewModelTests {
         #expect(!viewModel.items.contains {
             if case .toolActivity = $0.kind {
                 true
+            } else {
+                false
+            }
+        })
+        #expect(viewModel.items.contains {
+            if case .error = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    // MARK: - Test 19 (code review findings M2/L1, 2026-07-23): interleaved trace + FIFO tool matching
+
+    @Test(
+        "a tool call between two thinking bursts opens a SECOND thinking section, so the trace reads as one interleaved flow"
+    )
+    func toolActivityBetweenThinkingBurstsOpensANewSection() async {
+        let controllable = makeControllableStream()
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
+
+        viewModel.composerText = "Recap my last meeting with Landon"
+        viewModel.send()
+
+        controllable.continuation.yield(.thinking("First I should look up Landon."))
+        await waitUntil {
+            viewModel.items.contains {
+                if case let .thinking(text, _) = $0.kind {
+                    !text.isEmpty
+                } else {
+                    false
+                }
+            }
+        }
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "find_person", displayLabel: "Looking up person", phase: .started)
+        ))
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "find_person", displayLabel: "Looking up person", phase: .finished(ok: true))
+        ))
+        await waitUntil {
+            viewModel.items.contains {
+                if case let .toolActivity(_, _, running, _) = $0.kind {
+                    !running
+                } else {
+                    false
+                }
+            }
+        }
+        controllable.continuation.yield(.thinking("Now I can summarize."))
+        await waitUntil {
+            viewModel.items.filter {
+                if case .thinking = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }.count == 2
+        }
+
+        // Two DISTINCT thinking sections, in order, with the tool row sandwiched between them —
+        // never one merged blob.
+        let kinds = viewModel.items.map(\.kind)
+        guard case .user = kinds[0] else { Issue.record("expected user first"); return }
+        guard case let .thinking(firstText, _) = kinds[1] else { Issue.record("expected thinking second"); return }
+        #expect(firstText == "First I should look up Landon.")
+        guard case .toolActivity = kinds[2] else { Issue.record("expected toolActivity third"); return }
+        guard case let .thinking(secondText, _) = kinds[3]
+        else { Issue.record("expected a SECOND thinking row"); return }
+        #expect(secondText == "Now I can summarize.")
+
+        controllable.continuation.yield(.done(RecallResponse(answer: "Final answer.", sources: [])))
+        controllable.continuation.finish()
+        await viewModel.streamTask?.value
+    }
+
+    @Test("the SAME tool name running twice concurrently completes rows in FIFO order, never clobbering the wrong one")
+    func sameToolNameTwiceConcurrentlyCompletesInFIFOOrder() async throws {
+        let controllable = makeControllableStream()
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
+
+        viewModel.composerText = "Compare two meetings"
+        viewModel.send()
+
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "find_meeting", displayLabel: "Looking up meeting", phase: .started)
+        ))
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "find_meeting", displayLabel: "Looking up meeting", phase: .started)
+        ))
+        await waitUntil {
+            viewModel.items.filter {
+                if case .toolActivity = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }.count == 2
+        }
+
+        // Both rows appended, both still running.
+        let toolRowIdsInOrder = viewModel.items.compactMap { item -> String? in
+            guard case .toolActivity = item.kind else { return nil }
+            return item.id
+        }
+        #expect(toolRowIdsInOrder.count == 2)
+
+        // Finish the FIRST call — FIFO semantics mean this completes the EARLIEST-started row, not
+        // an arbitrary one.
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "find_meeting", displayLabel: "Looking up meeting", phase: .finished(ok: true))
+        ))
+        await waitUntil {
+            viewModel.items.contains {
+                if case let .toolActivity(_, _, running, ok) = $0.kind {
+                    !running && ok
+                } else {
+                    false
+                }
+            }
+        }
+        let firstRowAfterFirstFinish = viewModel.items.first { $0.id == toolRowIdsInOrder[0] }
+        let secondRowAfterFirstFinish = viewModel.items.first { $0.id == toolRowIdsInOrder[1] }
+        guard case let .toolActivity(_, _, firstRunning, firstOk) = try #require(firstRowAfterFirstFinish).kind else {
+            Issue.record("expected the first row"); return
+        }
+        #expect(!firstRunning, "the EARLIEST-started row completes first (FIFO), never the second one")
+        #expect(firstOk)
+        guard case let .toolActivity(_, _, secondRunning, _) = try #require(secondRowAfterFirstFinish).kind else {
+            Issue.record("expected the second row"); return
+        }
+        #expect(secondRunning, "the second (later-started) row is still running")
+
+        // Finish the SECOND call.
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "find_meeting", displayLabel: "Looking up meeting", phase: .finished(ok: false))
+        ))
+        await waitUntil {
+            viewModel.items.filter {
+                if case let .toolActivity(_, _, running, _) = $0.kind {
+                    !running
+                } else {
+                    false
+                }
+            }.count == 2
+        }
+        let secondRowAfterSecondFinish = viewModel.items.first { $0.id == toolRowIdsInOrder[1] }
+        guard case let .toolActivity(_, _, _, secondOk) = try #require(secondRowAfterSecondFinish).kind else {
+            Issue.record("expected the second row"); return
+        }
+        #expect(!secondOk)
+
+        controllable.continuation.yield(.done(RecallResponse(answer: "Compared.", sources: [])))
+        controllable.continuation.finish()
+        await viewModel.streamTask?.value
+    }
+
+    // MARK: - Test 20: retention isolation — a completed ask's trace survives a LATER ask's error/supersession
+
+    @Test(
+        "a completed ask's RETAINED trace survives a later ask's error — error cleanup is scoped to the later ask's own rows"
+    )
+    func completedAsksRetainedTraceSurvivesALaterAsksError() async {
+        let firstControllable = makeControllableStream()
+        let secondControllable = makeControllableStream()
+        let callCount = Mutex<Int>(0)
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in
+            let count = callCount.withLock { $0 += 1; return $0 }
+            return count == 1 ? firstControllable.stream : secondControllable.stream
+        })
+
+        viewModel.composerText = "First question"
+        viewModel.send()
+        firstControllable.continuation.yield(.thinking("Reasoning about the first one."))
+        firstControllable.continuation.yield(.done(RecallResponse(answer: "First answer.", sources: [])))
+        firstControllable.continuation.finish()
+        await viewModel.streamTask?.value
+
+        // The first ask's retained (folded) thinking row exists after completion.
+        #expect(viewModel.items.contains {
+            if case let .thinking(text, folded) = $0.kind {
+                text == "Reasoning about the first one." && folded
+            } else {
+                false
+            }
+        })
+
+        viewModel.composerText = "Second question"
+        viewModel.send()
+        secondControllable.continuation.yield(.thinking("Reasoning about the second one."))
+        await waitUntil {
+            viewModel.items.contains {
+                if case let .thinking(text, _) = $0.kind {
+                    text == "Reasoning about the second one."
+                } else {
+                    false
+                }
+            }
+        }
+        secondControllable.continuation.finish(throwing: RecallEngineError.generationFailed("boom"))
+        await viewModel.streamTask?.value
+
+        // The FIRST ask's retained trace is untouched by the SECOND ask's error cleanup.
+        #expect(viewModel.items.contains {
+            if case let .thinking(text, folded) = $0.kind {
+                text == "Reasoning about the first one." && folded
+            } else {
+                false
+            }
+        })
+        // The second (errored) ask's own in-flight thinking row is gone.
+        #expect(!viewModel.items.contains {
+            if case let .thinking(text, _) = $0.kind {
+                text == "Reasoning about the second one."
             } else {
                 false
             }

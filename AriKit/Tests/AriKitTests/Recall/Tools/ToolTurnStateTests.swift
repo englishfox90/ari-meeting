@@ -104,4 +104,32 @@ struct ToolTurnStateTests {
         #expect(await state.beginIteration() == false)
         #expect(await state.iterations == RecallBounds.maxAgenticIterations)
     }
+
+    // MARK: - M4: cumulative tool-result character budget (code review 2026-07-23)
+
+    @Test(
+        "hasRemainingToolResultBudget accumulates real char counts and trips once the cumulative total crosses maxContextChars"
+    )
+    func toolResultBudgetAccumulatesAndTrips() async {
+        let state = ToolTurnState()
+        #expect(await state.hasRemainingToolResultBudget())
+
+        // Simulate several dispatches whose results, summed, stay comfortably under the cap.
+        await state.accumulateToolResultChars(RecallBounds.maxToolResultChars)
+        #expect(await state.hasRemainingToolResultBudget())
+
+        // Crossing the cumulative cap (`RecallBounds.maxContextChars`, shared with the rest of the
+        // recall safety shell rather than a new invented constant) trips it.
+        await state.accumulateToolResultChars(RecallBounds.maxContextChars)
+        #expect(await state.hasRemainingToolResultBudget() == false)
+    }
+
+    @Test("the tool-result budget is independent of the iteration cap — either can trip first")
+    func toolResultBudgetIsIndependentOfIterationCap() async {
+        let state = ToolTurnState()
+        // Exhausting the char budget in ONE shot must not touch the (separate) iteration counter.
+        await state.accumulateToolResultChars(RecallBounds.maxContextChars)
+        #expect(await state.hasRemainingToolResultBudget() == false)
+        #expect(await state.iterations == 0)
+    }
 }
