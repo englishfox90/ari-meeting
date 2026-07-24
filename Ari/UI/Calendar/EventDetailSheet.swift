@@ -19,6 +19,10 @@ struct EventDetailSheet: View {
     /// `event.meetingId` is `nil`, OR when the title hasn't resolved yet (falls back to a plain
     /// "Meeting" label rather than blocking the row on a lookup).
     let linkedMeetingTitle: String?
+    /// Attendee email (lowercased) → resolved `Person` display name, from
+    /// `CalendarPageViewModel.resolvedAttendeeNames` — shown instead of a bare calendar-provided
+    /// email when the app has a named `Person` on file.
+    let resolvedAttendeeNames: [String: String]
     /// `nil` until `AppEnvironment.bootstrap()` constructs the real session — Start stays
     /// honestly disabled until then, same posture as the rest of the app's optional-source VMs.
     let recordingSession: RecordingSession?
@@ -133,7 +137,10 @@ struct EventDetailSheet: View {
                 SectionHeader(title: "ATTENDEES (\(event.attendees.count))")
                 VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
                     ForEach(Array(event.attendees.enumerated()), id: \.offset) { _, attendee in
-                        AttendeeRow(attendee: attendee)
+                        AttendeeRow(
+                            attendee: attendee,
+                            resolvedName: attendee.email.flatMap { resolvedAttendeeNames[$0.lowercased()] }
+                        )
                     }
                 }
             }
@@ -167,19 +174,18 @@ struct EventDetailSheet: View {
         }
     }
 
+    @ViewBuilder
     private var linkUnlinkButton: some View {
-        Group {
-            if event.meetingId != nil {
-                Button("Unlink meeting") {
-                    Task { await onUnlink() }
-                }
-                .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-            } else {
-                Button("Link meeting…") {
-                    showLinkPicker = true
-                }
-                .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+        if event.meetingId != nil {
+            Button("Unlink meeting") {
+                Task { await onUnlink() }
             }
+            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+        } else {
+            Button("Link meeting…") {
+                showLinkPicker = true
+            }
+            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
         }
     }
 

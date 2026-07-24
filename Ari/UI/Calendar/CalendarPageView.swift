@@ -60,6 +60,7 @@ struct CalendarPageView: View {
             EventDetailSheet(
                 event: event,
                 linkedMeetingTitle: event.meetingId.flatMap { viewModel.linkedMeetingTitles[$0] },
+                resolvedAttendeeNames: viewModel.resolvedAttendeeNames,
                 recordingSession: recordingSession,
                 onLink: { meetingId in
                     await viewModel.link(eventId: event.id, to: meetingId)

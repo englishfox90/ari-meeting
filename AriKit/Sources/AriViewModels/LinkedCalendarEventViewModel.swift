@@ -23,6 +23,12 @@ public final class LinkedCalendarEventViewModel {
     /// The meeting's linked calendar event, or `nil` — an honest "no linked event", never a
     /// placeholder.
     public private(set) var event: CalendarEvent?
+    /// Attendee email (lowercased) → the matching `Person`'s display name, for attendees who
+    /// have been named in the app (`PersonRepository.findByEmail`). Calendar providers often
+    /// don't supply a name for every attendee, so this lets the UI show a real person's name
+    /// instead of a bare email address. Honestly absent (no fabricated fallback) for attendees
+    /// with no matching `Person` row.
+    public private(set) var resolvedAttendeeNames: [String: String] = [:]
     /// Picker candidates loaded by `loadCandidates(around:)` (±7 days around the meeting date).
     public private(set) var candidateEvents: [CalendarEvent] = []
     /// The real error text of the last failed read/write, or `nil`. Surfaced honestly in the UI.
@@ -45,6 +51,25 @@ public final class LinkedCalendarEventViewModel {
         } catch {
             errorMessage = String(describing: error)
         }
+        await resolveAttendeeNames()
+    }
+
+    /// Looks up each attendee's email against `PersonRepository`, so the UI can show a real
+    /// person's name (as authored on their `Person` record) instead of whatever the calendar
+    /// provider supplied. A lookup failure for one attendee doesn't block the others.
+    private func resolveAttendeeNames() async {
+        guard let event else {
+            resolvedAttendeeNames = [:]
+            return
+        }
+        var resolved: [String: String] = [:]
+        for attendee in event.attendees {
+            guard let email = attendee.email else { continue }
+            if let person = try? await database.persons.findByEmail(email) {
+                resolved[email.lowercased()] = person.displayName
+            }
+        }
+        resolvedAttendeeNames = resolved
     }
 
     /// Loads picker candidates: non-tombstoned events starting within ±7 days of `meetingDate`.

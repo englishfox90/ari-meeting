@@ -51,7 +51,6 @@ struct LinkedEventCard: View {
         }
     }
 
-    @ViewBuilder
     private func linkedContent(_ event: CalendarEvent) -> some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
@@ -68,7 +67,10 @@ struct LinkedEventCard: View {
             if !event.attendees.isEmpty {
                 VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
                     ForEach(Array(event.attendees.enumerated()), id: \.offset) { _, attendee in
-                        AttendeeRow(attendee: attendee)
+                        AttendeeRow(
+                            attendee: attendee,
+                            resolvedName: attendee.email.flatMap { viewModel.resolvedAttendeeNames[$0.lowercased()] }
+                        )
                     }
                 }
             }

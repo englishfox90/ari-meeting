@@ -38,6 +38,10 @@ public final class CalendarPageViewModel {
     /// `meetingId` → title, for every linked meeting among `events` — the linked-badge + detail
     /// sheet read this rather than re-querying per row.
     public private(set) var linkedMeetingTitles: [MeetingID: String] = [:]
+    /// Attendee email (lowercased) → the matching `Person`'s display name, across every visible
+    /// event's attendees — same "prefer a named `Person` over the raw calendar attendee" resolution
+    /// as `LinkedCalendarEventViewModel`.
+    public private(set) var resolvedAttendeeNames: [String: String] = [:]
     public private(set) var isSyncing = false
     /// The real error from the most recent failed background sync, or `nil`. A failed refresh
     /// never clears `events` — the stored data stays honest; only the failed *refresh* is
@@ -84,7 +88,7 @@ public final class CalendarPageViewModel {
             events = []
             return
         }
-        let latestSynced = (try? await database.calendarEvents.latestSyncedAt()) ?? nil
+        let latestSynced = await (try? database.calendarEvents.latestSyncedAt()) ?? nil
         guard latestSynced != nil else {
             state = .neverSynced
             events = []
@@ -159,14 +163,14 @@ public final class CalendarPageViewModel {
     /// Existing meetings for the link picker, newest first (`MeetingRepository.all()`'s own
     /// ordering).
     public func meetingsForPicker() async -> [Meeting] {
-        (try? await database.meetings.all()) ?? []
+        await (try? database.meetings.all()) ?? []
     }
 
     // MARK: - Local-DB-first read (no EventKit call — repositories only)
 
     private func refetch() async {
         let range = visibleRange
-        events = (try? await database.calendarEvents.events(startingIn: range)) ?? []
+        events = await (try? database.calendarEvents.events(startingIn: range)) ?? []
 
         if let rows = try? await database.calendarEvents.syncSettings() {
             var colors: [String: String] = [:]
@@ -184,5 +188,18 @@ public final class CalendarPageViewModel {
             }
         }
         linkedMeetingTitles = titles
+
+        var names: [String: String] = [:]
+        for event in events {
+            for attendee in event.attendees {
+                guard let email = attendee.email else { continue }
+                let key = email.lowercased()
+                guard names[key] == nil else { continue }
+                if let person = try? await database.persons.findByEmail(email) {
+                    names[key] = person.displayName
+                }
+            }
+        }
+        resolvedAttendeeNames = names
     }
 }

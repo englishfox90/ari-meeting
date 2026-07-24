@@ -8,6 +8,10 @@ import SwiftUI
 
 struct AttendeeRow: View {
     let attendee: Attendee
+    /// The attendee's real name resolved from a matching `Person` record (`PersonRepository
+    /// .findByEmail`), when the app has one on file — preferred over the calendar-supplied
+    /// `attendee.name`, which is frequently absent (e.g. many EWS/external attendees).
+    var resolvedName: String?
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -20,9 +24,9 @@ struct AttendeeRow: View {
                         .marginaliaTextStyle(.caption, in: scheme)
                 }
             VStack(alignment: .leading, spacing: 0) {
-                Text(attendee.name ?? attendee.email ?? "Unknown attendee")
+                Text(displayName)
                     .marginaliaTextStyle(.body, in: scheme)
-                if attendee.name != nil, let email = attendee.email {
+                if displayName != attendee.email, let email = attendee.email {
                     Text(email)
                         .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
                 }
@@ -30,8 +34,11 @@ struct AttendeeRow: View {
         }
     }
 
+    private var displayName: String {
+        resolvedName ?? attendee.name ?? attendee.email ?? "Unknown attendee"
+    }
+
     private var initial: String {
-        let source = attendee.name ?? attendee.email ?? "?"
-        return String(source.prefix(1)).uppercased()
+        String(displayName.prefix(1)).uppercased()
     }
 }

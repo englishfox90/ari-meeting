@@ -20,16 +20,6 @@ public enum TemplateRegistry {
       "description": "Time-boxed daily updates for engineering/product teams.",
       "sections": [
         {
-          "title": "Date",
-          "instruction": "Extract the meeting date in YYYY-MM-DD format only if explicitly stated in the transcript; otherwise leave blank",
-          "format": "string"
-        },
-        {
-          "title": "Attendees",
-          "instruction": "List each participant named in the transcript",
-          "format": "list"
-        },
-        {
           "title": "Yesterday",
           "instruction": "For each participant, list what they said they completed yesterday, as short bullets",
           "format": "list",
@@ -94,8 +84,8 @@ public enum TemplateRegistry {
       "description": "One-on-one between a manager and a team member: check-in, discussion, feedback, growth, and follow-ups.",
       "sections": [
         {
-          "title": "Meeting Metadata",
-          "instruction": "Extract the meeting date and participant names, plus their roles (e.g. manager and team member), only if explicitly stated in the transcript; otherwise leave blank",
+          "title": "Participant Roles",
+          "instruction": "Extract each participant's role or title (e.g. manager and team member) only if explicitly stated in the transcript; otherwise leave blank. Do not restate the participants' names or the meeting date, which are already shown elsewhere",
           "format": "string"
         },
         {
@@ -153,13 +143,13 @@ public enum TemplateRegistry {
       "description": "Weekly or bi-weekly project status meeting focusing on milestones and risks.",
       "sections": [
         {
-          "title": "Meeting Date & Time",
-          "instruction": "Extract the meeting date, start/end time, and facilitator name only if explicitly stated in the transcript; otherwise leave blank.",
+          "title": "Facilitator",
+          "instruction": "Extract the meeting facilitator's name only if explicitly stated in the transcript; otherwise leave blank. Do not restate the meeting date or the full attendee list, which are already shown elsewhere.",
           "format": "string"
         },
         {
-          "title": "Attendees",
-          "instruction": "List each attendee named in the transcript along with their role, only if the role was stated.",
+          "title": "Attendee Roles",
+          "instruction": "List each attendee's role, only for attendees whose role was explicitly stated in the transcript. Omit attendees with no stated role rather than relisting the full attendee list.",
           "format": "list"
         },
         {
@@ -209,13 +199,8 @@ public enum TemplateRegistry {
       "sections": [
         {
           "title": "Sprint",
-          "instruction": "Extract the sprint name/number and date range only if explicitly stated in the transcript; otherwise leave blank",
+          "instruction": "Extract the sprint name/number only if explicitly stated in the transcript; otherwise leave blank. Do not restate the meeting date or attendee list, which are already shown elsewhere",
           "format": "string"
-        },
-        {
-          "title": "Attendance",
-          "instruction": "List each participant named in the transcript",
-          "format": "list"
         },
         {
           "title": "Start Doing",
@@ -257,13 +242,13 @@ public enum TemplateRegistry {
       "description": "Capture client goals, deliverables, and next steps.",
       "sections": [
         {
-          "title": "Meeting Metadata",
-          "instruction": "Extract the meeting date, time, location/modality, and account manager name only if explicitly stated in the transcript; otherwise leave blank",
+          "title": "Meeting Details",
+          "instruction": "Extract the meeting location/modality and account manager name only if explicitly stated in the transcript; otherwise leave blank. Do not restate the meeting date, which is already shown elsewhere",
           "format": "string"
         },
         {
-          "title": "Attendees",
-          "instruction": "List client and vendor attendees named in the transcript, with their roles if stated",
+          "title": "Attendee Roles",
+          "instruction": "List each client or vendor attendee's role, only for attendees whose role was explicitly stated in the transcript. Omit attendees with no stated role rather than relisting the full attendee list",
           "format": "list"
         },
         {
@@ -310,8 +295,8 @@ public enum TemplateRegistry {
           "format": "paragraph"
         },
         {
-          "title": "Attendees",
-          "instruction": "List the participants present, and their roles if stated",
+          "title": "Attendee Roles",
+          "instruction": "List each participant's role, only for participants whose role was explicitly stated in the transcript. Omit participants with no stated role rather than relisting the full attendee list",
           "format": "list"
         },
         {
@@ -356,7 +341,7 @@ public enum TemplateRegistry {
         ("project_sync", projectSyncJSON),
         ("retrospective", retrospectiveJSON),
         ("sales_marketing_client_call", salesMarketingClientCallJSON),
-        ("team_meeting", teamMeetingJSON),
+        ("team_meeting", teamMeetingJSON)
     ]
 
     /// ← `get_builtin_templates` (`defaults.rs`), widened to all seven shipped defaults.
