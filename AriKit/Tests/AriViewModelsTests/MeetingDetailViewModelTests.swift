@@ -208,4 +208,57 @@ struct MeetingDetailViewModelTests {
         // what drops it.
         #expect(try await database.meetings.all().isEmpty)
     }
+
+    @Test("saveSummaryEdit persists the edited body, patches local state, and re-parses moments")
+    func saveSummaryEditPersists() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let meetingId: MeetingID = "meeting-edit-summary"
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        let meeting = Meeting(id: meetingId, title: "Editable", createdAt: created, updatedAt: created)
+        try await database.meetings.upsert(meeting)
+        let summary = Summary(
+            id: "summary-edit", meetingId: meetingId, bodyMarkdown: "# Recap",
+            createdAt: created, updatedAt: created
+        )
+        try await database.summaries.upsert(summary)
+
+        let viewModel = MeetingDetailViewModel(database: database)
+        await viewModel.load(meetingId)
+        try await viewModel.saveSummaryEdit("# Recap\n\nDecided at [00:05].")
+
+        // Local state patched (no re-load) …
+        #expect(viewModel.summary?.bodyMarkdown == "# Recap\n\nDecided at [00:05].")
+        #expect(viewModel.summary.map { $0.updatedAt > created } == true)
+        #expect(viewModel.referencedMoments == [5.0])
+        // … and persisted.
+        #expect(try await database.summaries.forMeeting(meetingId)?.bodyMarkdown == "# Recap\n\nDecided at [00:05].")
+    }
+
+    @Test("saveSummaryEdit is a no-op on a blank body or when no summary exists")
+    func saveSummaryEditNoOps() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let meetingId: MeetingID = "meeting-edit-noop"
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        let meeting = Meeting(id: meetingId, title: "No-op", createdAt: created, updatedAt: created)
+        try await database.meetings.upsert(meeting)
+
+        let viewModel = MeetingDetailViewModel(database: database)
+        await viewModel.load(meetingId)
+
+        // No summary loaded — editing never CREATES one.
+        try await viewModel.saveSummaryEdit("# Invented")
+        #expect(viewModel.summary == nil)
+        #expect(try await database.summaries.forMeeting(meetingId) == nil)
+
+        // A blank body never wipes an existing summary.
+        let summary = Summary(
+            id: "summary-noop", meetingId: meetingId, bodyMarkdown: "# Keep me",
+            createdAt: created, updatedAt: created
+        )
+        try await database.summaries.upsert(summary)
+        await viewModel.load(meetingId)
+        try await viewModel.saveSummaryEdit("   \n  ")
+        #expect(viewModel.summary?.bodyMarkdown == "# Keep me")
+        #expect(try await database.summaries.forMeeting(meetingId)?.bodyMarkdown == "# Keep me")
+    }
 }

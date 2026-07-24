@@ -72,6 +72,12 @@ struct MeetingDetailView: View {
     @State private var renameText = ""
     /// Drives the delete confirmation dialog.
     @State private var showingDeleteConfirm = false
+    /// Plain-markdown summary editing: when true, `summaryBody` swaps the rendered
+    /// `MarginaliaMarkdownView` for a `MarginaliaTextEditor` bound to `summaryDraft`, and the
+    /// summary toolbar shows Save/Cancel instead of the generation controls. The draft only
+    /// persists on Save (via `viewModel.saveSummaryEdit`); Cancel discards it.
+    @State private var isEditingSummary = false
+    @State private var summaryDraft = ""
     /// Honest surfacing of a real rename/delete write failure (No-Fake-State — never a silent
     /// success).
     @State private var actionError: String?
@@ -186,6 +192,10 @@ struct MeetingDetailView: View {
             // the prior meeting audible with no visible transport to stop it.
             audioController.reset()
             narrowSection = .summary
+            // Editing state belongs to the previous meeting — never carry a stale draft across
+            // (the detail view is reused, see below).
+            isEditingSummary = false
+            summaryDraft = ""
             // The F9 ledger fold's reducer (docs/plans/calendar-series-intelligence.md §2.4):
             // `seriesViewModel` is constructed in `init`, before the environment is readable, so
             // it's assigned here from the ONE reducer `AppEnvironment.bootstrap()` builds — the
@@ -489,7 +499,14 @@ struct MeetingDetailView: View {
 
     private var summaryBody: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-            if let summary = viewModel.summary {
+            if isEditingSummary {
+                MarginaliaTextEditor(
+                    text: $summaryDraft,
+                    prompt: "Write the summary in Markdown…",
+                    scheme: scheme,
+                    minHeight: 320
+                )
+            } else if let summary = viewModel.summary {
                 MarginaliaMarkdownView(markdown: summary.bodyMarkdown, onSeek: seekHandler)
             } else {
                 emptyState(
@@ -637,10 +654,62 @@ struct MeetingDetailView: View {
         }
     }
 
+    // MARK: - Summary editing (plain markdown)
+
+    private func beginSummaryEdit() {
+        guard let summary = viewModel.summary else { return }
+        summaryDraft = summary.bodyMarkdown
+        isEditingSummary = true
+    }
+
+    private func cancelSummaryEdit() {
+        isEditingSummary = false
+        summaryDraft = ""
+    }
+
+    private func commitSummaryEdit() {
+        let draft = summaryDraft
+        Task {
+            do {
+                try await viewModel.saveSummaryEdit(draft)
+                isEditingSummary = false
+                summaryDraft = ""
+            } catch {
+                // Honest write-failure surfacing (No-Fake-State) — the editor stays open with
+                // the draft intact so nothing typed is lost.
+                actionError = String(describing: error)
+            }
+        }
+    }
+
     @ToolbarContentBuilder
     private var summaryToolbar: some ToolbarContent {
-        if let summaryVM = summaryViewModel, !isNarrowLayout || narrowSection == .summary {
+        if isEditingSummary, !isNarrowLayout || narrowSection == .summary {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button("Cancel", role: .cancel) {
+                    cancelSummaryEdit()
+                }
+                .help("Discard the edits")
+                Button {
+                    commitSummaryEdit()
+                } label: {
+                    Label("Save", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(summaryDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Save the edited summary")
+            }
+        } else if let summaryVM = summaryViewModel, !isNarrowLayout || narrowSection == .summary {
+            ToolbarItemGroup(placement: .primaryAction) {
+                if viewModel.summary != nil {
+                    Button {
+                        beginSummaryEdit()
+                    } label: {
+                        Label("Edit Summary", systemImage: "square.and.pencil")
+                    }
+                    .disabled(isSummaryGenerating(summaryVM) || isCoordinatorProcessingThisMeeting)
+                    .help("Edit the summary text directly")
+                }
                 Picker("Template", selection: templateSelectionBinding(summaryVM)) {
                     Text("Auto (suggest)").tag(nil as String?)
                     ForEach(summaryVM.templates) { option in
