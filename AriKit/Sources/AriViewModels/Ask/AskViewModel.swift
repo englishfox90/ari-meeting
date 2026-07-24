@@ -218,6 +218,13 @@ public final class AskViewModel {
                         }
                         accumulated += delta
                         updateAssistant(id: placeholderId, text: accumulated, sources: [], streaming: true, card: nil)
+                    case .thinking, .toolActivity:
+                        // TEMPORARY no-op (Slice 2 of `ask-meetings-agentic-tools.md`): these two
+                        // `RecallStreamEvent` cases are new in this slice. Slice 3 renders live
+                        // reasoning text + tool-activity rows; until then, ignore them here so the
+                        // switch stays exhaustive and existing `.delta`/`.done` behavior is
+                        // unaffected (No-Fake-State: better to show nothing than a half-built row).
+                        continue
                     case let .done(response):
                         removeItem(id: thinkingId)
                         updateAssistant(

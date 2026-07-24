@@ -105,4 +105,82 @@ struct RecallCardPayloadCodableTests {
         let decoded = try decoder.decode(RecallResponse.self, from: Data(json.utf8))
         #expect(decoded.card == nil)
     }
+
+    // MARK: - §5.4 plural `cards` (ask-meetings-agentic-tools.md)
+
+    @Test("cards: passing plural cards sets card to cards.first")
+    func pluralCardsSetsSingularCardToFirst() {
+        let person = RecallCardPayload.person(PersonCardPayload(
+            personId: "p1",
+            displayName: "Sarah Ammon",
+            meetingCount: 3
+        ))
+        let event = RecallCardPayload.calendarEvent(
+            CalendarEventCardPayload(
+                eventId: "e1",
+                title: "Sync",
+                startTime: "2026-07-23T18:00:00Z",
+                attendeeNames: [],
+                isLinkedToRecordedMeeting: false
+            )
+        )
+        let response = RecallResponse(answer: "Fine.", sources: [], cards: [person, event])
+        #expect(response.cards == [person, event])
+        #expect(response.card == person)
+    }
+
+    @Test("cards: a RecallResponse with plural cards round-trips through Codable")
+    func pluralCardsRoundTrips() throws {
+        let person = RecallCardPayload.person(PersonCardPayload(
+            personId: "p1",
+            displayName: "Sarah Ammon",
+            meetingCount: 3
+        ))
+        let event = RecallCardPayload.calendarEvent(
+            CalendarEventCardPayload(
+                eventId: "e1",
+                title: "Sync",
+                startTime: "2026-07-23T18:00:00Z",
+                attendeeNames: [],
+                isLinkedToRecordedMeeting: false
+            )
+        )
+        let response = RecallResponse(answer: "Fine.", sources: [], cards: [person, event])
+        let data = try encoder.encode(response)
+        let decoded = try decoder.decode(RecallResponse.self, from: data)
+        #expect(decoded == response)
+        #expect(decoded.card == person)
+    }
+
+    @Test("cards: a JSON blob with no cards key but a legacy card key derives cards == [card] (back-compat)")
+    func missingCardsKeyDerivesFromLegacyCard() throws {
+        // Built via the encoder (not hand-authored JSON) so this test does not depend on the exact
+        // associated-value coding-key shape Swift's synthesized `Codable` picks for an unlabeled
+        // enum payload — only on the FIELD ("card" present, "cards" absent) that matters here.
+        let card = RecallCardPayload.person(PersonCardPayload(
+            personId: "p1",
+            displayName: "Sarah Ammon",
+            meetingCount: 3
+        ))
+        var object = try #require(JSONSerialization.jsonObject(
+            with: encoder.encode(RecallResponse(answer: "Fine.", sources: [], card: card))
+        ) as? [String: Any])
+        object.removeValue(forKey: "cards")
+        let json = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try decoder.decode(RecallResponse.self, from: json)
+        #expect(decoded.cards.count == 1)
+        #expect(decoded.card == decoded.cards.first)
+        #expect(decoded.card == card)
+    }
+
+    @Test("cards: a JSON blob with neither cards nor card decodes cards == [] (never fabricated)")
+    func missingBothDecodesEmptyCards() throws {
+        let json = """
+        { "answer": "Fine.", "sources": [] }
+        """
+        let decoded = try decoder.decode(RecallResponse.self, from: Data(json.utf8))
+        #expect(decoded.cards.isEmpty)
+        #expect(decoded.card == nil)
+    }
 }

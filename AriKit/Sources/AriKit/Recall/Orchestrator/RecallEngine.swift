@@ -99,9 +99,35 @@ public struct RecallEngine: Sendable {
         self.clientFactory = clientFactory
     }
 
+    // MARK: - Entry point (routes meeting-scoped vs. global/series-scoped, plan §4.5
+
+    // `ask-meetings-agentic-tools.md`)
+
+    /// Meeting-scoped asks stay on today's single-shot pipeline UNCHANGED (plan §4.5: the subject
+    /// is already unambiguous, the full-transcript context is needed for `@ref` verification, and
+    /// tool round-trips would only add latency). Global/series-scoped asks route through the
+    /// tool-first agentic path (`RecallEngine+Agentic.swift`), which itself falls back to the exact
+    /// pre-agentic pipeline (rung 3, plan §4.4) on any classifier miss/provider mismatch/error.
+    public func answerMeetingsLocally(
+        question: String,
+        meetingId: MeetingID? = nil,
+        seriesId: SeriesID? = nil,
+        history: [RecallTurn] = []
+    ) async throws -> RecallResponse {
+        guard meetingId == nil else {
+            return try await answerMeetingsLocallySingleShot(
+                question: question, meetingId: meetingId, seriesId: seriesId, history: history
+            )
+        }
+        return try await answerMeetingsLocallyAgentic(question: question, seriesId: seriesId, history: history)
+    }
+
     // MARK: - Single-shot (← `api_answer_meetings_locally_impl`, `shell.rs:272-472`)
 
-    public func answerMeetingsLocally(
+    /// The exact, byte-identical pre-agentic pipeline (← `api_answer_meetings_locally_impl`) —
+    /// reused verbatim both directly (meeting scope) and as the agentic ladder's rung-3 fallback
+    /// (global/series scope, plan §4.4).
+    func answerMeetingsLocallySingleShot(
         question: String,
         meetingId: MeetingID? = nil,
         seriesId: SeriesID? = nil,
@@ -134,12 +160,6 @@ public struct RecallEngine: Sendable {
         return RecallResponse(answer: reconciled, sources: prepared.sources, card: prepared.card)
     }
 
-    // TODO(follow-on): port `recall/agent.rs`'s Claude-only agentic tool-use loop
-    // (`answer_agentic`) — global scope + Claude + a real API key, ≤8 iterations, `MAX_SOURCES=24`,
-    // `MAX_TRANSCRIPT_CHARS=8_000` (plan §7 "Bounded context"). Deferred per this slice's scope;
-    // `answerMeetingsLocally`/`answerMeetingsLocallyStream` always take the single-shot/streaming
-    // path Rust falls back to on any agentic error.
-
     // MARK: - Shared preparation (single-shot + streaming, ← the identical prefix of `shell.rs`
 
     // and `stream.rs`)
@@ -155,8 +175,10 @@ public struct RecallEngine: Sendable {
 
     /// `RecallTools` over this engine's own repository handles (plan §4.2) — built fresh per call
     /// rather than stored, mirroring how `hybridSearch`/`peopleContext` are injected once but this
-    /// one is cheap value construction over the same `db`.
-    private var recallTools: RecallTools {
+    /// one is cheap value construction over the same `db`. Internal (not `private`) so the agentic
+    /// orchestration in `RecallEngine+Agentic.swift` (a sibling file, same module) can build an
+    /// `AskToolset` from it too.
+    var recallTools: RecallTools {
         RecallTools(
             meetings: db.meetings,
             persons: db.persons,
@@ -166,12 +188,27 @@ public struct RecallEngine: Sendable {
         )
     }
 
-    func prepare(
+    /// The shared validation/gating prefix of `prepare()` (← the identical prefix of `shell.rs`
+    /// and `stream.rs`), factored out so `prepareAgentic` (`RecallEngine+Agentic.swift`) reuses it
+    /// verbatim instead of duplicating the gates — `prepare()`'s own behavior stays byte-identical
+    /// (this is a pure mechanical extraction, not a behavior change).
+    struct ValidatedContext {
+        var question: String
+        var historyText: String
+        var providerKind: ProviderKind
+        var modelConfig: RecallModelConfig
+        var apiKey: String
+        var isMeetingScoped: Bool
+        var isSeriesScoped: Bool
+        var seriesLedgerMarkdown: String?
+    }
+
+    func validate(
         question rawQuestion: String,
         meetingId: MeetingID?,
         seriesId: SeriesID?,
         history: [RecallTurn]
-    ) async throws -> PreparedRequest {
+    ) async throws -> ValidatedContext {
         let question = rawQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else {
             throw RecallEngineError.emptyQuestion
@@ -223,6 +260,32 @@ public struct RecallEngine: Sendable {
         } else {
             seriesLedgerMarkdown = nil
         }
+
+        return ValidatedContext(
+            question: question,
+            historyText: historyText,
+            providerKind: providerKind,
+            modelConfig: modelConfig,
+            apiKey: apiKey,
+            isMeetingScoped: isMeetingScoped,
+            isSeriesScoped: isSeriesScoped,
+            seriesLedgerMarkdown: seriesLedgerMarkdown
+        )
+    }
+
+    func prepare(
+        question rawQuestion: String,
+        meetingId: MeetingID?,
+        seriesId: SeriesID?,
+        history: [RecallTurn]
+    ) async throws -> PreparedRequest {
+        let validated = try await validate(
+            question: rawQuestion, meetingId: meetingId, seriesId: seriesId, history: history
+        )
+        let question = validated.question
+        let historyText = validated.historyText
+        let isMeetingScoped = validated.isMeetingScoped
+        let seriesLedgerMarkdown = validated.seriesLedgerMarkdown
 
         // Slice B structured tools (plan §4.3, `ask-meetings-tools-and-cards.md`): a STRICTLY
         // ADDITIVE, global-scope-only pre-step. Hybrid RAG below is NEVER skipped or replaced —
@@ -289,10 +352,10 @@ public struct RecallEngine: Sendable {
             + "Question: \(question)\n\nAuthoritative local meeting sources:\n\(context)"
 
         let config = ProviderConfig(
-            kind: providerKind,
-            model: modelConfig.model,
-            apiKey: apiKey,
-            ollamaEndpoint: modelConfig.ollamaEndpoint
+            kind: validated.providerKind,
+            model: validated.modelConfig.model,
+            apiKey: validated.apiKey,
+            ollamaEndpoint: validated.modelConfig.ollamaEndpoint
         )
 
         return PreparedRequest(
@@ -308,7 +371,7 @@ public struct RecallEngine: Sendable {
     /// A real, human-readable "today" line (e.g. "Thursday, July 23, 2026") from the device's
     /// actual current date — the one honest anchor the model needs for "today"/"this week"
     /// questions, distinct from any meeting/source date in the retrieved context.
-    private static func todayLine() -> String {
+    static func todayLine() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE, MMMM d, yyyy"
         return formatter.string(from: Date())

@@ -32,4 +32,20 @@ extension Recall {
 
     private static let meetingScopedSuffix =
         " When you reference a specific moment in this meeting, append its timestamp as @ref(MM:SS) using the transcript times shown in the sources; only use times that actually appear."
+
+    // MARK: - Tool-first agentic prompt (plan §4.2, `ask-meetings-agentic-tools.md`)
+
+    /// The system prompt for the tool-first agentic path (global/series scope). Unlike
+    /// `systemPrompt(isMeetingScoped:)`, NO excerpts are ever unconditionally injected here — the
+    /// model must call a tool (`search_transcripts`, `find_person`, …) to get real data, so there is
+    /// no "Resolved:"/"Calendar:" fact to arbitrate against a competing excerpt block, and no
+    /// "Authoritative local meeting sources" framing (plan §1.1's diagnosis).
+    public static func agenticSystemPrompt(seriesLedger: String? = nil) -> String {
+        guard seriesLedger != nil else { return agenticBasePrompt }
+        return agenticBasePrompt
+            + " A running series ledger for this thread's series is included below the question; treat it as verified context, same as a tool result."
+    }
+
+    private static let agenticBasePrompt =
+        "You are the assistant inside a local meeting app. You have tools that look up the user's real saved meetings, people, and today's calendar. Use a tool whenever the question concerns the user's meetings, people, or today's schedule; answer directly, without using any tool, for greetings, small talk, or a general question unrelated to the user's meetings. Be concise and direct: lead with the answer, keep it to the fewest words the question needs, and add no preamble, restatement of the question, or closing offers to help further. Never fabricate meeting content, citations, dates, or counts — state only what a tool result actually returned; if no tool result answers the question, say so plainly in one short sentence. When a fact came from a search_transcripts result, cite it inline using its bracketed number — e.g. [S1] — matching only the \"[Sn]\" labels that tool result gave you; never invent a source number, and never cite one you were not given. A calendar event means something is scheduled, never that it was recorded or discussed — never conflate the two."
 }

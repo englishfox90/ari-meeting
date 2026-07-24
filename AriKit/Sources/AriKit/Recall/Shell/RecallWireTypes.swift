@@ -71,17 +71,45 @@ public struct RecallResponse: Codable, Hashable, Sendable {
     /// A deterministically-resolved entity card (plan §5.1, `ask-meetings-tools-and-cards.md`),
     /// additive to the wire shape. `nil` unless Slice B's global-scope entity resolution found
     /// EXACTLY ONE real, unambiguous row — never a partial match, never a placeholder
-    /// (No-Fake-State). Swift's synthesized `Codable` already treats an `Optional` stored property
-    /// as `decodeIfPresent` (defaulting to `nil` on a missing key), so this decodes any
-    /// already-persisted response with no `card` key as `nil` — forward/backward compatible with
-    /// zero custom coding code, mirroring `RecallSource.speakers`'s own default-on-missing-key
-    /// intent (that one needs a custom decoder only because `[String]` isn't itself `Optional`).
+    /// (No-Fake-State). Kept as wire/persistence BACK-COMPAT (plan §5.4,
+    /// `ask-meetings-agentic-tools.md`) — always equal to `cards.first`.
     public var card: RecallCardPayload?
+    /// The full set of resolved cards (plan §5.4) — the tool-first agentic path can resolve MORE
+    /// THAN ONE entity per ask (e.g. a person + today's calendar event). Decodes to `[]` when the
+    /// wire key is absent (mirrors `RecallSource.speakers`'s default-on-missing-key pattern), and
+    /// derives from `card` when only the legacy singular field is present (back-compat with
+    /// anything persisted before this field existed).
+    public var cards: [RecallCardPayload]
 
-    public init(answer: String, sources: [RecallSource], card: RecallCardPayload? = nil) {
+    public init(
+        answer: String,
+        sources: [RecallSource],
+        card: RecallCardPayload? = nil,
+        cards: [RecallCardPayload]? = nil
+    ) {
         self.answer = answer
         self.sources = sources
-        self.card = card
+        let resolvedCards = cards ?? (card.map { [$0] } ?? [])
+        self.cards = resolvedCards
+        self.card = card ?? resolvedCards.first
+    }
+}
+
+extension RecallResponse {
+    private enum CodingKeys: String, CodingKey {
+        case answer, sources, card, cards
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        answer = try container.decode(String.self, forKey: .answer)
+        sources = try container.decode([RecallSource].self, forKey: .sources)
+        let decodedCard = try container.decodeIfPresent(RecallCardPayload.self, forKey: .card)
+        // `#[serde(default)]`-style parity: a missing `cards` key falls back to `[decodedCard]`
+        // (or `[]` when there's no legacy `card` either) — never a fabricated placeholder.
+        cards = try container.decodeIfPresent([RecallCardPayload].self, forKey: .cards)
+            ?? (decodedCard.map { [$0] } ?? [])
+        card = decodedCard ?? cards.first
     }
 }
 

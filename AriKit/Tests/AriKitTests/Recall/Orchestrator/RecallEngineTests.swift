@@ -426,6 +426,8 @@ struct RecallEngineTests {
             case let .done(response):
                 #expect(done == nil, "exactly one terminal .done event")
                 done = response
+            case .thinking, .toolActivity:
+                Issue.record("meeting-scoped streaming never emits .thinking/.toolActivity (rung 3 only)")
             }
         }
 

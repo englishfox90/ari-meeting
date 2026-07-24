@@ -57,8 +57,13 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
     public var sources: [RecallSource]
     /// A deterministically-resolved entity card (`ask-meetings-tools-and-cards.md` §5.1), additive.
     /// `nil` for every message except an assistant turn whose ask resolved exactly one real entity
-    /// — never a partial match, never a placeholder (No-Fake-State).
+    /// — never a partial match, never a placeholder (No-Fake-State). Kept as back-compat, always
+    /// `cards.first` (plan §5.4, `ask-meetings-agentic-tools.md`).
     public var card: RecallCardPayload?
+    /// The full set of resolved cards (plan §5.4) — the tool-first agentic path can resolve more
+    /// than one entity per ask. `[]` for every message except an assistant turn that resolved at
+    /// least one real entity.
+    public var cards: [RecallCardPayload]
     public var createdAt: String
 
     public init(
@@ -68,6 +73,7 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
         content: String,
         sources: [RecallSource] = [],
         card: RecallCardPayload? = nil,
+        cards: [RecallCardPayload]? = nil,
         createdAt: String
     ) {
         self.id = id
@@ -75,7 +81,9 @@ public struct AskMessage: Codable, Hashable, Sendable, Identifiable {
         self.role = role
         self.content = content
         self.sources = sources
-        self.card = card
+        let resolvedCards = cards ?? (card.map { [$0] } ?? [])
+        self.cards = resolvedCards
+        self.card = card ?? resolvedCards.first
         self.createdAt = createdAt
     }
 }

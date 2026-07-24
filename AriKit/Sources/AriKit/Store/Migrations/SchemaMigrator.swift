@@ -467,6 +467,18 @@ enum SchemaMigrator {
             }
         }
 
+        // v4 (docs/plans/ask-meetings-agentic-tools.md §5.4) — additive-only, `v1_baseline`,
+        // `v2_recall_chunk_source_kind`, AND `v3_ask_message_card` all stay frozen. The tool-first
+        // agentic path can resolve MORE THAN ONE entity per ask (e.g. a person + today's calendar
+        // event); `cardsJson` carries the full set. `cardJson` (v3) is kept as a legacy back-compat
+        // column, always `cards.first` going forward — the read path prefers `cardsJson`, falling
+        // back to `cardJson` for rows persisted before this column existed.
+        migrator.registerMigration("v4_ask_message_cards") { db in
+            try db.alter(table: "askMessage") { t in
+                t.add(column: "cardsJson", .text)
+            }
+        }
+
         return migrator
     }
 }
