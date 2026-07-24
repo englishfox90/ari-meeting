@@ -86,9 +86,6 @@ struct MeetingDetailView: View {
     /// document, so no force-unwrapping binding exists — "no draft" is the empty document.)
     @State private var isEditingSummary = false
     @State private var summaryEditor = SummaryEditorModel()
-    /// Shared namespace so `glassEffectUnion` can fuse each pair of formatting buttons into one
-    /// continuous glass capsule (see `summaryFormattingBar`).
-    @Namespace private var formatGlassNamespace
     /// Honest surfacing of a real rename/delete write failure (No-Fake-State — never a silent
     /// success).
     @State private var actionError: String?
@@ -387,9 +384,6 @@ struct MeetingDetailView: View {
             if let seek = seekHandler, !viewModel.referencedMoments.isEmpty {
                 ReferencedMomentsBar(moments: viewModel.referencedMoments, onSeek: seek)
             }
-            if isEditingSummary, !isNarrowLayout || narrowSection == .summary {
-                summaryFormattingBar
-            }
             summaryBody
             if showInlineNotes {
                 notesInlineSection
@@ -542,82 +536,6 @@ struct MeetingDetailView: View {
 
     private func meetingCountLabel(_ count: Int) -> String {
         count == 1 ? "1 meeting" : "\(count) meetings"
-    }
-
-    /// The text-formatting strip shown only while editing the summary, sitting directly above the
-    /// editor content (below the referenced-moment badges) — its own affordance, distinct from the
-    /// meeting-level Cancel/Save in the window toolbar. Each control acts on the last-focused
-    /// editable segment's selection: select text (or a line), then click.
-    private var summaryFormattingBar: some View {
-        // These are REAL system glass buttons (`.buttonStyle(.glass)`) — the same control AppKit
-        // gives the window toolbar — not a plain button wearing a `.glassEffect` background. That
-        // hand-rolled version looked close but was inert: no hover highlight, no system pressed
-        // state, because `.buttonStyle(.plain)` has no interaction treatment of its own.
-        //
-        // Grouped like Preview's toolbar: the three pairs (emphasis / block kind / lists) each
-        // merge into ONE continuous glass capsule via `glassEffectUnion`, with a wider gap between
-        // groups. Related controls therefore read as a single segmented control rather than six
-        // loose circles.
-        GlassEffectContainer(spacing: MarginaliaSpacing.xs.value) {
-            HStack(spacing: MarginaliaSpacing.md.value) {
-                formatGroup(id: "emphasis") {
-                    summaryFormatButton("bold", "Bold") { summaryEditor.toggleBold() }
-                    summaryFormatButton("italic", "Italic") { summaryEditor.toggleItalic() }
-                }
-                formatGroup(id: "block") {
-                    summaryFormatButton("textformat.size", "Heading") {
-                        summaryEditor.setBlockKind(.heading(level: 2))
-                    }
-                    summaryFormatButton("text.alignleft", "Body text") {
-                        summaryEditor.setBlockKind(.paragraph)
-                    }
-                }
-                formatGroup(id: "lists") {
-                    summaryFormatButton("list.bullet", "Bulleted list") {
-                        summaryEditor.setBlockKind(.bulletItem)
-                    }
-                    summaryFormatButton("list.number", "Numbered list") {
-                        summaryEditor.setBlockKind(.numberedItem)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-        }
-        // The whole tree is tinted with the Arivo accent by `RootSplitView`, and a glass button
-        // adopts the ambient tint as a FILL — which is what turned these into solid navy blobs.
-        // Clearing the tint here restores the neutral toolbar-style glass (and keeps the Signal
-        // Rule: the accent belongs to Save, not to six formatting controls).
-        .tint(nil)
-    }
-
-    /// Merges a pair of format buttons into one continuous glass capsule (the Preview-toolbar
-    /// segmented look). `glassEffectUnion` needs a shared namespace to know which neighbours fuse.
-    private func formatGroup(
-        id: String, @ViewBuilder content: () -> some View
-    ) -> some View {
-        HStack(spacing: 2) {
-            content()
-        }
-        .glassEffectUnion(id: id, namespace: formatGlassNamespace)
-    }
-
-    private func summaryFormatButton(
-        _ symbol: String, _ help: String, action: @escaping () -> Void
-    ) -> some View {
-        // Glyph sizing matches the window toolbar's measured metrics (~36pt hit target, a glyph
-        // heavier than body text); the CHROME comes from `.buttonStyle(.glass)`, so hover, pressed,
-        // and disabled states are the system's, not an approximation.
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: 22, height: 22)
-        }
-        .buttonStyle(.glass)
-        // Capsule, not the default rounded rectangle: a fused pair would otherwise read as a
-        // squared-off slab next to the toolbar's fully-round buttons. With capsule ends the merged
-        // group is a pill — the same corner language as the toolbar, just holding two controls.
-        .buttonBorderShape(.capsule)
-        .help(help)
     }
 
     private var summaryBody: some View {
@@ -814,10 +732,47 @@ struct MeetingDetailView: View {
     @ToolbarContentBuilder
     private var summaryToolbar: some ToolbarContent {
         if isEditingSummary, !isNarrowLayout || narrowSection == .summary {
-            // Only meeting-level edit actions (Cancel / Save) live in the window toolbar; the TEXT
-            // formatting controls are a separate inline bar above the summary body
-            // (`summaryFormattingBar`), since they serve a different purpose (styling the content,
-            // not the meeting).
+            // The text-formatting controls are REAL toolbar items, in their own group ahead of the
+            // meeting-level Cancel/Save. They lived in an inline bar above the summary body until
+            // the styling could never be made to match: measured on macOS 26, an inline
+            // `.buttonStyle(.glass)` button renders NO hover highlight at all (an inline
+            // `.bordered` button does, and a toolbar glass button does), so glass buttons only get
+            // their interaction chrome from real toolbar context. Rather than keep approximating
+            // it, these are toolbar items — so grouping, hover, pressed state, and spacing are all
+            // the system's, identical to the generation cluster below.
+            //
+            // The toolbar is also where they have to be for correctness: an inline SwiftUI button
+            // steals the `TextEditor`'s first responder and clears the selection before the
+            // transform runs; `NSToolbar` items don't (the reason `SummaryEditorModel` exists).
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button { summaryEditor.toggleBold() } label: {
+                    Label("Bold", systemImage: "bold")
+                }
+                .help("Bold")
+                Button { summaryEditor.toggleItalic() } label: {
+                    Label("Italic", systemImage: "italic")
+                }
+                .help("Italic")
+                Button { summaryEditor.setBlockKind(.heading(level: 2)) } label: {
+                    Label("Heading", systemImage: "textformat.size")
+                }
+                .help("Heading")
+                Button { summaryEditor.setBlockKind(.paragraph) } label: {
+                    Label("Body text", systemImage: "text.alignleft")
+                }
+                .help("Body text")
+                Button { summaryEditor.setBlockKind(.bulletItem) } label: {
+                    Label("Bulleted list", systemImage: "list.bullet")
+                }
+                .help("Bulleted list")
+                Button { summaryEditor.setBlockKind(.numberedItem) } label: {
+                    Label("Numbered list", systemImage: "list.number")
+                }
+                .help("Numbered list")
+            }
+
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Cancel", role: .cancel) {
                     cancelSummaryEdit()
