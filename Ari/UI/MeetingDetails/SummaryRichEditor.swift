@@ -24,6 +24,10 @@ struct SummaryRichEditor: View {
     var minHeight: CGFloat = 320
 
     @FocusState private var focusedSegment: Int?
+    /// The editor's own font-resolution environment (`docs/plans/native-text-formatting.md` §4) —
+    /// read here (not synthesized inside the constraint) so Tier 2 recovery resolves fonts in
+    /// exactly the context they actually render in, mirroring how `scheme` is threaded.
+    @Environment(\.fontResolutionContext) private var fontContext
 
     var body: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
@@ -31,7 +35,9 @@ struct SummaryRichEditor: View {
                 switch segment {
                 case let .editable(id, _):
                     TextEditor(text: editableBinding(id: id), selection: selectionBinding(id: id))
-                        .attributedTextFormattingDefinition(MarginaliaSummaryFormattingDefinition(scheme: scheme))
+                        .attributedTextFormattingDefinition(
+                            MarginaliaSummaryFormattingDefinition(scheme: scheme, fontContext: fontContext)
+                        )
                         .textEditorStyle(.plain)
                         .scrollContentBackground(.hidden)
                         .font(MarginaliaTextStyle.body.font)
@@ -49,8 +55,15 @@ struct SummaryRichEditor: View {
         // Mirror focus into the model, but only on a real focus (ignore the nil on blur) so a
         // toolbar tap that briefly resigns focus still targets the last-edited segment.
         .onChange(of: focusedSegment) { _, newValue in
-            if let newValue { model.focusedSegment = newValue }
+            if let newValue {
+                model.focusedSegment = newValue
+            }
+            // Unlatched, unlike `focusedSegment` above: the Format menu must not stay armed once
+            // focus has genuinely left the editor.
+            model.hasLiveFocus = newValue != nil
         }
+        .onAppear { model.fontContext = fontContext }
+        .onChange(of: fontContext) { _, newValue in model.fontContext = newValue }
     }
 
     // MARK: - Segment bindings
@@ -70,7 +83,9 @@ struct SummaryRichEditor: View {
             },
             set: { newText in
                 guard let index = model.document.segments.firstIndex(where: { segment in
-                    if case let .editable(segmentID, _) = segment { return segmentID == id }
+                    if case let .editable(segmentID, _) = segment {
+                        return segmentID == id
+                    }
                     return false
                 }) else { return }
                 model.document.segments[index] = .editable(id: id, text: newText)

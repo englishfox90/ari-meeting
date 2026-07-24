@@ -178,6 +178,12 @@ struct MeetingDetailView: View {
             manageToolbar
         }
         .navigationTitle(viewModel.meeting.value?.title ?? "Meeting")
+        // Publishes the editing model to `SummaryFormatCommands` (⌘B/⌘I) only while a summary is
+        // actually being edited — `nil` otherwise, so the Format menu items are honestly disabled
+        // rather than silently no-op (docs/plans/native-text-formatting.md §7).
+        // `hasLiveFocus` (not the latched `focusedSegment`) is what keeps ⌘B from firing on a stale
+        // selection after focus moves to another field in this scene — e.g. the rename alert below.
+        .focusedSceneValue(isEditingSummary && summaryEditor.hasLiveFocus ? summaryEditor : nil)
         .alert("Rename meeting", isPresented: $showingRename) {
             TextField("Meeting name", text: $renameText)
             Button("Cancel", role: .cancel) {}

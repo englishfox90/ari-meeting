@@ -1,6 +1,7 @@
 //
 //  MarginaliaSummaryFormattingDefinition.swift — the formatting definition applied to the
-//  rich-text summary editor's `TextEditor` (`docs/plans/rich-summary-editor.md` §2.4).
+//  rich-text summary editor's `TextEditor` (`docs/plans/rich-summary-editor.md` §2.4,
+//  `docs/plans/native-text-formatting.md`).
 //
 //  An `AttributedTextFormattingDefinition` over `AttributeScopes.AriAttributes` (block kind +
 //  SwiftUI font/foregroundColor). Its constraints run over EVERY mutation the editor makes —
@@ -19,17 +20,20 @@
 import SwiftUI
 
 /// The formatting definition for the summary rich-text editor. Constructed per render with the
-/// active `ColorScheme` so `SummaryInkConstraint` can re-apply the *scheme's* ink — `present`
-/// hardcodes the light-scheme ink (ink is irrelevant to the markdown round-trip, so it has no
-/// `ColorScheme` param), which would leave dark mode wrong-colored until this fires (plan §2.4,
-/// review LOW / Step-5 must-do).
+/// active `ColorScheme` (so `SummaryInkConstraint` can re-apply the *scheme's* ink — `present`
+/// hardcodes the light-scheme ink) and the active `Font.Context` (so `SummaryFontConstraint` can
+/// recover native-command emphasis via Tier 2 — `docs/plans/native-text-formatting.md` §4). `nil`
+/// context is a legitimate value (e.g. no live environment yet); it degrades Tier 2 gracefully to
+/// Tier 1 only, never to a wrong canonical value.
 public struct MarginaliaSummaryFormattingDefinition: AttributedTextFormattingDefinition {
     public typealias Scope = AttributeScopes.AriAttributes
 
     private let scheme: ColorScheme
+    private let fontContext: Font.Context?
 
-    public init(scheme: ColorScheme) {
+    public init(scheme: ColorScheme, fontContext: Font.Context?) {
         self.scheme = scheme
+        self.fontContext = fontContext
     }
 
     public var body: some AttributedTextFormattingDefinition<Scope> {
@@ -37,8 +41,14 @@ public struct MarginaliaSummaryFormattingDefinition: AttributedTextFormattingDef
         // font/ink constraints also fall back to `.paragraph` on a nil kind, so the result is
         // order-independent — this ordering is only for clarity.)
         SummaryBlockDefaultConstraint()
-        SummaryFontConstraint()
+        SummaryFontConstraint(fontContext: fontContext)
         SummaryInkConstraint(scheme: scheme)
+        // Non-grammar attributes the editor's scope makes applicable but the closed markdown
+        // grammar can't round-trip (plan §6). Stripped, not left as a dead checkmark that
+        // silently loses data on Save (No-Fake-State).
+        SummaryNoUnderlineConstraint()
+        SummaryNoStrikethroughConstraint()
+        SummaryNoHighlightConstraint()
     }
 }
 
@@ -69,19 +79,35 @@ struct SummaryBlockDefaultConstraint: AttributedTextValueConstraint {
 /// Coerces every run's font to the closed canonical set for its paragraph's `SummaryBlockKind` +
 /// emphasis — the ONLY bold/italic representation the document uses (plan §2.4). `serialize`
 /// compares run fonts against exactly these values, so normalizing here is what keeps the
-/// round-trip stable regardless of what a paste or a shortcut wrote.
+/// round-trip stable regardless of what a paste, a shortcut, or a NATIVE Font ▸ Bold/Italic
+/// command wrote.
 ///
-/// Emphasis is preserved across a kind change: if the incoming font is a canonical *bold* of ANY
-/// family (e.g. the run was a heading and became a bullet), it maps to *this* kind's bold. A font
-/// that matches nothing in the canonical set (a foreign paste) flattens to the kind's plain base —
-/// deliberate: the closed grammar has no representation for arbitrary fonts.
+/// `fontContext` (threaded from the editor's own `\.fontResolutionContext`, plan §4) lets
+/// `SummaryCanonicalFont` recover emphasis from a native command's platform-boxed font (Tier 2)
+/// when Tier 1's value equality finds no exact canonical match.
 struct SummaryFontConstraint: AttributedTextValueConstraint {
     typealias Scope = AttributeScopes.AriAttributes
     typealias AttributeKey = AttributeScopes.SwiftUIAttributes.FontAttribute
 
+    let fontContext: Font.Context?
+
     func constrain(_ container: inout Attributes) {
         let kind = container.summaryBlock ?? .paragraph
-        container.font = SummaryCanonicalFont.coerce(container.font, to: kind)
+        container.font = SummaryCanonicalFont.coerce(container.font, to: kind, context: fontContext)
+    }
+
+    /// Hand-written because `Font.Context.hash(into:)` is **thread-affine** on macOS 26.5: the same
+    /// value hashes differently on the main thread than on a background thread (`==` is stable
+    /// across threads; only the hash moves). Feeding it into our hash would break `Hashable`'s
+    /// stability requirement on a type the SDK requires to be `Hashable` — measurably so: identical
+    /// values inserted into a `Set` on one thread miss on lookup from another.
+    ///
+    /// Excluding it is legal — `Hashable` only requires *equal ⇒ equal hash*, never the converse —
+    /// and `==` stays synthesized, so `fontContext` is still compared and a genuinely different
+    /// context still reads as a changed definition. Hashing the nil-ness keeps one bit of stable
+    /// discrimination for free.
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(fontContext != nil)
     }
 }
 
@@ -105,61 +131,39 @@ struct SummaryInkConstraint: AttributedTextValueConstraint {
     }
 }
 
-// MARK: - Canonical font coercion
+/// Unconditionally strips underline — `Font ▸ Underline` is applicable in the editor's scope but
+/// has no representation in the closed Marginalia markdown grammar (`docs/plans/
+/// native-text-formatting.md` §6). Leaving it would round-trip to a dead checkmark that silently
+/// loses the styling on Save — a No-Fake-State violation. Mirrors how `SummaryInkConstraint`
+/// already force-overwrites `foregroundColor` every pass.
+struct SummaryNoUnderlineConstraint: AttributedTextValueConstraint {
+    typealias Scope = AttributeScopes.AriAttributes
+    typealias AttributeKey = AttributeScopes.SwiftUIAttributes.UnderlineStyleAttribute
 
-/// Maps an arbitrary run font onto the closed canonical set for a target `SummaryBlockKind`,
-/// preserving the bold/italic dimension when the source font is already one of our canonical
-/// values. Uses ONLY value-equality against `SummaryFontVariant` (the single source the serializer
-/// also compares against), so a coerced run is identity-canonical by construction.
-enum SummaryCanonicalFont {
-    /// Representative kinds covering all three font FAMILIES the ramp collapses to — body
-    /// (`paragraph`/lists), `title2` (`heading ≤ 2`), `headline` (`heading ≥ 3`). Testing the
-    /// incoming font against each family's four emphasis variants recovers "is this bold / italic /
-    /// both / plain" even when the run's kind differs from its current font's family.
-    private static let families: [SummaryBlockKind] = [.paragraph, .heading(level: 1), .heading(level: 3)]
-
-    static func coerce(_ font: Font?, to kind: SummaryBlockKind) -> Font {
-        guard let font else { return SummaryFontVariant.base(for: kind) }
-        for family in families {
-            if font == SummaryFontVariant.boldItalic(for: family) {
-                return SummaryFontVariant.boldItalic(for: kind)
-            }
-            if font == SummaryFontVariant.bold(for: family) {
-                return SummaryFontVariant.bold(for: kind)
-            }
-            if font == SummaryFontVariant.italic(for: family) {
-                return SummaryFontVariant.italic(for: kind)
-            }
-            if font == SummaryFontVariant.base(for: family) {
-                return SummaryFontVariant.base(for: kind)
-            }
-        }
-        // Unrecognized (foreign paste, native-command font we don't mint) → plain base for the kind.
-        return SummaryFontVariant.base(for: kind)
+    func constrain(_ container: inout Attributes) {
+        container.underlineStyle = nil
     }
+}
 
-    /// The canonical font for a kind at an explicit bold/italic state — used by the formatting
-    /// toolbar (`SummaryEditing`) to SET emphasis directly, mirroring the values `coerce` produces.
-    static func font(for kind: SummaryBlockKind, bold: Bool, italic: Bool) -> Font {
-        switch (bold, italic) {
-        case (false, false): SummaryFontVariant.base(for: kind)
-        case (true, false): SummaryFontVariant.bold(for: kind)
-        case (false, true): SummaryFontVariant.italic(for: kind)
-        case (true, true): SummaryFontVariant.boldItalic(for: kind)
-        }
+/// Unconditionally strips strikethrough — reachable via the Font panel / Format… even though no
+/// context-menu item exposes it directly (findings §9). Same rationale as
+/// `SummaryNoUnderlineConstraint`.
+struct SummaryNoStrikethroughConstraint: AttributedTextValueConstraint {
+    typealias Scope = AttributeScopes.AriAttributes
+    typealias AttributeKey = AttributeScopes.SwiftUIAttributes.StrikethroughStyleAttribute
+
+    func constrain(_ container: inout Attributes) {
+        container.strikethroughStyle = nil
     }
+}
 
-    /// Recovers the (bold, italic) state of a run font by matching it against the canonical set of
-    /// any family (so a toolbar toggle can flip one axis while keeping the other). A font we don't
-    /// recognize reads as plain — the same conservative default as `coerce`.
-    static func emphasis(of font: Font?, for _: SummaryBlockKind) -> (bold: Bool, italic: Bool) {
-        guard let font else { return (false, false) }
-        for family in families {
-            if font == SummaryFontVariant.boldItalic(for: family) { return (true, true) }
-            if font == SummaryFontVariant.bold(for: family) { return (true, false) }
-            if font == SummaryFontVariant.italic(for: family) { return (false, true) }
-            if font == SummaryFontVariant.base(for: family) { return (false, false) }
-        }
-        return (false, false)
+/// Unconditionally strips highlight (background color) — `Font ▸ Highlight ▸ any color`. Same
+/// rationale as `SummaryNoUnderlineConstraint`.
+struct SummaryNoHighlightConstraint: AttributedTextValueConstraint {
+    typealias Scope = AttributeScopes.AriAttributes
+    typealias AttributeKey = AttributeScopes.SwiftUIAttributes.BackgroundColorAttribute
+
+    func constrain(_ container: inout Attributes) {
+        container.backgroundColor = nil
     }
 }

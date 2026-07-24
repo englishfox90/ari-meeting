@@ -22,8 +22,23 @@ final class SummaryEditorModel {
     /// The id of the editable segment that last held first-responder focus — retained across a
     /// toolbar tap so a format command still targets the right segment.
     var focusedSegment: Int?
+    /// Whether an editable segment holds focus RIGHT NOW — unlike `focusedSegment`, this is not
+    /// latched and goes `false` on blur.
+    ///
+    /// Gates publication to the Format menu (⌘B/⌘I). The latch above deliberately survives a blur
+    /// so a toolbar tap still targets the last-edited segment, but the menu needs the unlatched
+    /// truth: without it, leaving the editor for another field in the same scene (e.g. the rename
+    /// alert's `TextField`) would leave ⌘B firing on the stale latched selection with no visible
+    /// cause. Menu key equivalents dispatch ahead of the responder chain, so nothing else would
+    /// stop it.
+    var hasLiveFocus = false
     /// The live selection per editable segment (single-editor selection), keyed by segment id.
     var selections: [Int: AttributedTextSelection] = [:]
+    /// The editor's own `Font.Context` (`docs/plans/native-text-formatting.md` §3.4), mirrored in
+    /// from `SummaryRichEditor`'s `@Environment(\.fontResolutionContext)` on appear/change. Lets
+    /// `SummaryCanonicalFont`'s Tier 2 recover emphasis from a NATIVELY-applied Font ▸ Bold/Italic
+    /// command when a toolbar action (or ⌘B/⌘I) subsequently reads/writes the same run.
+    var fontContext: Font.Context?
 
     init(document: SummaryEditDocument = SummaryEditDocument(segments: [])) {
         self.document = document
@@ -53,16 +68,23 @@ final class SummaryEditorModel {
     // MARK: - Formatting commands (driven by the window toolbar)
 
     func toggleBold() {
-        apply(SummaryEditing.toggleBold)
+        let context = fontContext
+        apply { text, selection in
+            SummaryEditing.toggleBold(in: &text, selection: &selection, context: context)
+        }
     }
 
     func toggleItalic() {
-        apply(SummaryEditing.toggleItalic)
+        let context = fontContext
+        apply { text, selection in
+            SummaryEditing.toggleItalic(in: &text, selection: &selection, context: context)
+        }
     }
 
     func setBlockKind(_ kind: SummaryBlockKind) {
+        let context = fontContext
         apply { text, selection in
-            SummaryEditing.setBlockKind(kind, in: &text, selection: &selection)
+            SummaryEditing.setBlockKind(kind, in: &text, selection: &selection, context: context)
         }
     }
 
@@ -71,7 +93,9 @@ final class SummaryEditorModel {
     private func apply(_ transform: (inout AttributedString, inout AttributedTextSelection) -> Void) {
         guard let id = focusedSegment,
               let index = document.segments.firstIndex(where: { segment in
-                  if case let .editable(segmentID, _) = segment { return segmentID == id }
+                  if case let .editable(segmentID, _) = segment {
+                      return segmentID == id
+                  }
                   return false
               }),
               case let .editable(_, text) = document.segments[index]

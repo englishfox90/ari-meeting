@@ -75,6 +75,9 @@ struct AriApp: App {
         // Slightly wider than the old ~1100 design target so the meeting detail's two-pane
         // layout (threshold 800pt of detail width) clears comfortably beside the sidebar.
         .defaultSize(width: 1240, height: 760)
+        // ⌘B/⌘I for the rich summary editor (docs/plans/native-text-formatting.md §7) — the
+        // app's first `.commands` scene modifier (findings §8: previously none at all).
+        .commands { SummaryFormatCommands() }
     }
 
     /// The menu-bar panel's root view (docs/plans/menu-bar-item.md) — the rich Marginalia panel
