@@ -33,24 +33,39 @@ struct SummaryRichEditor: View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.lg.value) {
             ForEach(model.document.segments) { segment in
                 switch segment {
-                case let .editable(id, _):
-                    TextEditor(text: editableBinding(id: id), selection: selectionBinding(id: id))
-                        .attributedTextFormattingDefinition(
-                            MarginaliaSummaryFormattingDefinition(scheme: scheme, fontContext: fontContext)
-                        )
-                        .textEditorStyle(.plain)
-                        .scrollContentBackground(.hidden)
-                        .font(MarginaliaTextStyle.body.font)
-                        .focused($focusedSegment, equals: id)
-                        // Each prose run must GROW to its content, not scroll inside a clipped box.
-                        // A `TextEditor` scrolls by default, so a segment taller than its slot got
-                        // its own scroll bar and hid text — the page already scrolls as a whole, so
-                        // a scroller per segment is both wrong and unreachable-feeling. Disabling
-                        // the inner scroll and fixing the vertical axis makes the editor lay out at
-                        // its natural height.
-                        .scrollDisabled(true)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                case let .editable(id, text):
+                    // Each prose run must GROW to its content, not scroll inside a clipped box: a
+                    // `TextEditor` scrolls by default, so a run taller than its slot grew its own
+                    // scroll bar and hid text (the page already scrolls as a whole).
+                    //
+                    // `.fixedSize(vertical:)` alone is NOT enough — the editor's ideal height
+                    // under-measures rich attributed content and silently clipped the run's LAST
+                    // line (a trailing heading vanished). Instead an invisible `Text` of the SAME
+                    // attributed content defines the stack's height and the editor fills it, so the
+                    // height always comes from real laid-out text.
+                    ZStack(alignment: .topLeading) {
+                        Text(text)
+                            .font(MarginaliaTextStyle.body.font)
+                            // Approximates the editor's internal text insets so the sizer wraps at
+                            // least as much as the editor does — erring tall never clips.
+                            .padding(.horizontal, 5)
+                            .padding(.bottom, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .opacity(0)
+                            .accessibilityHidden(true)
+
+                        TextEditor(text: editableBinding(id: id), selection: selectionBinding(id: id))
+                            .attributedTextFormattingDefinition(
+                                MarginaliaSummaryFormattingDefinition(scheme: scheme, fontContext: fontContext)
+                            )
+                            .textEditorStyle(.plain)
+                            .scrollContentBackground(.hidden)
+                            .scrollDisabled(true)
+                            .font(MarginaliaTextStyle.body.font)
+                            .focused($focusedSegment, equals: id)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 case let .table(_, rawMarkdown):
                     // Inert in edit mode: no `onSeek` / `onOpenMeetingMoment`, so timecodes render

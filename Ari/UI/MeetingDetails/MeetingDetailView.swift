@@ -287,6 +287,9 @@ struct MeetingDetailView: View {
                     .padding(MarginaliaSpacing.xl.value)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // Fades the title/header under the floating window toolbar instead of letting it
+            // scroll directly behind the glass unreadably (same pattern as Home/Settings).
+            .scrollEdgeEffectStyle(.soft, for: .top)
 
             resizableDivider(maxRail: maxRail)
 
@@ -353,6 +356,7 @@ struct MeetingDetailView: View {
                     summaryColumn(meeting, showInlineNotes: false)
                         .padding(MarginaliaSpacing.md.value)
                 }
+                .scrollEdgeEffectStyle(.soft, for: .top)
             case .transcript:
                 VStack(spacing: 0) {
                     transcriptHeader
@@ -578,11 +582,22 @@ struct MeetingDetailView: View {
     private func summaryFormatButton(
         _ symbol: String, _ help: String, action: @escaping () -> Void
     ) -> some View {
+        // NOT `.buttonStyle(.glass)`: it renders tinted/prominent (solid accent-blue fills), which
+        // is both wrong for this control family and a Signal-Rule violation. Neutral interactive
+        // glass in a CIRCLE matches the window toolbar's own round buttons (Back / Cancel / Save).
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.marginalia(.inkHeading, in: scheme))
+                // 36pt circle + semibold glyph to match the window toolbar's own round buttons
+                // (measured: those are 44×52pt slots around a ~36pt circle, with a heavier glyph
+                // than body text). At the previous 30×30/medium these read as a visibly smaller,
+                // lighter control family than the toolbar directly above them.
+                .frame(width: 36, height: 36)
+                .contentShape(Circle())
         }
-        .buttonStyle(.glass)
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: Circle())
         .help(help)
     }
 
@@ -979,6 +994,7 @@ struct MeetingDetailView: View {
                 MarginaliaMarkdownView(markdown: markdown)
                     .padding(MarginaliaSpacing.md.value)
             }
+            .scrollEdgeEffectStyle(.soft, for: .top)
         } else {
             emptyState(title: "No notes", message: "Nothing has been written for this meeting yet.")
         }
