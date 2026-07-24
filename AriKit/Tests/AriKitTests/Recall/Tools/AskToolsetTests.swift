@@ -304,6 +304,104 @@ struct AskToolsetTests {
         #expect(await state.cards.count == 1)
     }
 
+    // MARK: - todays_events: card-attachment selectivity (2026-07-23 live-test failure A)
+
+    private func seedTodaysEvents(_ db: AppDatabase, count: Int) async throws {
+        let now = Date()
+        for index in 0 ..< count {
+            let start = now.addingTimeInterval(Double(index) * 600)
+            try await db.calendarEvents.upsert(CalendarEvent(
+                id: CalendarEventID("e-\(index)"), calendarId: "cal-1", title: "Event \(index)",
+                startTime: start, endTime: start.addingTimeInterval(1800), isAllDay: false,
+                attendees: [Attendee(name: "James Nance", email: "james@example.com")]
+            ))
+        }
+    }
+
+    @Test("todays_events: unfiltered call over a full agenda (>2 events) attaches NO cards, but text lists every event")
+    func todaysEventsUnfilteredFullAgendaAttachesNoCards() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await seedTodaysEvents(db, count: 7)
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+        let result = await toolset.dispatch(call("todays_events", "{}"), state: state)
+
+        #expect(await state.cards.isEmpty, "an unfiltered agenda call over many events must attach no cards")
+        for index in 0 ..< 7 {
+            #expect(result.contains("Event \(index)"), "the result TEXT still enumerates every event")
+        }
+    }
+
+    @Test("todays_events: unfiltered call over a tiny agenda (≤2 events) attaches cards")
+    func todaysEventsUnfilteredTinyAgendaAttachesCards() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await seedTodaysEvents(db, count: 2)
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+        _ = await toolset.dispatch(call("todays_events", "{}"), state: state)
+        #expect(await state.cards.count == 2)
+    }
+
+    @Test("todays_events: a FILTERED call (hour) attaches cards even though the full agenda is large")
+    func todaysEventsFilteredByHourAttachesCards() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await seedTodaysEvents(db, count: 7)
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day], from: Date())
+        components.hour = 18
+        components.minute = 0
+        let sixPM = try #require(calendar.date(from: components))
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("e-6pm"), calendarId: "cal-1", title: "Evening sync",
+            startTime: sixPM, endTime: sixPM.addingTimeInterval(1800), isAllDay: false,
+            attendees: [Attendee(name: "James Nance", email: "james@example.com")]
+        ))
+
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+        _ = await toolset.dispatch(call("todays_events", #"{"hour": 18}"#), state: state)
+        #expect(await state.cards.count == 1, "the hour-filtered event is what the question was about")
+    }
+
+    @Test("todays_events: a FILTERED call (attendee) attaches cards even though the full agenda is large")
+    func todaysEventsFilteredByAttendeeAttachesCards() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await seedTodaysEvents(db, count: 7)
+        let now = Date()
+        try await db.calendarEvents.upsert(CalendarEvent(
+            id: CalendarEventID("e-landon"), calendarId: "cal-1", title: "Landon sync",
+            startTime: now, endTime: now.addingTimeInterval(1800), isAllDay: false,
+            attendees: [Attendee(name: "Landon Star", email: "landon@example.com")]
+        ))
+
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+        _ = await toolset.dispatch(call("todays_events", #"{"attendee": "Landon"}"#), state: state)
+        #expect(await state.cards.count == 1)
+    }
+
+    @Test("todays_events: cards never exceed the global per-ask cap even across repeated filtered calls")
+    func todaysEventsRespectsGlobalCardCap() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let now = Date()
+        for index in 0 ..< 6 {
+            let start = now.addingTimeInterval(Double(index) * 600)
+            try await db.calendarEvents.upsert(CalendarEvent(
+                id: CalendarEventID("e-\(index)"), calendarId: "cal-1", title: "Distinct event \(index)",
+                startTime: start, endTime: start.addingTimeInterval(1800), isAllDay: false,
+                attendees: [Attendee(name: "James Nance \(index)", email: "james\(index)@example.com")]
+            ))
+        }
+        let toolset = makeToolset(db)
+        let state = ToolTurnState()
+        for index in 0 ..< 6 {
+            _ = await toolset.dispatch(
+                call("todays_events", #"{"attendee": "james\#(index)@example.com"}"#), state: state
+            )
+        }
+        #expect(await state.cards.count == RecallBounds.maxCardsPerAsk)
+    }
+
     // MARK: - list_recent_meetings
 
     @Test("list_recent_meetings: lists newest-first meetings, respects limit, surfaces ids")

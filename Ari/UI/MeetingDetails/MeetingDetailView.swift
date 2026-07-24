@@ -83,11 +83,10 @@ struct MeetingDetailView: View {
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.colorScheme) private var scheme
-    /// Pops the detail screen off the navigation stack — after a delete (the list refreshes
-    /// itself via its own observation), and from the toolbar Back button below. Unlike iOS,
-    /// `NavigationStack` embedded as a `NavigationSplitView` detail column does not render an
-    /// automatic back chevron on macOS, so every push (from the sidebar, Ask, or a search result)
-    /// otherwise strands the user with no way back short of switching sidebar sections.
+    /// Pops the detail screen off the navigation stack after a delete (the list refreshes
+    /// itself via its own observation). The back chevron itself is the system-provided one
+    /// from the enclosing `NavigationStack` — macOS 26 renders it automatically for a pushed
+    /// `NavigationSplitView` detail-column destination, so we don't add our own.
     @Environment(\.dismiss) private var dismiss
 
     init(
@@ -143,14 +142,6 @@ struct MeetingDetailView: View {
         // embedded, mid-content tab bar draws the compact flat control instead — that's why
         // the in-content attempts never looked like glass.
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    dismiss()
-                } label: {
-                    Label("Back", systemImage: "chevron.backward")
-                }
-                .help("Back")
-            }
             if isNarrowLayout {
                 ToolbarItem(placement: .principal) {
                     Picker("Section", selection: $narrowSection) {

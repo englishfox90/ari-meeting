@@ -75,4 +75,9 @@ public enum RecallBounds {
     public static let maxAgenticTranscriptChars = 8000
     /// Overall per-tool-result truncation budget.
     public static let maxToolResultChars = 16000
+    /// Global per-ask cap on attached entity cards (`ToolTurnState.attach`), enforced AFTER dedup —
+    /// so one ask can never stack more than this many cards regardless of how many tools ran or
+    /// how many entities each resolved (2026-07-23 live-test failure A: an unfiltered
+    /// `todays_events` call attached one card per today's event).
+    public static let maxCardsPerAsk = 4
 }

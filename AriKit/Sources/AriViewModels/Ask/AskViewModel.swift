@@ -183,12 +183,11 @@ public final class AskViewModel {
 
         let history = lastHistoryTurns()
         items.append(AskTranscriptItem(kind: .user(question)))
-        let placeholderId = UUID().uuidString
-        items.append(
-            AskTranscriptItem(
-                id: placeholderId, kind: .assistant(text: "", sources: [], streaming: true, cards: [])
-            )
-        )
+        // No assistant placeholder is created here (2026-07-23 live-testing fix): an eagerly-created
+        // empty bubble used to sit ABOVE the thinking/tool rows that append after it, rendering as a
+        // hollow white pill during generation. The thinking row is now the ONLY in-flight placeholder;
+        // the assistant bubble is created lazily, appended AFTER whatever thinking/tool rows already
+        // exist, on the first non-empty answer delta (see the `.delta` case below).
         let thinkingId = UUID().uuidString
         items.append(AskTranscriptItem(id: thinkingId, kind: .thinking(text: "", folded: false)))
         isStreaming = true
@@ -198,6 +197,14 @@ public final class AskViewModel {
 
         streamTask = Task { [weak self] in
             guard let self else { return }
+            // Nil until the FIRST non-empty answer delta arrives — that is the moment the
+            // assistant bubble is actually created and appended (at the END of `items`, i.e. below
+            // any thinking/tool rows that already exist). An empty-delta-only stream (edge case)
+            // never creates a bubble at all; `.done` creates one directly if none exists yet (e.g.
+            // a fallback that emits no deltas before its terminal event). Declared OUTSIDE the
+            // `do` block so the `catch` below can clean it up if it was created before a mid-stream
+            // throw.
+            var assistantItemId: String?
             do {
                 let conversationId = try await ensureConversation(
                     meetingId: persistenceKey.meetingId,
@@ -208,7 +215,6 @@ public final class AskViewModel {
                 _ = try await appendMessageOp(conversationId, "user", question, [], [])
 
                 var accumulated = ""
-                var sawFirstDelta = false
                 // The item id of the currently-running row for a given tool name, so a `.finished`
                 // event updates the SAME row a `.started` event created (plan §5.3: "match the
                 // latest running row with the same toolName").
@@ -218,12 +224,25 @@ public final class AskViewModel {
                     guard streamGeneration == generation else { return }
                     switch event {
                     case let .delta(delta):
-                        if !sawFirstDelta {
-                            sawFirstDelta = true
-                            foldThinking(id: thinkingId)
-                        }
+                        guard !delta.isEmpty else { continue }
                         accumulated += delta
-                        updateAssistant(id: placeholderId, text: accumulated, sources: [], streaming: true, cards: [])
+                        if let assistantItemId {
+                            updateAssistant(
+                                id: assistantItemId, text: accumulated, sources: [], streaming: true, cards: []
+                            )
+                        } else {
+                            // First non-empty answer delta: fold thinking (existing behavior) and
+                            // create the bubble now, appended after every thinking/tool row so far.
+                            foldThinking(id: thinkingId)
+                            let newId = UUID().uuidString
+                            assistantItemId = newId
+                            items.append(
+                                AskTranscriptItem(
+                                    id: newId,
+                                    kind: .assistant(text: accumulated, sources: [], streaming: true, cards: [])
+                                )
+                            )
+                        }
                     case let .thinking(delta):
                         appendThinking(id: thinkingId, delta: delta)
                     case let .toolActivity(activity):
@@ -234,10 +253,23 @@ public final class AskViewModel {
                         // the real answer has landed).
                         removeItem(id: thinkingId)
                         removeToolActivityRows()
-                        updateAssistant(
-                            id: placeholderId, text: response.answer, sources: response.sources,
-                            streaming: false, cards: response.cards
-                        )
+                        if let assistantItemId {
+                            updateAssistant(
+                                id: assistantItemId, text: response.answer, sources: response.sources,
+                                streaming: false, cards: response.cards
+                            )
+                        } else {
+                            // No bubble was ever created (e.g. a rung that emits only `.done`, no
+                            // deltas) — create it now, final and non-streaming, at the end of items.
+                            items.append(
+                                AskTranscriptItem(
+                                    kind: .assistant(
+                                        text: response.answer, sources: response.sources,
+                                        streaming: false, cards: response.cards
+                                    )
+                                )
+                            )
+                        }
                         _ = try await appendMessageOp(
                             conversationId, "assistant", response.answer, response.sources, response.cards
                         )
@@ -255,7 +287,9 @@ public final class AskViewModel {
                 guard streamGeneration == generation else { return }
                 removeItem(id: thinkingId)
                 removeToolActivityRows()
-                removeItem(id: placeholderId)
+                if let assistantItemId {
+                    removeItem(id: assistantItemId)
+                }
                 items.append(
                     AskTranscriptItem(kind: .error(
                         error.localizedDescription,
@@ -281,16 +315,18 @@ public final class AskViewModel {
         items.removeAll { $0.id == id }
     }
 
-    /// Removes any still-live `.thinking`/`.toolActivity` row and empty streaming assistant
-    /// placeholder left by a prior in-flight ask that a new question is superseding (No-Fake-State:
-    /// no perpetual spinner, no orphaned tool row).
+    /// Removes any still-live `.thinking`/`.toolActivity` row and any still-STREAMING assistant
+    /// bubble (whether or not it has accumulated any text yet) left by a prior in-flight ask that a
+    /// new question is superseding — a new question fully replaces the prior ask's state, partial
+    /// answer included (No-Fake-State: no perpetual spinner, no orphaned tool row, no stale partial
+    /// bubble left behind).
     private func dropInFlightPlaceholders() {
         items.removeAll { item in
             switch item.kind {
             case .thinking, .toolActivity:
                 true
-            case let .assistant(text, _, streaming, _):
-                streaming && text.isEmpty
+            case let .assistant(_, _, streaming, _):
+                streaming
             case .user, .error:
                 false
             }

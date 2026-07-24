@@ -55,6 +55,31 @@ struct ToolTurnStateTests {
         #expect(await state.cards.count == 2)
     }
 
+    @Test("attach hard-caps at RecallBounds.maxCardsPerAsk (dedup runs first), silently dropping the rest")
+    func attachHardCapsAtMaxCardsPerAsk() async {
+        let state = ToolTurnState()
+        for index in 0 ..< (RecallBounds.maxCardsPerAsk + 5) {
+            await state.attach(.calendarEvent(CalendarEventCardPayload(
+                eventId: "e\(index)", title: "Event \(index)", startTime: "2026-07-23T18:00:00Z",
+                attendeeNames: ["Person \(index)"], isLinkedToRecordedMeeting: false
+            )))
+        }
+        #expect(await state.cards.count == RecallBounds.maxCardsPerAsk)
+    }
+
+    @Test("attach: dedup runs BEFORE the cap, so re-attaching an already-attached card is never counted against it")
+    func attachDedupRunsBeforeCap() async {
+        let state = ToolTurnState()
+        let payload = CalendarEventCardPayload(
+            eventId: "e0", title: "Event 0", startTime: "2026-07-23T18:00:00Z",
+            attendeeNames: ["Person 0"], isLinkedToRecordedMeeting: false
+        )
+        for _ in 0 ..< (RecallBounds.maxCardsPerAsk + 5) {
+            await state.attach(.calendarEvent(payload))
+        }
+        #expect(await state.cards.count == 1)
+    }
+
     @Test("surface/isSurfaced tracks meeting ids a tool result exposed this turn")
     func surfaceTracksMeetingIds() async {
         let state = ToolTurnState()

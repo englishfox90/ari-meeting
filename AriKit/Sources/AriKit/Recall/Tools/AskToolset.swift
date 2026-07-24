@@ -45,8 +45,13 @@ public actor ToolTurnState {
 
     /// Attaches a resolved entity card, deduping by value equality — a tool that resolves the same
     /// entity twice in one turn (e.g. `find_person` called again) never produces a duplicate card.
+    /// Silently drops anything past `RecallBounds.maxCardsPerAsk` (dedup runs first) — a global
+    /// per-ask cap so an unfiltered agenda call, or several tool calls in one turn, can never
+    /// flood the answer with cards (2026-07-23 live-test failure A: an unfiltered `todays_events`
+    /// call attached one card per event, stacking 7 cards on a single answer).
     public func attach(_ card: RecallCardPayload) {
         guard !cards.contains(card) else { return }
+        guard cards.count < RecallBounds.maxCardsPerAsk else { return }
         cards.append(card)
     }
 
@@ -127,7 +132,7 @@ public struct AskToolset: Sendable {
             ),
             AgenticToolDefinition(
                 name: "todays_events",
-                description: "List today's calendar events, optionally filtered by hour (0-23, e.g. 18 for 6pm) or an attendee name/email. A calendar event means something is SCHEDULED, never that it was recorded or discussed.",
+                description: "Today's calendar events. If the question names a person, ALWAYS pass attendee=<name>. If it names a time, pass hour (0-23, e.g. 18 for 6pm). A calendar event means something is SCHEDULED, never that it was recorded or discussed.",
                 parametersJSONSchema: #"{"type":"object","properties":{"hour":{"type":"integer"},"attendee":{"type":"string"}}}"#
             ),
             AgenticToolDefinition(
@@ -219,7 +224,13 @@ public struct AskToolset: Sendable {
             await state.surface(MeetingID(result.id))
             let dateLabel = RecallCardDisplay.friendlyDayOnly(result.meetingDate) ?? "date unavailable"
             let excerpt = String(result.matchContext.prefix(400))
-            lines.append("[S\(index)] \(result.title) (\(dateLabel)) — \(excerpt)")
+            // Quote the excerpt so the source meeting (title + date, right after [Sn]) is
+            // unmistakably separate from the quoted transcript text — a name appearing INSIDE the
+            // quotes is something that meeting's transcript mentions, never proof the user
+            // attended a meeting WITH that person (2026-07-23 live-test failure B: the model read
+            // "…contract sent to Landon…" in a QA-Alignment excerpt as evidence of a meeting WITH
+            // Landon).
+            lines.append("[S\(index)] \(result.title) (\(dateLabel)): \"\(excerpt)\"")
         }
         guard !lines.isEmpty else {
             return "No matching transcript excerpts found (the source limit for this ask was already reached)."
@@ -365,10 +376,12 @@ public struct AskToolset: Sendable {
         if let hour = input.hour, !(0 ... 23).contains(hour) {
             return "Invalid arguments: \"hour\" must be 0-23."
         }
+        let attendee = input.attendee?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasAttendeeFilter = attendee.map { !$0.isEmpty } ?? false
+        let wasFiltered = hasAttendeeFilter || input.hour != nil
         let events: [CalendarEvent]
         do {
-            let attendee = input.attendee?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let attendee, !attendee.isEmpty {
+            if hasAttendeeFilter, let attendee {
                 events = try await tools.calendarEventsToday(matchingAttendeeName: attendee)
             } else {
                 events = try await tools.calendarEvents(today: input.hour)
@@ -377,6 +390,14 @@ public struct AskToolset: Sendable {
             return "Tool failed: could not read the calendar."
         }
         guard !events.isEmpty else { return "No matching events found on today's calendar." }
+
+        // Card-attachment selectivity (2026-07-23 live-test failure A): a FILTERED call (attendee
+        // and/or hour supplied) is what the question was actually about, so those events' cards
+        // are worth attaching. An UNFILTERED "what's on today" call returns the whole agenda — the
+        // result TEXT below still lists every event for the model to enumerate in prose, but we
+        // only attach cards when the agenda is tiny (≤2 events, effectively its own answer);
+        // otherwise attaching none avoids stacking one card per event on an unrelated question.
+        let attachCards = wasFiltered || events.count <= 2
 
         var lines: [String] = []
         for event in events {
@@ -390,14 +411,16 @@ public struct AskToolset: Sendable {
                 line += " Scheduled only — not recorded or discussed yet."
             }
             lines.append(line)
-            let payload = CalendarEventCardPayload(
-                eventId: event.id.rawValue,
-                title: event.title,
-                startTime: RFC3339.string(from: event.startTime),
-                attendeeNames: attendeeNames,
-                isLinkedToRecordedMeeting: event.meetingId != nil
-            )
-            await state.attach(.calendarEvent(payload))
+            if attachCards {
+                let payload = CalendarEventCardPayload(
+                    eventId: event.id.rawValue,
+                    title: event.title,
+                    startTime: RFC3339.string(from: event.startTime),
+                    attendeeNames: attendeeNames,
+                    isLinkedToRecordedMeeting: event.meetingId != nil
+                )
+                await state.attach(.calendarEvent(payload))
+            }
         }
         return Self.bound(lines.joined(separator: "\n"))
     }

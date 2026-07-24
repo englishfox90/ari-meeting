@@ -943,6 +943,271 @@ struct AskViewModelTests {
         #expect(text == "Second answer")
     }
 
+    // MARK: - Test 18 (2026-07-23 live-testing fix): no eager assistant bubble; ordering; edge cases
+
+    @Test("no assistant item exists before the first non-empty answer delta")
+    func noAssistantItemBeforeFirstNonEmptyDelta() async {
+        let controllable = makeControllableStream()
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
+
+        viewModel.composerText = "Question"
+        viewModel.send()
+
+        // Immediately after send(): only the user row + the (empty, unfolded) thinking placeholder
+        // — no assistant bubble yet.
+        #expect(viewModel.items.count == 2)
+        #expect(!viewModel.items.contains {
+            if case .assistant = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+
+        controllable.continuation.yield(.thinking("Considering the question..."))
+        await waitUntil {
+            guard case let .thinking(text, _)? = viewModel.items.first(where: {
+                if case .thinking = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            })?.kind else { return false }
+            return text == "Considering the question..."
+        }
+        // Thinking deltas alone still must not create a bubble.
+        #expect(!viewModel.items.contains {
+            if case .assistant = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+
+        controllable.continuation.yield(.done(RecallResponse(answer: "Final answer", sources: [])))
+        controllable.continuation.finish()
+        await viewModel.streamTask?.value
+    }
+
+    @Test("after the first delta, ordering is [user, thinking(folded), toolActivity…, assistant]")
+    func orderingAfterFirstDeltaIsUserThinkingToolsAssistant() async {
+        let controllable = makeControllableStream()
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
+
+        viewModel.composerText = "Who is in the 6pm meeting later"
+        viewModel.send()
+
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "todays_events", displayLabel: "Checking today's calendar", phase: .started)
+        ))
+        await waitUntil {
+            viewModel.items.contains {
+                if case .toolActivity = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(
+                toolName: "todays_events",
+                displayLabel: "Checking today's calendar",
+                phase: .finished(ok: true)
+            )
+        ))
+        controllable.continuation.yield(.delta("Alex and Priya are attending."))
+        await waitUntil {
+            viewModel.items.contains {
+                if case .assistant = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        // No new rows land after the bubble appears in this test, so the array itself reflects the
+        // final in-flight ordering: user, thinking (folded), tool row, assistant (last).
+        let kinds = viewModel.items.map(\.kind)
+        guard case .user = kinds[0] else { Issue.record("expected user first"); return }
+        guard case let .thinking(_, folded) = kinds[1] else { Issue.record("expected thinking second"); return }
+        #expect(folded)
+        guard case .toolActivity = kinds[2] else { Issue.record("expected toolActivity third"); return }
+        guard case .assistant = kinds[3] else { Issue.record("expected assistant LAST"); return }
+        #expect(kinds.count == 4)
+
+        controllable.continuation.yield(.done(RecallResponse(answer: "Alex and Priya are attending.", sources: [])))
+        controllable.continuation.finish()
+        await viewModel.streamTask?.value
+
+        // `.done` leaves exactly [user, assistant] — thinking + tool rows are ephemeral, removed.
+        let finalKinds = viewModel.items.map(\.kind)
+        #expect(finalKinds.count == 2)
+        guard case .user = finalKinds[0] else { Issue.record("expected user first"); return }
+        guard case .assistant = finalKinds[1] else { Issue.record("expected assistant second"); return }
+    }
+
+    @Test("an empty-delta-only stream never creates a bubble; .done creates it directly")
+    func emptyDeltaOnlyStreamNeverCreatesBubbleUntilDone() async throws {
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in
+            scriptedStream([
+                .delta(""), .delta(""),
+                .done(RecallResponse(answer: "Direct final answer", sources: []))
+            ])
+        })
+
+        viewModel.composerText = "Question"
+        viewModel.send()
+        await viewModel.streamTask?.value
+
+        // Only [user, assistant] survive — the empty deltas never created a bubble; `.done` created
+        // it directly since none existed yet.
+        #expect(viewModel.items.count == 2)
+        guard case let .assistant(text, _, streaming, _) = try #require(viewModel.items.last).kind else {
+            Issue.record("expected an assistant row"); return
+        }
+        #expect(text == "Direct final answer")
+        #expect(!streaming)
+    }
+
+    @Test("supersession before any delta drops thinking/tools cleanly with no bubble ever created")
+    func supersessionBeforeFirstDeltaCleansUpWithNoBubble() async throws {
+        let firstControllable = makeControllableStream()
+        let secondControllable = makeControllableStream()
+        let callCount = Mutex<Int>(0)
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in
+            let count = callCount.withLock { $0 += 1; return $0 }
+            return count == 1 ? firstControllable.stream : secondControllable.stream
+        })
+
+        viewModel.composerText = "First question"
+        viewModel.send()
+        firstControllable.continuation.yield(.thinking("Reasoning about the first one..."))
+        await waitUntil {
+            guard case let .thinking(text, _)? = viewModel.items.first(where: {
+                if case .thinking = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            })?.kind else { return false }
+            return !text.isEmpty
+        }
+        // No bubble was ever created for the first ask (superseded before its first delta).
+        #expect(!viewModel.items.contains {
+            if case .assistant = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+
+        viewModel.composerText = "Second question"
+        viewModel.send()
+
+        secondControllable.continuation.yield(.done(RecallResponse(answer: "Second answer", sources: [])))
+        secondControllable.continuation.finish()
+        await viewModel.streamTask?.value
+        firstControllable.continuation.finish()
+
+        // [user1, user2, assistant2] — the first ask's user row is never removed (only its
+        // ephemeral thinking/tool rows and any bubble are), so 3 rows survive, not 2.
+        #expect(viewModel.items.count == 3)
+        guard case let .assistant(text, _, _, _) = try #require(viewModel.items.last).kind else {
+            Issue.record("expected an assistant row"); return
+        }
+        #expect(text == "Second answer")
+    }
+
+    @Test("supersession AFTER a bubble was created (partial answer streaming) drops the partial bubble too")
+    func supersessionAfterBubbleCreatedDropsPartialBubble() async throws {
+        let firstControllable = makeControllableStream()
+        let secondControllable = makeControllableStream()
+        let callCount = Mutex<Int>(0)
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in
+            let count = callCount.withLock { $0 += 1; return $0 }
+            return count == 1 ? firstControllable.stream : secondControllable.stream
+        })
+
+        viewModel.composerText = "First question"
+        viewModel.send()
+        firstControllable.continuation.yield(.delta("Partial first answer"))
+        await waitUntil {
+            viewModel.items.contains {
+                if case .assistant = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        viewModel.composerText = "Second question"
+        viewModel.send()
+
+        // The partial bubble from the first (now-superseded) ask must not survive.
+        #expect(!viewModel.items.contains {
+            if case let .assistant(text, _, _, _) = $0.kind {
+                text == "Partial first answer"
+            } else {
+                false
+            }
+        })
+
+        secondControllable.continuation.yield(.done(RecallResponse(answer: "Second answer", sources: [])))
+        secondControllable.continuation.finish()
+        await viewModel.streamTask?.value
+        firstControllable.continuation.finish()
+
+        guard case let .assistant(text, _, _, _) = try #require(viewModel.items.last).kind else {
+            Issue.record("expected an assistant row"); return
+        }
+        #expect(text == "Second answer")
+    }
+
+    @Test("an error thrown AFTER a bubble was created removes that partial bubble too")
+    func errorAfterBubbleCreatedRemovesPartialBubble() async {
+        let controllable = makeControllableStream()
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
+
+        viewModel.composerText = "Question"
+        viewModel.send()
+        controllable.continuation.yield(.delta("Partial text before the failure"))
+        await waitUntil {
+            viewModel.items.contains {
+                if case .assistant = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        controllable.continuation.finish(throwing: RecallEngineError.generationFailed("boom"))
+        await viewModel.streamTask?.value
+
+        #expect(!viewModel.items.contains {
+            if case .assistant = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+        #expect(!viewModel.items.contains {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+        let errorItem = try? #require(viewModel.items.last)
+        guard case let .error(message, _) = errorItem?.kind else {
+            Issue.record("expected an error row"); return
+        }
+        #expect(message == "boom")
+    }
+
     @Test("a thrown error drops any in-flight thinking and tool-activity rows too")
     func errorDropsThinkingAndToolActivityRows() async {
         let controllable = makeControllableStream()
