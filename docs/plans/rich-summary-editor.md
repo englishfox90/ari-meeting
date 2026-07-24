@@ -2,10 +2,13 @@
 
 **Status: PLAN (2026-07-23).** Plan-only; executed by `swift-implementer`, gated by `swift-code-reviewer`. Builds on the shipped plain-markdown edit feature — replaces only the *editing surface*; the save path is untouched.
 
-**Open decisions (human):**
-- **D1 — Canonicalization on save.** An open→Save with zero typing may rewrite `bodyMarkdown` to its canonical form (bullets `- `, renumbered lists, single blank lines between blocks, `\r\n → \n`, trimmed trailing whitespace). Recommended: **accept** — the canonical form re-parses to identical blocks (tested), and `saveSummaryEdit`'s `markdown != bodyMarkdown` guard (`MeetingDetailViewModel.swift:101`) already no-ops when nothing changed at all. Alternative (stricter): view-side compare `serialized == summary.bodyMarkdown` and skip the save entirely.
-- **D2 — Italic scope.** The parser's inline pass produces italic as well as bold (`MarginaliaMarkdown.swift:14-16`); dropping it would be silent content loss. Recommended: **italic is in scope** (`*…*`, `***…***`).
-- **D3 — Spike gate.** Step 0 (§7) must pass before UI work starts; if the bold-via-font mechanism proves unreliable, the fallback in R1 needs your sign-off.
+**Decisions (RESOLVED 2026-07-24):**
+- **D1 — Canonicalization on save → ACCEPT.** An open→Save with zero typing may rewrite `bodyMarkdown` to its canonical form (bullets `- `, renumbered lists, single blank lines between blocks, `\r\n → \n`, trimmed trailing whitespace). Accepted: the canonical form re-parses to identical blocks (test 20), it's a fixed point (test 21, tidies at most once), summaries are rendered not raw-edited, and there's no version history to keep clean. `saveSummaryEdit`'s `markdown != bodyMarkdown` guard (`MeetingDetailViewModel.swift:101`) still no-ops a true no-op. The stricter view-side-skip alternative was declined.
+- **D2 — Italic scope → IN SCOPE.** `*…*`, `***…***` round-trip alongside bold.
+- **D3 — Spike gate → PASSED (SDK + compile level), runtime deferred to Step 5.** See §7 Step 0 verdict below. The bold-via-font mechanism is API-supported; the R1 runtime check folds into Step 5 (no separate throwaway run needed), and both R1 and R4 have documented fallbacks that don't touch the transform core.
+
+**Deferred (post-core, explicit one-shot — NOT in this plan's scope):**
+- **Corpus backfill.** Run the canonicalizer (`SummaryEditDocument.make(from: bodyMarkdown).serialized()`) over every stored summary once, so old never-edited meetings match the canonical form. Deferred by decision (2026-07-24) until after the core lands and its round-trip suite is green (test 20 is the safety proof). Must be **safe-by-construction**: verify-before-write (only replace a row when `parse(canonical) == parse(original)`, else leave untouched + log), `VACUUM INTO` backup first, run as an **explicit** action (marker-gated one-shot like the legacy import — never a silent startup migration), idempotent. Benefit is cosmetic (stored bytes only; summaries render identically either way), so revisit whether it's worth doing at all once the lazy-on-save path exists.
 
 ## 1. Goal & seam
 
@@ -209,7 +212,13 @@ No numeric eval / S1–S4 gate applies — the bar is the round-trip suite plus 
 - **R6 — List ergonomics honesty (v1).** No auto-marker insertion while typing: Enter continues the *kind* (serializes correctly) but the visible `•` appears only on next present. No list indent/outdent, no block-kind toolbar. Stated plainly as v1 scope.
 
 **Sequencing** (each step independently testable; core lands before any UI):
-0. **API spike** (throwaway view in the app target; not merged): pin R1–R4 against the GA macOS 26 SDK — `TextEditor(text:selection:)`, `.attributedTextFormattingDefinition`, constraint firing on type/paste/shortcut, trait behavior, U+2028. Go/no-go; on no-go the shipped plain editor remains and this plan stops.
+0. **API spike — DONE 2026-07-24, verdict GO (SDK + compile).** Throwaway `#if DEBUG` view `Ari/UI/Spike/RichEditorSpike.swift` (not merged; seed for Step 5, deletable). Findings against `MacOSX26.5.sdk`:
+   - ✅ `TextEditor(text: Binding<AttributedString>, selection: Binding<AttributedTextSelection>?)` — present (SwiftUI).
+   - ✅ `AttributeRunBoundaries` / `inheritedByAddedText` / `runBoundaries` — present (Foundation), exact spellings as §2.1.
+   - ⚠️ **`AttributedTextFormattingDefinition`, `AttributedTextValueConstraint`, and `.attributedTextFormattingDefinition(_:)` live in `SwiftUICore`, not `SwiftUI`** — import is transitive via `import SwiftUI`, but note it. The custom-constraint protocol requires `constrain(_ container: inout Attributes)` where `Attributes` is a `@dynamicMemberLookup` `AttributeContainerProxy` that **reads sibling attributes (block kind) and writes its own key (font)** — the exact §2.4 mechanism.
+   - ✅ R1 fallback `transformAttributes(in: &selection, body:)` — present, if the constraint doesn't fire on Cmd+B.
+   - ✅ The whole chain (custom key + scope + `AttributeDynamicLookup` subscript + custom constraint + definition result-builder + `TextEditor(text:selection:)` + `.attributedTextFormattingDefinition`) **compiles clean in the `Ari` target.**
+   - **Residual (runtime-only, verified at Step 5):** R1 constraint-fires-on-Cmd+B/paste, R2 trait behavior under live typing, R4 U+2028 caret/wrap. All have fallbacks (R1 → `transformAttributes` shortcut; R4 → separate paragraphs) that leave the transform core (steps 1–4) intact — so the core is safe to build now regardless of how they resolve.
 1. `SummaryBlockAttribute` + `SummaryBlockKind` + `AriAttributes` scope (+ expose the parser's table-line helpers). → compiles, Sendable/Codable tests.
 2. `SummaryEditDocument` segmenter + `serialized()`. → tests 1–7.
 3. `SummaryRichText.present`. → tests 8–12.

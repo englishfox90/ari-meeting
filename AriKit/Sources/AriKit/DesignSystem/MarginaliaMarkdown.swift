@@ -285,12 +285,16 @@ public enum MarginaliaMarkdown {
         return afterSeparator.trimmingCharacters(in: .whitespaces)
     }
 
-    private static func isTableRow(_ line: String) -> Bool {
+    /// A `|`-delimited line — the header/body-row shape the parser scans for. Exposed
+    /// (not duplicated) so `SummaryEditDocument`'s segmenter can find the exact same table
+    /// line-runs the parser would, per the plan (`rich-summary-editor.md` §2.2).
+    package static func isTableRow(_ line: String) -> Bool {
         line.hasPrefix("|") && line.dropFirst().contains("|")
     }
 
     /// A separator row is all `-`, `:`, `|`, and spaces, and contains at least one `-`.
-    private static func isTableSeparator(_ line: String) -> Bool {
+    /// Exposed alongside `isTableRow` for the same reason.
+    package static func isTableSeparator(_ line: String) -> Bool {
         guard isTableRow(line), line.contains("-") else { return false }
         return line.allSatisfy { $0 == "-" || $0 == ":" || $0 == "|" || $0 == " " }
     }
