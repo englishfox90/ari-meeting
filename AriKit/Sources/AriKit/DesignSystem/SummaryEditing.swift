@@ -41,8 +41,13 @@ public enum SummaryEditing {
     /// Sets the block kind (heading / bullet / numbered / paragraph) across the selection. Because
     /// `\.summaryBlock` is paragraph-scoped (`runBoundaries: .paragraph`), touching any part of a
     /// paragraph re-stamps the whole paragraph. Emphasis is carried onto the new kind's font family
-    /// so bold/italic survives a heading↔body switch; the list marker (`•`/`1.`) is presentation
-    /// the serializer re-derives, so it appears on the next open rather than being spliced in here.
+    /// so bold/italic survives a heading↔body switch.
+    ///
+    /// For LIST kinds the run is then re-presented through the tested `serialize → present`
+    /// round-trip, so the visible `•` / `1.` markers actually appear and numbered items renumber
+    /// from 1 (setting the attribute alone leaves no marker — which read as "nothing happened").
+    /// Re-presenting rebuilds the string, so the selection is collapsed afterward (its indices no
+    /// longer map). This canonicalizes the run — the same rewrite Save already accepts (plan D1).
     public static func setBlockKind(
         _ kind: SummaryBlockKind, in text: inout AttributedString, selection: inout AttributedTextSelection
     ) {
@@ -51,6 +56,10 @@ public enum SummaryEditing {
             let emphasis = SummaryCanonicalFont.emphasis(of: container.font, for: previousKind)
             container.summaryBlock = kind
             container.font = SummaryCanonicalFont.font(for: kind, bold: emphasis.bold, italic: emphasis.italic)
+        }
+        if kind == .bulletItem || kind == .numberedItem {
+            text = SummaryRichText.present(markdown: SummaryRichText.serialize(text))
+            selection = AttributedTextSelection()
         }
     }
 }

@@ -374,6 +374,9 @@ struct MeetingDetailView: View {
             if let seek = seekHandler, !viewModel.referencedMoments.isEmpty {
                 ReferencedMomentsBar(moments: viewModel.referencedMoments, onSeek: seek)
             }
+            if isEditingSummary, !isNarrowLayout || narrowSection == .summary {
+                summaryFormattingBar
+            }
             summaryBody
             if showInlineNotes {
                 notesInlineSection
@@ -526,6 +529,47 @@ struct MeetingDetailView: View {
 
     private func meetingCountLabel(_ count: Int) -> String {
         count == 1 ? "1 meeting" : "\(count) meetings"
+    }
+
+    /// The text-formatting strip shown only while editing the summary, sitting directly above the
+    /// editor content (below the referenced-moment badges) — its own affordance, distinct from the
+    /// meeting-level Cancel/Save in the window toolbar. Each control acts on the last-focused
+    /// editable segment's selection: select text (or a line), then click.
+    private var summaryFormattingBar: some View {
+        HStack(spacing: MarginaliaSpacing.xs.value) {
+            summaryFormatButton("bold", "Bold") { summaryEditor.toggleBold() }
+            summaryFormatButton("italic", "Italic") { summaryEditor.toggleItalic() }
+            Divider().frame(height: 18).overlay(Color.marginalia(.hairline, in: scheme))
+            summaryFormatButton("textformat.size", "Heading") { summaryEditor.setBlockKind(.heading(level: 2)) }
+            summaryFormatButton("text.alignleft", "Body text") { summaryEditor.setBlockKind(.paragraph) }
+            summaryFormatButton("list.bullet", "Bulleted list") { summaryEditor.setBlockKind(.bulletItem) }
+            summaryFormatButton("list.number", "Numbered list") { summaryEditor.setBlockKind(.numberedItem) }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, MarginaliaSpacing.sm.value)
+        .padding(.vertical, MarginaliaSpacing.xs.value)
+        .background {
+            RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
+                .fill(Color.marginalia(.elevated, in: scheme))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: MarginaliaRadius.control.value, style: .continuous)
+                .strokeBorder(Color.marginalia(.hairline, in: scheme), lineWidth: 1)
+        }
+    }
+
+    private func summaryFormatButton(
+        _ symbol: String, _ help: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 28, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+        .help(help)
     }
 
     private var summaryBody: some View {
@@ -722,31 +766,10 @@ struct MeetingDetailView: View {
     @ToolbarContentBuilder
     private var summaryToolbar: some ToolbarContent {
         if isEditingSummary, !isNarrowLayout || narrowSection == .summary {
-            // Formatting controls live in the WINDOW toolbar (native glass group, matching the
-            // generation controls' styling) rather than inline: an inline button steals the
-            // TextEditor's first responder and clears the selection before the format applies,
-            // whereas an NSToolbar item leaves the editor focused and its selection intact. They
-            // act on the last-focused editable segment — select text (or a line), then click.
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button { summaryEditor.toggleBold() } label: {
-                    Label("Bold", systemImage: "bold")
-                }
-                .help("Bold the selected text")
-                Button { summaryEditor.toggleItalic() } label: {
-                    Label("Italic", systemImage: "italic")
-                }
-                .help("Italicize the selected text")
-                Menu {
-                    Button("Heading") { summaryEditor.setBlockKind(.heading(level: 2)) }
-                    Button("Body") { summaryEditor.setBlockKind(.paragraph) }
-                    Divider()
-                    Button("Bulleted list") { summaryEditor.setBlockKind(.bulletItem) }
-                    Button("Numbered list") { summaryEditor.setBlockKind(.numberedItem) }
-                } label: {
-                    Label("Paragraph style", systemImage: "textformat")
-                }
-                .help("Set the selected line's style (heading, body, or list)")
-            }
+            // Only meeting-level edit actions (Cancel / Save) live in the window toolbar; the TEXT
+            // formatting controls are a separate inline bar above the summary body
+            // (`summaryFormattingBar`), since they serve a different purpose (styling the content,
+            // not the meeting).
             ToolbarItemGroup(placement: .primaryAction) {
                 Button("Cancel", role: .cancel) {
                     cancelSummaryEdit()
