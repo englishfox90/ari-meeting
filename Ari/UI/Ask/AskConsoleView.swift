@@ -90,10 +90,12 @@ struct AskConsoleView: View {
         switch item.kind {
         case let .user(text):
             userRow(text)
-        case let .assistant(text, sources, streaming, card):
-            assistantRow(text: text, sources: sources, streaming: streaming, card: card)
-        case .thinking:
-            AskThinkingRow()
+        case let .assistant(text, sources, streaming, cards):
+            assistantRow(text: text, sources: sources, streaming: streaming, cards: cards)
+        case let .thinking(text, folded):
+            AskThinkingRow(text: text, folded: folded)
+        case let .toolActivity(_, label, running, ok):
+            AskToolActivityRow(label: label, running: running, ok: ok)
         case let .error(message, showSettings):
             errorRow(message: message, showSettings: showSettings)
         }
@@ -114,7 +116,7 @@ struct AskConsoleView: View {
 
     @ViewBuilder
     private func assistantRow(
-        text: String, sources: [RecallSource], streaming: Bool, card: RecallCardPayload?
+        text: String, sources: [RecallSource], streaming: Bool, cards: [RecallCardPayload]
     ) -> some View {
         // While the placeholder is still empty (deltas haven't arrived yet), the separate
         // `.thinking` row already conveys progress — an empty card here would be a hollow,
@@ -123,9 +125,11 @@ struct AskConsoleView: View {
             EmptyView()
         } else {
             VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
-                // The resolved entity card, when present, is the direct structured answer — it
-                // renders ABOVE the prose, inside the same bordered container (plan §5.2).
-                if let card {
+                // Every resolved entity card, when present, is the direct structured answer — they
+                // render ABOVE the prose, stacked, inside the same bordered container (plan §5.4 —
+                // a tool-first ask can resolve more than one entity, e.g. a person + a calendar
+                // event).
+                ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
                     AskEntityCard(
                         card: card,
                         onOpenMeeting: onOpenMeeting,
@@ -307,9 +311,89 @@ struct AskConsoleView: View {
     }
 }
 
+/// The thinking row (plan §5.5, `ask-meetings-agentic-tools.md`): the honest bouncing-dots
+/// placeholder before ANY reasoning/answer delta has arrived (`text.isEmpty`), live streaming
+/// reasoning text while unfolded, and a collapsed one-line disclosure once the answer starts
+/// (`folded == true`) — the user can re-expand it to read the model's reasoning. Removed entirely
+/// by the view model at `.done` (ephemeral, never persisted).
+private struct AskThinkingRow: View {
+    let text: String
+    let folded: Bool
+    @Environment(\.colorScheme) private var scheme
+    @State private var expanded = false
+
+    var body: some View {
+        if folded {
+            DisclosureGroup(isExpanded: $expanded) {
+                if !text.isEmpty {
+                    Text(text)
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                        .italic()
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, MarginaliaSpacing.xs.value)
+                }
+            } label: {
+                HStack(spacing: MarginaliaSpacing.xs.value) {
+                    Image(systemName: "ellipsis.bubble")
+                        .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                    Text("Thinking")
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                }
+            }
+        } else if text.isEmpty {
+            AskThinkingPulse()
+        } else {
+            VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+                HStack(spacing: MarginaliaSpacing.xs.value) {
+                    Image(systemName: "ellipsis.bubble")
+                        .foregroundStyle(Color.marginalia(.inkSecondary, in: scheme))
+                    Text("Thinking")
+                        .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                }
+                Text(text)
+                    .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                    .italic()
+            }
+        }
+    }
+}
+
+/// One tool's dispatch lifecycle (plan §5.5): a small icon + its Swift-computed `displayLabel` +
+/// a spinner while `running`, swapped for a checkmark (success) or a subtle failure mark once
+/// finished. Shown only for a tool that actually ran (No-Fake-State) — never a fabricated progress
+/// indicator. Removed entirely by the view model at `.done` (ephemeral, never persisted).
+private struct AskToolActivityRow: View {
+    let label: String
+    let running: Bool
+    let ok: Bool
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: MarginaliaSpacing.sm.value) {
+            statusIcon
+            Text(label)
+                .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+        }
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        if running {
+            ProgressView()
+                .controlSize(.small)
+        } else if ok {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Color.marginalia(.success, in: scheme))
+        } else {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.marginalia(.error, in: scheme))
+        }
+    }
+}
+
 /// The honest "searching local meeting excerpts…" placeholder (plan §8): three dots that bounce
 /// up and down in sequence, static under Reduce Motion (BRAND.md §8 — "pulses become static").
-private struct AskThinkingRow: View {
+private struct AskThinkingPulse: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Bumped once per wave to (re)trigger every dot's keyframe track; the `.task` paces the bumps,

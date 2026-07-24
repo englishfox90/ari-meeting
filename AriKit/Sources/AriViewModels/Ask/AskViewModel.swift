@@ -63,7 +63,7 @@ public final class AskViewModel {
         _ role: String,
         _ content: String,
         _ sources: [RecallSource],
-        _ card: RecallCardPayload?
+        _ cards: [RecallCardPayload]
     ) async throws -> AskMessage
 
     public typealias DeleteConversationOperation = @Sendable (
@@ -116,9 +116,9 @@ public final class AskViewModel {
             createConversation: { meetingId, seriesId, title in
                 try await conversationStore.create(meetingId: meetingId, seriesId: seriesId, title: title)
             },
-            appendMessage: { conversationId, role, content, sources, card in
+            appendMessage: { conversationId, role, content, sources, cards in
                 try await conversationStore.appendMessage(
-                    conversationId: conversationId, role: role, content: content, sources: sources, card: card
+                    conversationId: conversationId, role: role, content: content, sources: sources, cards: cards
                 )
             },
             deleteConversation: { id in
@@ -185,10 +185,12 @@ public final class AskViewModel {
         items.append(AskTranscriptItem(kind: .user(question)))
         let placeholderId = UUID().uuidString
         items.append(
-            AskTranscriptItem(id: placeholderId, kind: .assistant(text: "", sources: [], streaming: true, card: nil))
+            AskTranscriptItem(
+                id: placeholderId, kind: .assistant(text: "", sources: [], streaming: true, cards: [])
+            )
         )
         let thinkingId = UUID().uuidString
-        items.append(AskTranscriptItem(id: thinkingId, kind: .thinking))
+        items.append(AskTranscriptItem(id: thinkingId, kind: .thinking(text: "", folded: false)))
         isStreaming = true
 
         let scopeKey = scope.engineScope
@@ -203,10 +205,14 @@ public final class AskViewModel {
                     firstQuestion: question,
                     generation: generation
                 )
-                _ = try await appendMessageOp(conversationId, "user", question, [], nil)
+                _ = try await appendMessageOp(conversationId, "user", question, [], [])
 
                 var accumulated = ""
                 var sawFirstDelta = false
+                // The item id of the currently-running row for a given tool name, so a `.finished`
+                // event updates the SAME row a `.started` event created (plan §5.3: "match the
+                // latest running row with the same toolName").
+                var runningToolItemIds: [String: String] = [:]
                 let stream = streamAnswerOp(question, scopeKey.meetingId, scopeKey.seriesId, history)
                 for try await event in stream {
                     guard streamGeneration == generation else { return }
@@ -214,25 +220,26 @@ public final class AskViewModel {
                     case let .delta(delta):
                         if !sawFirstDelta {
                             sawFirstDelta = true
-                            removeItem(id: thinkingId)
+                            foldThinking(id: thinkingId)
                         }
                         accumulated += delta
-                        updateAssistant(id: placeholderId, text: accumulated, sources: [], streaming: true, card: nil)
-                    case .thinking, .toolActivity:
-                        // TEMPORARY no-op (Slice 2 of `ask-meetings-agentic-tools.md`): these two
-                        // `RecallStreamEvent` cases are new in this slice. Slice 3 renders live
-                        // reasoning text + tool-activity rows; until then, ignore them here so the
-                        // switch stays exhaustive and existing `.delta`/`.done` behavior is
-                        // unaffected (No-Fake-State: better to show nothing than a half-built row).
-                        continue
+                        updateAssistant(id: placeholderId, text: accumulated, sources: [], streaming: true, cards: [])
+                    case let .thinking(delta):
+                        appendThinking(id: thinkingId, delta: delta)
+                    case let .toolActivity(activity):
+                        applyToolActivity(activity, runningToolItemIds: &runningToolItemIds)
                     case let .done(response):
+                        // Ephemeral rows never survive the terminal event (plan §5.3 — thinking and
+                        // tool-activity rows are never persisted, and never linger in the UI once
+                        // the real answer has landed).
                         removeItem(id: thinkingId)
+                        removeToolActivityRows()
                         updateAssistant(
                             id: placeholderId, text: response.answer, sources: response.sources,
-                            streaming: false, card: response.card
+                            streaming: false, cards: response.cards
                         )
                         _ = try await appendMessageOp(
-                            conversationId, "assistant", response.answer, response.sources, response.card
+                            conversationId, "assistant", response.answer, response.sources, response.cards
                         )
                     }
                 }
@@ -247,6 +254,7 @@ public final class AskViewModel {
             } catch {
                 guard streamGeneration == generation else { return }
                 removeItem(id: thinkingId)
+                removeToolActivityRows()
                 removeItem(id: placeholderId)
                 items.append(
                     AskTranscriptItem(kind: .error(
@@ -273,12 +281,13 @@ public final class AskViewModel {
         items.removeAll { $0.id == id }
     }
 
-    /// Removes any still-live `.thinking` row and empty streaming assistant placeholder left by a
-    /// prior in-flight ask that a new question is superseding (No-Fake-State: no perpetual spinner).
+    /// Removes any still-live `.thinking`/`.toolActivity` row and empty streaming assistant
+    /// placeholder left by a prior in-flight ask that a new question is superseding (No-Fake-State:
+    /// no perpetual spinner, no orphaned tool row).
     private func dropInFlightPlaceholders() {
         items.removeAll { item in
             switch item.kind {
-            case .thinking:
+            case .thinking, .toolActivity:
                 true
             case let .assistant(text, _, streaming, _):
                 streaming && text.isEmpty
@@ -289,10 +298,74 @@ public final class AskViewModel {
     }
 
     private func updateAssistant(
-        id: String, text: String, sources: [RecallSource], streaming: Bool, card: RecallCardPayload?
+        id: String, text: String, sources: [RecallSource], streaming: Bool, cards: [RecallCardPayload]
     ) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        items[index].kind = .assistant(text: text, sources: sources, streaming: streaming, card: card)
+        items[index].kind = .assistant(text: text, sources: sources, streaming: streaming, cards: cards)
+    }
+
+    /// Appends a reasoning delta to the thinking row, creating it (unfolded) if a prior removal
+    /// somehow already dropped it — defensive; in the normal flow the placeholder row added at the
+    /// start of `send()` always exists until `.done`/error/supersession.
+    private func appendThinking(id: String, delta: String) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else {
+            items.append(AskTranscriptItem(id: id, kind: .thinking(text: delta, folded: false)))
+            return
+        }
+        guard case let .thinking(text, folded) = items[index].kind else { return }
+        items[index].kind = .thinking(text: text + delta, folded: folded)
+    }
+
+    /// Collapses the thinking row to its folded (one-line disclosure) presentation — called once,
+    /// on the FIRST answer `.delta` (plan §5.3). The row is never removed here; only `.done`/error/
+    /// supersession removes it.
+    private func foldThinking(id: String) {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              case let .thinking(text, _) = items[index].kind
+        else { return }
+        items[index].kind = .thinking(text: text, folded: true)
+    }
+
+    /// Applies one tool-dispatch lifecycle event: `.started` appends a new running row; `.finished`
+    /// completes the MOST RECENT running row for that same tool name (plan §5.3).
+    /// `runningToolItemIds` is owned by the calling `send()` task (one per in-flight ask).
+    private func applyToolActivity(_ activity: ToolActivity, runningToolItemIds: inout [String: String]) {
+        switch activity.phase {
+        case .started:
+            let id = UUID().uuidString
+            runningToolItemIds[activity.toolName] = id
+            items.append(
+                AskTranscriptItem(
+                    id: id,
+                    kind: .toolActivity(
+                        toolName: activity.toolName,
+                        label: activity.displayLabel,
+                        running: true,
+                        ok: true
+                    )
+                )
+            )
+        case let .finished(ok):
+            guard let id = runningToolItemIds[activity.toolName],
+                  let index = items.firstIndex(where: { $0.id == id })
+            else { return }
+            items[index].kind = .toolActivity(
+                toolName: activity.toolName, label: activity.displayLabel, running: false, ok: ok
+            )
+            runningToolItemIds.removeValue(forKey: activity.toolName)
+        }
+    }
+
+    /// Removes every `.toolActivity` row — ephemeral, never persisted (plan §5.3); called on the
+    /// terminal `.done` and on error, mirroring the thinking row's own removal.
+    private func removeToolActivityRows() {
+        items.removeAll { item in
+            if case .toolActivity = item.kind {
+                true
+            } else {
+                false
+            }
+        }
     }
 
     /// Trailing history for the NEXT ask, alternating roles, newest kept (← `RecallBounds.
@@ -306,7 +379,7 @@ public final class AskViewModel {
             case let .assistant(text, _, streaming, _):
                 guard !streaming, !text.isEmpty else { continue }
                 turns.append(RecallTurn(role: "assistant", content: text))
-            case .thinking, .error:
+            case .thinking, .toolActivity, .error:
                 continue
             }
         }
@@ -357,7 +430,7 @@ public final class AskViewModel {
         items = detail.messages.map { message in
             let kind: AskTranscriptItemKind = message.role == "user"
                 ? .user(message.content)
-                : .assistant(text: message.content, sources: message.sources, streaming: false, card: message.card)
+                : .assistant(text: message.content, sources: message.sources, streaming: false, cards: message.cards)
             return AskTranscriptItem(id: message.id.rawValue, kind: kind)
         }
     }

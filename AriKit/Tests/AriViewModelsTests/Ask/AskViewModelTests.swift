@@ -98,12 +98,13 @@ struct AskViewModelTests {
                 title: title, createdAt: "now", updatedAt: "now"
             )
         },
-        appendMessage: @escaping AskViewModel.AppendMessageOperation = { conversationId, role, content, sources, card in
-            AskMessage(
-                id: AskMessageID(UUID().uuidString), conversationId: conversationId, role: role,
-                content: content, sources: sources, card: card, createdAt: "now"
-            )
-        },
+        appendMessage: @escaping AskViewModel
+            .AppendMessageOperation = { conversationId, role, content, sources, cards in
+                AskMessage(
+                    id: AskMessageID(UUID().uuidString), conversationId: conversationId, role: role,
+                    content: content, sources: sources, cards: cards, createdAt: "now"
+                )
+            },
         deleteConversation: @escaping AskViewModel.DeleteConversationOperation = { _ in }
     ) -> AskViewModel {
         AskViewModel(
@@ -149,23 +150,27 @@ struct AskViewModelTests {
             }
             return false
         })
-        guard case let .assistant(text, sources, streaming, card) = assistantMidStream.kind else {
+        guard case let .assistant(text, sources, streaming, cards) = assistantMidStream.kind else {
             Issue.record("expected an assistant row")
             return
         }
         #expect(text == "Hello")
-        #expect(card == nil)
+        #expect(cards.isEmpty)
         #expect(sources.isEmpty)
         #expect(streaming)
         #expect(viewModel.isStreaming)
-        // The "thinking" placeholder is dropped once the first delta arrives.
-        #expect(!viewModel.items.contains {
+        // The "thinking" row is FOLDED (not removed) once the first answer delta arrives.
+        let thinkingItem = try #require(viewModel.items.first {
             if case .thinking = $0.kind {
                 true
             } else {
                 false
             }
         })
+        guard case let .thinking(_, folded) = thinkingItem.kind else {
+            Issue.record("expected a thinking row"); return
+        }
+        #expect(folded)
 
         controllable.continuation.yield(.delta(", world"))
         controllable.continuation.yield(.done(RecallResponse(answer: "Hello, world (final)", sources: [])))
@@ -173,6 +178,14 @@ struct AskViewModelTests {
         await viewModel.streamTask?.value
 
         #expect(!viewModel.isStreaming)
+        // The thinking row is finally REMOVED at `.done` (ephemeral, never lingers).
+        #expect(!viewModel.items.contains {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
     }
 
     // MARK: - Test 2: final .done replaces the accumulated raw text
@@ -189,7 +202,7 @@ struct AskViewModelTests {
         await viewModel.streamTask?.value
 
         let assistantItem = try #require(viewModel.items.last)
-        guard case let .assistant(text, sources, streaming, card) = assistantItem.kind else {
+        guard case let .assistant(text, sources, streaming, cards) = assistantItem.kind else {
             Issue.record("expected an assistant row")
             return
         }
@@ -197,7 +210,7 @@ struct AskViewModelTests {
         #expect(text != "raw partial chunks")
         #expect(sources == response.sources)
         #expect(!streaming)
-        #expect(card == nil)
+        #expect(cards.isEmpty)
     }
 
     // MARK: - Test 3: sources attach only from .done; no person tags when speakers:[]
@@ -449,7 +462,7 @@ struct AskViewModelTests {
         let role: String
         let content: String
         let sources: [RecallSource]
-        let card: RecallCardPayload?
+        let cards: [RecallCardPayload]
     }
 
     @Test("the conversation is created once (first message), then user then assistant-with-sources are appended")
@@ -464,7 +477,7 @@ struct AskViewModelTests {
             streamAnswer: { _, _, _, _ in scriptedStream([.done(RecallResponse(
                 answer: "Answer one",
                 sources: [source],
-                card: card
+                cards: [card]
             ))]) },
             createConversation: { meetingId, seriesId, title in
                 createCalls.withLock { $0.append(CreateCall(meetingId: meetingId, seriesId: seriesId, title: title)) }
@@ -473,19 +486,19 @@ struct AskViewModelTests {
                     title: title, createdAt: "now", updatedAt: "now"
                 )
             },
-            appendMessage: { conversationId, role, content, sources, appendedCard in
+            appendMessage: { conversationId, role, content, sources, appendedCards in
                 appendCalls.withLock {
                     $0.append(AppendCall(
                         conversationId: conversationId,
                         role: role,
                         content: content,
                         sources: sources,
-                        card: appendedCard
+                        cards: appendedCards
                     ))
                 }
                 return AskMessage(
                     id: AskMessageID(UUID().uuidString), conversationId: conversationId, role: role,
-                    content: content, sources: sources, card: appendedCard, createdAt: "now"
+                    content: content, sources: sources, cards: appendedCards, createdAt: "now"
                 )
             }
         )
@@ -514,20 +527,23 @@ struct AskViewModelTests {
         #expect(appendSnapshot[1].sources == [source])
         // The resolved card threads through to the persisted assistant message, verbatim — never
         // a fabricated/estimated re-derivation (No-Fake-State).
-        #expect(appendSnapshot[1].card == card)
+        #expect(appendSnapshot[1].cards == [card])
         // The user turn's append call never carries a card (only the entity-resolved assistant
-        // turn can).
-        #expect(appendSnapshot[0].card == nil)
+        // turn can). Also asserts the ephemeral-rows contract (plan §5.3): the append call for the
+        // assistant turn carries ONLY answer/sources/cards — never a thinking or tool-activity
+        // payload (there is no such field to carry it in — the closure's own signature enforces
+        // this structurally).
+        #expect(appendSnapshot[0].cards.isEmpty)
         #expect(appendSnapshot[2].role == "user")
         #expect(appendSnapshot[2].content == "Follow-up question")
         #expect(appendSnapshot[0].conversationId == "conversation-1")
         #expect(appendSnapshot[2].conversationId == "conversation-1")
 
-        // The in-memory transcript item also carries the same card (plan §5.2 wiring).
-        guard case let .assistant(_, _, _, itemCard) = viewModel.items[1].kind else {
+        // The in-memory transcript item also carries the same card (plan §5.2/§5.4 wiring).
+        guard case let .assistant(_, _, _, itemCards) = viewModel.items[1].kind else {
             Issue.record("expected an assistant row"); return
         }
-        #expect(itemCard == card)
+        #expect(itemCards == [card])
     }
 
     // MARK: - Test 11: conversation load hydration in order, incl. sources
@@ -564,16 +580,16 @@ struct AskViewModelTests {
             Issue.record("expected a user row first"); return
         }
         #expect(firstText == "First question")
-        guard case let .assistant(text, sources, streaming, card) = viewModel.items[1].kind else {
+        guard case let .assistant(text, sources, streaming, cards) = viewModel.items[1].kind else {
             Issue.record("expected an assistant row second"); return
         }
         #expect(text == "First answer")
         #expect(sources == [source])
         #expect(!streaming)
-        #expect(card == nil)
+        #expect(cards.isEmpty)
     }
 
-    @Test("load(_:) hydrates a persisted assistant message's card verbatim (Slice C)")
+    @Test("load(_:) hydrates a persisted assistant message's cards verbatim (plan §5.4)")
     func loadHydratesAssistantCard() async {
         let conversationId = AskConversationID("conversation-2")
         let card = RecallCardPayload.series(
@@ -590,7 +606,7 @@ struct AskViewModelTests {
                 ),
                 AskMessage(
                     id: "m2", conversationId: conversationId, role: "assistant", content: "It met 4 times.",
-                    card: card, createdAt: "t1"
+                    cards: [card], createdAt: "t1"
                 )
             ]
         )
@@ -598,10 +614,10 @@ struct AskViewModelTests {
 
         await viewModel.load(conversationId)
 
-        guard case let .assistant(_, _, _, hydratedCard) = viewModel.items[1].kind else {
+        guard case let .assistant(_, _, _, hydratedCards) = viewModel.items[1].kind else {
             Issue.record("expected an assistant row second"); return
         }
-        #expect(hydratedCard == card)
+        #expect(hydratedCards == [card])
     }
 
     // MARK: - Test 12: recent list keyed to scope (nil for global)
@@ -665,5 +681,312 @@ struct AskViewModelTests {
                 "Ask Meetings can answer only from saved local Ari Meeting transcripts, plus real calendar scheduling facts for today's events (event times and attendees) when supplied — a calendar entry means something is scheduled, never that it was recorded or discussed. It cannot access email, accounts, internet search, files outside Ari Meeting, or calendar dates other than today."
         )
         #expect(!showSettings)
+    }
+
+    // MARK: - Test 15 (`ask-meetings-agentic-tools.md` §8.8): thinking accumulates, folds, removed
+
+    @Test("thinking deltas accumulate; first answer delta folds (not removes) the row; .done removes it")
+    func thinkingAccumulatesFoldsThenIsRemoved() async throws {
+        let controllable = makeControllableStream()
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
+
+        viewModel.composerText = "Remind me about the meeting with Landon"
+        viewModel.send()
+
+        controllable.continuation.yield(.thinking("Let me "))
+        controllable.continuation.yield(.thinking("check that."))
+        await waitUntil {
+            guard case let .thinking(text, _)? = viewModel.items.first(where: {
+                if case .thinking = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            })?.kind else { return false }
+            return text == "Let me check that."
+        }
+        let midThinking = try #require(viewModel.items.first {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+        guard case let .thinking(midText, midFolded) = midThinking.kind else {
+            Issue.record("expected a thinking row"); return
+        }
+        #expect(midText == "Let me check that.")
+        #expect(!midFolded, "must stay unfolded (live-visible) until the first ANSWER delta")
+
+        controllable.continuation.yield(.delta("Landon Star's meeting was..."))
+        await waitUntil {
+            guard case let .thinking(_, folded)? = viewModel.items.first(where: {
+                if case .thinking = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            })?.kind else { return false }
+            return folded
+        }
+        // The thinking row's accumulated text survives the fold — folding is a presentation
+        // change, not a truncation.
+        guard case let .thinking(foldedText, folded) = try #require(viewModel.items.first {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        }).kind else {
+            Issue.record("expected a thinking row"); return
+        }
+        #expect(foldedText == "Let me check that.")
+        #expect(folded)
+
+        controllable.continuation.yield(.done(RecallResponse(answer: "Landon Star's meeting was...", sources: [])))
+        controllable.continuation.finish()
+        await viewModel.streamTask?.value
+
+        #expect(!viewModel.items.contains {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    // MARK: - Test 16: tool-activity rows appear on start, complete on finish, removed at .done
+
+    @Test("toolActivity rows appear running on .started, complete on .finished, and are removed at .done")
+    func toolActivityRowsAppearCompleteThenAreRemoved() async {
+        let controllable = makeControllableStream()
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
+
+        viewModel.composerText = "Who is in the 6pm meeting later"
+        viewModel.send()
+
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "todays_events", displayLabel: "Checking today's calendar", phase: .started)
+        ))
+        await waitUntil {
+            viewModel.items.contains {
+                if case let .toolActivity(_, _, running, _) = $0.kind {
+                    running
+                } else {
+                    false
+                }
+            }
+        }
+        guard let runningItem = viewModel.items.first(where: {
+            if case .toolActivity = $0.kind {
+                true
+            } else {
+                false
+            }
+        }), case let .toolActivity(toolName, label, running, _) = runningItem.kind else {
+            Issue.record("expected a running toolActivity row"); return
+        }
+        #expect(toolName == "todays_events")
+        #expect(label == "Checking today's calendar")
+        #expect(running)
+
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(
+                toolName: "todays_events",
+                displayLabel: "Checking today's calendar",
+                phase: .finished(ok: true)
+            )
+        ))
+        await waitUntil {
+            viewModel.items.contains {
+                if case let .toolActivity(_, _, running, ok) = $0.kind {
+                    !running && ok
+                } else {
+                    false
+                }
+            }
+        }
+        // Same row updated in place, not a second row appended.
+        #expect(viewModel.items.filter {
+            if case .toolActivity = $0.kind {
+                true
+            } else {
+                false
+            }
+        }.count == 1)
+
+        controllable.continuation.yield(.done(RecallResponse(answer: "Alex and Priya are attending.", sources: [])))
+        controllable.continuation.finish()
+        await viewModel.streamTask?.value
+
+        // Ephemeral: no toolActivity row survives the terminal event (plan §5.3, never persisted).
+        #expect(!viewModel.items.contains {
+            if case .toolActivity = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    @Test("a tool's failure surfaces ok: false on the completed row, still ephemeral at .done")
+    func toolActivityFailureSurfacesOkFalse() async {
+        let controllable = makeControllableStream()
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
+
+        viewModel.composerText = "Find the meeting about pricing"
+        viewModel.send()
+
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "find_meeting", displayLabel: "Looking up meeting", phase: .started)
+        ))
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "find_meeting", displayLabel: "Looking up meeting", phase: .finished(ok: false))
+        ))
+        await waitUntil {
+            viewModel.items.contains {
+                if case let .toolActivity(_, _, running, ok) = $0.kind {
+                    !running && !ok
+                } else {
+                    false
+                }
+            }
+        }
+
+        controllable.continuation.yield(.done(RecallResponse(answer: "I couldn't find that meeting.", sources: [])))
+        controllable.continuation.finish()
+        await viewModel.streamTask?.value
+
+        #expect(!viewModel.items.contains {
+            if case .toolActivity = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    // MARK: - Test 17: superseding ask drops in-flight thinking + tool rows
+
+    @Test("a new question mid-stream drops the prior ask's in-flight thinking and tool-activity rows")
+    func newQuestionDropsInFlightThinkingAndToolRows() async throws {
+        let firstControllable = makeControllableStream()
+        let secondControllable = makeControllableStream()
+        let callCount = Mutex<Int>(0)
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in
+            let count = callCount.withLock { $0 += 1; return $0 }
+            return count == 1 ? firstControllable.stream : secondControllable.stream
+        })
+
+        viewModel.composerText = "First question"
+        viewModel.send()
+        firstControllable.continuation.yield(.thinking("Thinking about the first one..."))
+        firstControllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "search_transcripts", displayLabel: "Searching transcripts", phase: .started)
+        ))
+        await waitUntil {
+            viewModel.items.contains {
+                if case .toolActivity = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        viewModel.composerText = "Second question"
+        viewModel.send()
+
+        // The first ask's thinking/tool rows are gone the instant the second `send()` runs —
+        // synchronous within `dropInFlightPlaceholders()`, not merely eventually consistent. The
+        // second ask immediately adds its OWN fresh (empty, unfolded) thinking placeholder right
+        // after — so the assertion is "no STALE thinking row survives", not "zero thinking rows".
+        let thinkingRowsAfterSupersede = viewModel.items.compactMap { item -> (String, Bool)? in
+            guard case let .thinking(text, folded) = item.kind else { return nil }
+            return (text, folded)
+        }
+        #expect(thinkingRowsAfterSupersede.count == 1)
+        #expect(thinkingRowsAfterSupersede.first?.0 == "", "the stale accumulated reasoning text must not survive")
+        #expect(thinkingRowsAfterSupersede.first?.1 == false, "the fresh placeholder starts unfolded")
+        #expect(!viewModel.items.contains {
+            if case .toolActivity = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+
+        secondControllable.continuation.yield(.done(RecallResponse(answer: "Second answer", sources: [])))
+        secondControllable.continuation.finish()
+        await viewModel.streamTask?.value
+        firstControllable.continuation.finish()
+
+        #expect(!viewModel.items.contains {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+        #expect(!viewModel.items.contains {
+            if case .toolActivity = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+        let lastAssistant = try #require(viewModel.items.last)
+        guard case let .assistant(text, _, _, _) = lastAssistant.kind else {
+            Issue.record("expected an assistant row"); return
+        }
+        #expect(text == "Second answer")
+    }
+
+    @Test("a thrown error drops any in-flight thinking and tool-activity rows too")
+    func errorDropsThinkingAndToolActivityRows() async {
+        let controllable = makeControllableStream()
+        let viewModel = makeViewModel(streamAnswer: { _, _, _, _ in controllable.stream })
+
+        viewModel.composerText = "Question"
+        viewModel.send()
+        controllable.continuation.yield(.thinking("Reasoning..."))
+        controllable.continuation.yield(.toolActivity(
+            ToolActivity(toolName: "search_transcripts", displayLabel: "Searching transcripts", phase: .started)
+        ))
+        await waitUntil {
+            viewModel.items.contains {
+                if case .toolActivity = $0.kind {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        controllable.continuation.finish(throwing: RecallEngineError.generationFailed("boom"))
+        await viewModel.streamTask?.value
+
+        #expect(!viewModel.items.contains {
+            if case .thinking = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+        #expect(!viewModel.items.contains {
+            if case .toolActivity = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
+        #expect(viewModel.items.contains {
+            if case .error = $0.kind {
+                true
+            } else {
+                false
+            }
+        })
     }
 }
