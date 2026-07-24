@@ -30,7 +30,7 @@ struct SummaryRichEditor: View {
     @Environment(\.fontResolutionContext) private var fontContext
 
     var body: some View {
-        VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.lg.value) {
             ForEach(model.document.segments) { segment in
                 switch segment {
                 case let .editable(id, _):
@@ -42,6 +42,14 @@ struct SummaryRichEditor: View {
                         .scrollContentBackground(.hidden)
                         .font(MarginaliaTextStyle.body.font)
                         .focused($focusedSegment, equals: id)
+                        // Each prose run must GROW to its content, not scroll inside a clipped box.
+                        // A `TextEditor` scrolls by default, so a segment taller than its slot got
+                        // its own scroll bar and hid text — the page already scrolls as a whole, so
+                        // a scroller per segment is both wrong and unreachable-feeling. Disabling
+                        // the inner scroll and fixing the vertical axis makes the editor lay out at
+                        // its natural height.
+                        .scrollDisabled(true)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                 case let .table(_, rawMarkdown):
