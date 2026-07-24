@@ -331,7 +331,8 @@ struct PersonDetailView: View {
                     text: $manualFactText,
                     prompt: "e.g. Leads the platform migration project",
                     scheme: scheme,
-                    minHeight: 44
+                    minHeight: 44,
+                    maxHeight: 72
                 )
                 HStack(spacing: MarginaliaSpacing.sm.value) {
                     Picker("Kind", selection: $manualFactKind) {
