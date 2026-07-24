@@ -161,7 +161,7 @@ struct SchemaFidelityTests {
         #expect(enabled)
     }
 
-    @Test("only the foundation-slice + slice-2 + slice-3 + recall-slice-2 tables exist")
+    @Test("only the foundation-slice + slice-2 + slice-3 + recall-slice-2 + v5 tables exist")
     func noExtraTablesYet() throws {
         let queue = try migratedQueue()
         let tableNames = try queue.read { db in
@@ -177,6 +177,7 @@ struct SchemaFidelityTests {
         // virtual table's storage even though it is declared standalone (non-external-content) —
         // SQLite's own FTS5 module always creates these regardless of the `content=` option.
         // Phase 3.4 Track H (`arikit-engine-extras.md` §2.3/§6-5) appended `meetingParticipant`.
+        // `v5_vocabulary_term` (docs/plans/custom-vocabulary.md §4.1) appended `vocabularyTerm`.
         #expect(Set(tableNames) == [
             "meeting", "speaker", "speakerSegment", "transcript",
             "person", "profileFact", "profileFactSource", "meetingParticipant",
@@ -185,7 +186,7 @@ struct SchemaFidelityTests {
             "recallChunk", "recallIndexState", "askConversation", "askMessage",
             "recallFts", "recallFts_data", "recallFts_content", "recallFts_idx",
             "recallFts_docsize", "recallFts_config",
-            "setting"
+            "setting", "vocabularyTerm"
         ])
     }
 

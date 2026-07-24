@@ -124,4 +124,8 @@ public actor AppDatabase {
     public nonisolated var settings: SettingsRepository {
         SettingsRepository(dbWriter: dbWriter)
     }
+
+    public nonisolated var vocabulary: VocabularyRepository {
+        VocabularyRepository(dbWriter: dbWriter)
+    }
 }

@@ -41,6 +41,56 @@ enum SchemaMigrator {
     ///   2026-07-23 incident. Only ever enabled via the explicit `ARI_RESET_STORE` opt-in read in
     ///   `AppEnvironment.bootstrap()`, never in normal launch.
     static func migrator(eraseOnSchemaChange: Bool = false) -> DatabaseMigrator {
+        var migrator = migratorThroughV4(eraseOnSchemaChange: eraseOnSchemaChange)
+
+        // v5 (docs/plans/custom-vocabulary.md §4.1) — additive-only, `v1_baseline` through
+        // `v4_ask_message_cards` all stay frozen. A user-editable dictionary of domain proper
+        // nouns; global, not per-meeting (no FK). `normalizedTerm` is a folded duplicate-
+        // detection key (`VocabularyTermRecord.normalize(_:)`), never displayed. The partial
+        // unique index lets a soft-deleted term be re-added later (API verified:
+        // GRDB/QueryInterface/Schema/Database+SchemaDefinition.swift:514-531).
+        migrator.registerMigration("v5_vocabulary_term") { db in
+            try db.create(table: "vocabularyTerm") { t in
+                t.primaryKey("id", .text)
+                t.column("term", .text).notNull()
+                t.column("normalizedTerm", .text).notNull()
+                t.column("definition", .text)
+                // JSON arrays — mirrors calendarEvent.attendeesJson (line ~327 above).
+                t.column("alternateFormsJson", .text)
+                t.column("misheardAsJson", .text)
+                t.column("isEnabled", .boolean).notNull().defaults(to: true)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+                // User-authored content → tombstones, sync-aware-but-off (plan principle 5).
+                t.column("isDeleted", .boolean).notNull().defaults(to: false)
+                t.column("deletedAt", .datetime)
+            }
+
+            try db.create(
+                index: "index_vocabularyTerm_on_normalizedTerm",
+                on: "vocabularyTerm",
+                columns: ["normalizedTerm"],
+                options: .unique,
+                condition: Column("isDeleted") == false
+            )
+
+            try db.create(
+                index: "index_vocabularyTerm_on_isEnabled",
+                on: "vocabularyTerm",
+                columns: ["isEnabled"]
+            )
+        }
+
+        return migrator
+    }
+
+    /// The full migration history EXCLUDING `v5_vocabulary_term` — a test seam
+    /// (`VocabularyRepositoryTests`, mirroring `MigrationSafetyTests`'s two-migrator pattern) so a
+    /// test can drive a v4-shaped DB forward with the REAL v5 migration and prove it's additive.
+    /// Module-internal only; production always goes through `migrator(eraseOnSchemaChange:)` above.
+    /// No DDL here differs from what `migrator(eraseOnSchemaChange:)` registers for v1–v4 — this is
+    /// a code-motion split, not an edit to any frozen migration's content.
+    static func migratorThroughV4(eraseOnSchemaChange: Bool = false) -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
         migrator.eraseDatabaseOnSchemaChange = eraseOnSchemaChange
 
