@@ -82,6 +82,20 @@ struct PeopleListView: View {
                         .marginaliaTextStyle(.headline, in: scheme)
                     Text(owner.role ?? "No role set yet")
                         .marginaliaTextStyle(.callout, in: scheme, ink: .inkSecondary)
+                    // Same badge convention as `personRow` below — the owner's facts are real
+                    // `profileFact` rows too (they just have nowhere to surface without this: the
+                    // owner is deliberately excluded from `filtered`, so this card is the owner's
+                    // only path to `PersonDetailView`'s facts section).
+                    if let counts = viewModel.factCounts[owner.id], counts.pending > 0 || counts.active > 0 {
+                        HStack(spacing: MarginaliaSpacing.xs.value) {
+                            if counts.pending > 0 {
+                                badge("\(counts.pending) pending", ink: .accent)
+                            }
+                            if counts.active > 0 {
+                                badge("\(counts.active) \(counts.active == 1 ? "fact" : "facts")", ink: .inkSecondary)
+                            }
+                        }
+                    }
                 } else {
                     Text("No owner profile yet")
                         .marginaliaTextStyle(.headline, in: scheme)
@@ -90,10 +104,21 @@ struct PeopleListView: View {
                 }
             }
             Spacer(minLength: MarginaliaSpacing.sm.value)
-            Button(viewModel.owner == nil ? "Set up profile" : "Edit owner profile") {
-                ownerSheetPresented = true
+            HStack(spacing: MarginaliaSpacing.xs.value) {
+                // Reuses the exact same `PersonDetailView` the roster rows push to (§3 of the
+                // duplicate-person-merge plan) — the owner's facts live in the same
+                // pending/needs-review/active/other buckets as everyone else's, not a bespoke view.
+                if let owner = viewModel.owner {
+                    NavigationLink(value: owner.id) {
+                        Text("View facts")
+                    }
+                    .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
+                }
+                Button(viewModel.owner == nil ? "Set up profile" : "Edit owner profile") {
+                    ownerSheetPresented = true
+                }
+                .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
             }
-            .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
         }
         .padding(MarginaliaSpacing.md.value)
         .background {

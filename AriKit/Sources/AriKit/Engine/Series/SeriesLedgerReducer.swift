@@ -333,7 +333,7 @@ public struct SeriesLedgerReducer: Sendable {
 
         Rules:
         - MERGE, do not just append. Reconcile the new meeting against the existing ledger.
-        - Open action items: carry each forward with its owner and a status marker — (new), (still open), (done), or (dropped). REMOVE items that are clearly completed, resolved, or superseded by the new meeting; do not let the list grow without bound.
+        - Open action items: one bullet per item, in EXACTLY this shape and no other — `- **Owner**: action text (status) @mref(...)`. The status is one bare parenthetical — (new), (still open), (done), or (dropped) — placed right before the citation. Do NOT write the words "Status:" or "Ref:" anywhere — the status and the citation are rendered as their own visual elements, so those labels are redundant and must not appear. REMOVE items that are clearly completed, resolved, or superseded by the new meeting; do not let the list grow without bound.
         - Decisions: keep durable decisions that hold across the series.
         - Recurring themes: topics that keep coming up across meetings.
         - Per-person threads: for each NAMED participant, their ongoing goals, commitments, and trajectory over time.

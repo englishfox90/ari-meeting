@@ -44,4 +44,17 @@ struct MarginaliaBadgeStyleParityTests {
         #expect(spec.stroke == nil)
         #expect(spec.requiredSymbol == "record.circle")
     }
+
+    @Test("info style: surface fill, inkSecondary label, hairline stroke, no required symbol — never accent")
+    func infoSpec() {
+        let spec = MarginaliaBadgeStyle.info.spec
+        #expect(spec.fill == .surface)
+        #expect(spec.label == .inkSecondary)
+        #expect(spec.stroke == .hairline)
+        #expect(spec.requiredSymbol == nil)
+        // The Signal Rule carve-out for accent is citations/selection/links/speaker-names only —
+        // a low-emphasis status pill must not reach for it.
+        #expect(spec.fill != .accent)
+        #expect(spec.label != .accent)
+    }
 }

@@ -2,19 +2,25 @@
 //  MarginaliaBadge.swift — the Marginalia badge/chip system (plan §5 Tier 1.4,
 //  docs/plans/arikit-component-library.md).
 //
-//  Four styles: neutral, accent (the citation/selection look — accent-allowed), success,
-//  recording. `MarginaliaBadgeSpec` is a plain-data description kept separate from the
-//  `View` so the parity test can assert the style -> color-role / symbol mapping directly,
-//  mirroring `MarginaliaButtonSpec`/`MarginaliaButtonStyleParityTests`.
+//  Five styles: neutral, accent (the citation/selection look — accent-allowed), success,
+//  recording, info (a low-emphasis informational pill — e.g. a ledger action item's "new"
+//  status — that must NOT reach for the reserved `accent`/`recordingRed` roles). `MarginaliaBadgeSpec`
+//  is a plain-data description kept separate from the `View` so the parity test can assert the
+//  style -> color-role / symbol mapping directly, mirroring
+//  `MarginaliaButtonSpec`/`MarginaliaButtonStyleParityTests`.
 //
 import SwiftUI
 
-/// The four badge styles in the Marginalia system (plan §5 Tier 1.4).
+/// The badge styles in the Marginalia system (plan §5 Tier 1.4).
 public enum MarginaliaBadgeStyle: Sendable {
     case neutral
     case accent
     case success
     case recording
+    /// Low-emphasis informational pill (e.g. a ledger action item's "new" status). Deliberately
+    /// distinct from `accent`, which is reserved for selection/citations/links/speaker-names
+    /// (brand/tokens.json), and from `success`/`recording`'s solid meaning-fills.
+    case info
 }
 
 /// Plain-data description of one badge style's appearance, independent of `View` so the
@@ -56,6 +62,11 @@ public extension MarginaliaBadgeStyle {
             MarginaliaBadgeSpec(fill: .success, label: .canvas, stroke: nil, requiredSymbol: "checkmark.seal")
         case .recording:
             MarginaliaBadgeSpec(fill: .recordingRed, label: .canvas, stroke: nil, requiredSymbol: "record.circle")
+        case .info:
+            // A quieter fill than `.neutral` (surface vs. elevated) so a "new" status reads as
+            // lower-emphasis than an ongoing "still open" one, without touching the reserved
+            // accent role.
+            MarginaliaBadgeSpec(fill: .surface, label: .inkSecondary, stroke: .hairline, requiredSymbol: nil)
         }
     }
 }

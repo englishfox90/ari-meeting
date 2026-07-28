@@ -10,12 +10,22 @@
 //  out-of-range member index) renders as inert muted timecode text, never a dead "play" affordance
 //  (No-Fake-State).
 //
+//  Within a series ledger's "Open action items" section specifically (bullets and table cells),
+//  a trailing status marker (`Status: (new)`, `**(done)**`, an isolated `Status` table cell, …)
+//  is extracted (`MarginaliaLedgerActionItem`) and rendered as a `MarginaliaBadge` instead of
+//  literal text — Decisions/Recurring themes/Per-person threads carry no such vocabulary and are
+//  left untouched.
+//
 import SwiftUI
 
 /// Renders a markdown document as Marginalia-styled blocks (headings on the Bricolage ramp,
 /// styled lists, and a flat hairline-bordered table), instead of one flattened inline string.
 public struct MarginaliaMarkdownView: View {
     private let blocks: [MarginaliaMarkdownBlock]
+    /// Parallel to `blocks`: `true` for a block that falls under an "Open action items" heading
+    /// (case-insensitively contains "action item"), so bullets/table cells there — and only
+    /// there — get their status marker parsed into a badge instead of literal text.
+    private let actionItemsSectionFlags: [Bool]
     /// Seeks THIS document's audio to a `[MM:SS]`/`@ref(...)` moment. `nil` when no audio resolves.
     private let onSeek: ((Double) -> Void)?
     /// Opens a series ledger's cross-meeting `@mref(m<index>@TS)` citation — the 1-based member
@@ -32,7 +42,15 @@ public struct MarginaliaMarkdownView: View {
         onOpenMeetingMoment: ((_ memberIndex: Int, _ seconds: Double) -> Void)? = nil,
         meetingMomentCount: Int? = nil
     ) {
-        blocks = MarginaliaMarkdown.parse(markdown)
+        let parsedBlocks = MarginaliaMarkdown.parse(markdown)
+        blocks = parsedBlocks
+        var inActionItems = false
+        actionItemsSectionFlags = parsedBlocks.map { block in
+            if case let .heading(_, text) = block {
+                inActionItems = text.lowercased().contains("action item")
+            }
+            return inActionItems
+        }
         self.onSeek = onSeek
         self.onOpenMeetingMoment = onOpenMeetingMoment
         self.meetingMomentCount = meetingMomentCount
@@ -40,8 +58,8 @@ public struct MarginaliaMarkdownView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.md.value) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
+            ForEach(Array(blocks.enumerated()), id: \.offset) { offset, block in
+                blockView(block, isActionItemsSection: actionItemsSectionFlags[offset])
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -49,7 +67,7 @@ public struct MarginaliaMarkdownView: View {
     }
 
     @ViewBuilder
-    private func blockView(_ block: MarginaliaMarkdownBlock) -> some View {
+    private func blockView(_ block: MarginaliaMarkdownBlock, isActionItemsSection: Bool) -> some View {
         switch block {
         case let .heading(level, text):
             // title2 (19pt) for h1/h2, headline (17pt) for h3+ — both ≥17pt, so both render in
@@ -64,32 +82,39 @@ public struct MarginaliaMarkdownView: View {
         case let .bulletList(items):
             VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    listRow(marker: "•", text: item)
+                    listRow(marker: "•", text: item, isActionItemsSection: isActionItemsSection)
                 }
             }
 
         case let .numberedList(items):
             VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
                 ForEach(Array(items.enumerated()), id: \.offset) { offset, item in
-                    listRow(marker: "\(offset + 1).", text: item)
+                    listRow(marker: "\(offset + 1).", text: item, isActionItemsSection: isActionItemsSection)
                 }
             }
 
         case let .table(header, rows):
-            tableView(header: header, rows: rows)
+            tableView(header: header, rows: rows, isActionItemsSection: isActionItemsSection)
         }
     }
 
-    private func listRow(marker: String, text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: MarginaliaSpacing.sm.value) {
+    private func listRow(marker: String, text: String, isActionItemsSection: Bool) -> some View {
+        let (body, status): (String, MarginaliaLedgerStatus?) = isActionItemsSection
+            ? MarginaliaLedgerActionItem.extractStatus(from: text)
+            : (text, nil)
+        return HStack(alignment: .firstTextBaseline, spacing: MarginaliaSpacing.sm.value) {
             Text(marker)
                 .marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
                 .frame(minWidth: MarginaliaSpacing.md.value, alignment: .trailing)
-            richText(text)
+            if let status {
+                inlineFlow(body, trailingStatus: status)
+            } else {
+                richText(text)
+            }
         }
     }
 
-    private func tableView(header: [String], rows: [[String]]) -> some View {
+    private func tableView(header: [String], rows: [[String]], isActionItemsSection: Bool) -> some View {
         let columnCount = max(header.count, rows.map(\.count).max() ?? 0)
         return Grid(
             alignment: .leading,
@@ -108,7 +133,7 @@ public struct MarginaliaMarkdownView: View {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 GridRow {
                     ForEach(0 ..< columnCount, id: \.self) { column in
-                        tableCell(column < row.count ? row[column] : "")
+                        tableCell(column < row.count ? row[column] : "", isActionItemsSection: isActionItemsSection)
                     }
                 }
             }
@@ -142,10 +167,16 @@ public struct MarginaliaMarkdownView: View {
 
     /// A table body cell. A citation-bearing cell flows into chips (and claims the row's flexible
     /// width, so it becomes the wide column); a plain cell sizes to its content so label columns
-    /// stay narrow.
+    /// stay narrow. Within the action-items section, a cell's status marker (including a whole
+    /// cell that IS just the marker — the dedicated `Status` column) becomes a badge.
     @ViewBuilder
-    private func tableCell(_ raw: String) -> some View {
-        if hasInteractiveHandler, MarginaliaMarkdown.hasCitation(raw) {
+    private func tableCell(_ raw: String, isActionItemsSection: Bool) -> some View {
+        let (body, status): (String, MarginaliaLedgerStatus?) = isActionItemsSection
+            ? MarginaliaLedgerActionItem.extractStatus(from: raw)
+            : (raw, nil)
+        if let status {
+            inlineFlow(body, trailingStatus: status)
+        } else if hasInteractiveHandler, MarginaliaMarkdown.hasCitation(raw) {
             inlineFlow(raw)
         } else {
             Text(attributedInline(raw))
@@ -165,8 +196,11 @@ public struct MarginaliaMarkdownView: View {
     private static let citationSentinel: Character = "\u{FFFC}"
 
     /// The tappable-chip flow: words as `Text`, citations as accent play badges (or inert muted
-    /// timecode when their handler is absent / the member index is stale).
-    private func inlineFlow(_ raw: String) -> some View {
+    /// timecode when their handler is absent / the member index is stale). `trailingStatus`, when
+    /// set, appends a ledger status badge as one more flow item after every word/citation — used
+    /// by action-item rows so the badge wraps naturally alongside the text instead of sitting on
+    /// its own line.
+    private func inlineFlow(_ raw: String, trailingStatus: MarginaliaLedgerStatus? = nil) -> some View {
         let spans = MarginaliaMarkdown.inlineSpans(raw)
         // Rebuild the line with each citation swapped for the sentinel, parse emphasis over the
         // whole thing, then split the attributed result back apart at the sentinels — pairing each
@@ -184,7 +218,10 @@ public struct MarginaliaMarkdownView: View {
             }
             return nil
         }
-        let items = flowItems(from: attributedInline(merged), citations: citations)
+        var items = flowItems(from: attributedInline(merged), citations: citations)
+        if let trailingStatus {
+            items.append(.status(trailingStatus))
+        }
         return MarginaliaFlowLayout(spacing: 3, lineSpacing: MarginaliaSpacing.xs.value) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 flowItemView(item)
@@ -199,23 +236,58 @@ public struct MarginaliaMarkdownView: View {
         case let .word(attributed):
             Text(attributed).marginaliaTextStyle(.body, in: scheme)
 
-        case let .audio(seconds, label):
+        case let .audio(seconds, label, trailingPunctuation):
             if let onSeek {
-                MarginaliaBadge(label, style: .accent, symbol: "play.fill", scheme: scheme) {
-                    onSeek(seconds)
-                }
+                citationChip(label: label, trailingPunctuation: trailingPunctuation) { onSeek(seconds) }
             } else {
-                inertMoment(label)
+                inertMoment(label + trailingPunctuation)
             }
 
-        case let .meeting(index, seconds, label):
+        case let .meeting(index, seconds, label, trailingPunctuation):
             if let onOpenMeetingMoment, isResolvableMember(index) {
-                MarginaliaBadge(label, style: .accent, symbol: "play.fill", scheme: scheme) {
+                citationChip(label: label, trailingPunctuation: trailingPunctuation) {
                     onOpenMeetingMoment(index, seconds)
                 }
             } else {
-                inertMoment(label)
+                inertMoment(label + trailingPunctuation)
             }
+
+        case let .status(status):
+            statusBadge(status)
+        }
+    }
+
+    /// A tappable citation chip with any immediately-trailing punctuation (a sentence-ending
+    /// period, a comma before the next clause, …) glued on with NO gap — `MarginaliaFlowLayout`
+    /// applies its fixed inter-item spacing between every flow item, which would otherwise float
+    /// that punctuation away from the chip it belongs to (e.g. "▶ 07:06 ." instead of "▶ 07:06.").
+    private func citationChip(
+        label: String,
+        trailingPunctuation: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 0) {
+            MarginaliaBadge(label, style: .accent, symbol: "play.fill", scheme: scheme, action: action)
+            if !trailingPunctuation.isEmpty {
+                Text(trailingPunctuation).marginaliaTextStyle(.body, in: scheme, ink: .inkSecondary)
+            }
+        }
+    }
+
+    /// A ledger action item's status badge (see `MarginaliaLedgerActionItem`/
+    /// `MarginaliaLedgerStatus`). `dropped` renders visibly de-emphasized (reduced opacity) rather
+    /// than as its own formal badge style, since it shares `.neutral`'s low-key appearance.
+    @ViewBuilder
+    private func statusBadge(_ status: MarginaliaLedgerStatus) -> some View {
+        switch status {
+        case .new:
+            MarginaliaBadge(status.label, style: .info, scheme: scheme)
+        case .stillOpen:
+            MarginaliaBadge(status.label, style: .neutral, scheme: scheme)
+        case .done:
+            MarginaliaBadge(status.label, style: .success, scheme: scheme)
+        case .dropped:
+            MarginaliaBadge(status.label, style: .neutral, scheme: scheme).opacity(0.55)
         }
     }
 
@@ -229,11 +301,25 @@ public struct MarginaliaMarkdownView: View {
         return index >= 1 && index <= meetingMomentCount
     }
 
+    /// Splits a leading run of punctuation characters (`.`, `,`, `;`, `:`, `!`, `?`, closing
+    /// brackets, …) off the front of `text`. Used to merge punctuation that immediately trails a
+    /// citation sentinel into that citation's flow item, so `MarginaliaFlowLayout`'s fixed
+    /// inter-item spacing never floats it away from the chip it follows. Pure — `package`-visible
+    /// purely so it can be unit-tested directly without a SwiftUI environment.
+    package nonisolated static func splitLeadingPunctuation(
+        _ text: Substring
+    ) -> (punctuation: Substring, rest: Substring) {
+        let punctuation = text.prefix { $0.isPunctuation }
+        return (punctuation, text[punctuation.endIndex...])
+    }
+
     /// Walks the emphasis-parsed line, emitting whitespace-separated word tokens (attributes
     /// preserved) between sentinels and one chip item per sentinel — consumed in order from
     /// `citations`. Splitting on the sentinel here (not on the raw markers) is what lets emphasis
     /// carry across a citation. Spacing between tokens is the flow layout's job, so trailing
-    /// whitespace is dropped.
+    /// whitespace is dropped. Any run of punctuation immediately following a sentinel (no
+    /// intervening whitespace) is merged into that citation's item rather than becoming its own
+    /// word token — see `splitLeadingPunctuation`.
     private func flowItems(from attributed: AttributedString, citations: [InlineCitation]) -> [FlowItem] {
         var items: [FlowItem] = []
         var citationIndex = 0
@@ -251,15 +337,29 @@ public struct MarginaliaMarkdownView: View {
             let character = attributed.characters[index]
             if character == Self.citationSentinel {
                 flushWord(index)
+                var next = attributed.index(afterCharacter: index)
                 if citationIndex < citations.count {
+                    let remainder = String(attributed.characters[next...])
+                    let (punctuation, _) = Self.splitLeadingPunctuation(remainder[...])
+                    let trailingPunctuation = String(punctuation)
+                    for _ in 0 ..< trailingPunctuation.count {
+                        next = attributed.index(afterCharacter: next)
+                    }
                     switch citations[citationIndex] {
                     case let .audio(seconds, label):
-                        items.append(.audio(seconds: seconds, label: label))
+                        items.append(.audio(seconds: seconds, label: label, trailingPunctuation: trailingPunctuation))
                     case let .meeting(memberIndex, seconds, label):
-                        items.append(.meeting(index: memberIndex, seconds: seconds, label: label))
+                        items.append(.meeting(
+                            index: memberIndex,
+                            seconds: seconds,
+                            label: label,
+                            trailingPunctuation: trailingPunctuation
+                        ))
                     }
                     citationIndex += 1
                 }
+                index = next
+                continue
             } else if character.isWhitespace {
                 flushWord(index)
             } else if wordStart == nil {
@@ -282,10 +382,12 @@ public struct MarginaliaMarkdownView: View {
     }
 }
 
-/// One piece of an inline-flowed line: a word (with emphasis), an audio moment, or a cross-meeting
-/// moment.
+/// One piece of an inline-flowed line: a word (with emphasis), an audio moment, a cross-meeting
+/// moment, or a ledger status badge (each citation carries any immediately-trailing punctuation
+/// merged in — see `MarginaliaMarkdownView.splitLeadingPunctuation`).
 private enum FlowItem {
     case word(AttributedString)
-    case audio(seconds: Double, label: String)
-    case meeting(index: Int, seconds: Double, label: String)
+    case audio(seconds: Double, label: String, trailingPunctuation: String)
+    case meeting(index: Int, seconds: Double, label: String, trailingPunctuation: String)
+    case status(MarginaliaLedgerStatus)
 }

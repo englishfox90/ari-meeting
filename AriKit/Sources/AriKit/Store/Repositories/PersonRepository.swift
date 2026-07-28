@@ -139,6 +139,76 @@ public struct PersonRepository: Sendable {
         try db.execute(sql: "DELETE FROM person WHERE id = ?", arguments: [s])
     }
 
+    /// Merges `duplicateId` into `survivorId`: re-homes every reference the schema knows about
+    /// (`meetingParticipant`, `profileFact`, `speaker`, `series.ownerPersonId` — the exhaustive
+    /// set of FKs onto `person` in `SchemaMigrator`), carries onto the survivor any of the
+    /// duplicate's identity fields the survivor is missing (starting with `email`, since a
+    /// missing owner email is exactly what breaks calendar-attendee identity matching —
+    /// docs/plans/duplicate-person-merge.md), and hard-deletes the duplicate — all in one write
+    /// transaction. Returns the merged survivor.
+    ///
+    /// **Collision rule for `meetingParticipant`:** when both persons are already linked to the
+    /// same meeting, the SURVIVOR's row wins and the duplicate's is dropped (`mergePerson`,
+    /// below) — never the reverse. This is a deliberate "most specific provenance" choice, not an
+    /// arbitrary one: callers of this API are expected to pass the person with the more authoritative
+    /// row as `survivorId` (e.g. a `speaker`-sourced link, backed by an actual voice/diarization
+    /// match made during the meeting, is more specific than a `calendar`-sourced link, which only
+    /// reflects a calendar invite — see `PersonRepositoryMergeTests` and the repair note this
+    /// resolves). If you need the opposite precedence, swap which id you pass as the survivor.
+    ///
+    /// **Field carry-over** only fills fields the survivor has left `nil` — an existing survivor
+    /// value is never overwritten by the duplicate's, so this never silently clobbers authored
+    /// identity. `email` is the one field with a UNIQUE constraint, so the duplicate's email is
+    /// cleared BEFORE the survivor's is set — the two rows never hold the same address at once,
+    /// which is what let this exact collision slip past `email UNIQUE` in the 2026-07-22 owner-save
+    /// incident (`saveOwner`'s doc comment, above).
+    ///
+    /// Idempotent/safe to call again with a `duplicateId` that no longer exists — no-ops other
+    /// than returning the (unmodified) survivor.
+    ///
+    /// Throws `.personNotFound` if `survivorId` doesn't exist. No-ops (identity merge is
+    /// vacuous) when `duplicateId == survivorId`.
+    @discardableResult
+    public func merge(duplicateId: PersonID, into survivorId: PersonID, at date: Date = Date()) async throws -> Person {
+        try await dbWriter.write { db in
+            guard var survivor = try PersonRecord.fetchOne(db, key: survivorId.rawValue) else {
+                throw PersonRepositoryError.personNotFound(survivorId)
+            }
+            guard duplicateId != survivorId,
+                  var duplicate = try PersonRecord.fetchOne(db, key: duplicateId.rawValue)
+            else {
+                // Either a same-id no-op, or the duplicate is already gone (idempotent re-run).
+                return survivor.asModel()
+            }
+
+            // Carry over fields the survivor is missing. `email` first, and cleared off the
+            // duplicate before it lands on the survivor — see doc comment above.
+            if survivor.email == nil, let duplicateEmail = duplicate.email {
+                duplicate.email = nil
+                try duplicate.update(db)
+                survivor.email = duplicateEmail
+            }
+            if survivor.role == nil {
+                survivor.role = duplicate.role
+            }
+            if survivor.organization == nil {
+                survivor.organization = duplicate.organization
+            }
+            if survivor.domain == nil {
+                survivor.domain = duplicate.domain
+            }
+            if survivor.notes == nil {
+                survivor.notes = duplicate.notes
+            }
+            survivor.updatedAt = date
+            try survivor.update(db)
+
+            try Self.mergePerson(source: duplicateId, into: survivorId, db: db)
+
+            return survivor.asModel()
+        }
+    }
+
     /// Tombstone — sets `isDeleted`/`deletedAt`, never issues a hard `DELETE`.
     public func softDelete(_ id: PersonID, at date: Date) async throws {
         try await dbWriter.write { db in
@@ -248,6 +318,24 @@ public struct PersonRepository: Sendable {
                 .order(Column("createdAt").desc)
                 .fetchAll(db)
                 .map { $0.asModel() }
+        }
+    }
+
+    /// Every `meetingParticipant.meetingId` linked to `id`, **including links to soft-deleted
+    /// meetings** — unlike `meetings(forPerson:)`, which filters those out because it feeds the UI.
+    ///
+    /// A merge re-points participant rows unconditionally (`mergePerson`), so a repair that reports
+    /// its scope from `meetings(forPerson:)` silently undercounts by exactly the soft-deleted links
+    /// (observed 2026-07-28: 9 reported vs 12 actually moved). Row-level truth belongs in any
+    /// report a human approves a write from.
+    public func participantMeetingIDs(forPerson id: PersonID) async throws -> Set<MeetingID> {
+        try await dbWriter.read { db in
+            try Set(
+                MeetingParticipantRecord
+                    .filter(Column("personId") == id.rawValue)
+                    .fetchAll(db)
+                    .map { MeetingID($0.meetingId) }
+            )
         }
     }
 

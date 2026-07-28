@@ -49,7 +49,18 @@ public struct SummaryContextAssembler: Sendable {
     /// Never throws (see file header): every read degrades to "omit that line" on failure.
     public func contextBlock(for meetingId: MeetingID) async -> String {
         let owner = await (try? database.persons.owner()) ?? nil
-        let participants = await (try? database.persons.participants(inMeeting: meetingId)) ?? []
+        // The owner can ALSO be linked as a `meetingParticipant` (e.g. a calendar/speaker link
+        // that survives a duplicate-person merge, docs/plans — duplicate-person-merge) — exclude
+        // them here so they never render as both "Owner:" and their own "Participants:" entry.
+        // Scoped to this call site rather than `PersonRepository.participants(inMeeting:)` itself:
+        // that method has other callers (diarization, extraction/reconciliation, calendar sync)
+        // that legitimately reason about the owner as a participant link, and changing its
+        // semantics repository-wide is a larger, riskier change than this prompt-assembly fix
+        // calls for.
+        var participants = await (try? database.persons.participants(inMeeting: meetingId)) ?? []
+        if let ownerId = owner?.id {
+            participants.removeAll { $0.id == ownerId }
+        }
 
         // ← commands.rs:441-443: nothing to anchor the block on → empty string, not a bare header.
         guard owner != nil || !participants.isEmpty else { return "" }
