@@ -72,11 +72,11 @@ public struct SummaryContextAssembler: Sendable {
             block += "Organization: \(organization) (everyone below works at \(organization) unless noted).\n"
         }
 
-        // The current meeting's own series membership anchors fact-relevance ranking below (bleed
-        // fix, docs/plans — see `factsClause`): facts sourced from a meeting in this same series
-        // rank as relevant background; facts sourced from an unrelated meeting are still included
-        // (F2/F3 must still work) but explicitly labelled so the summarizer can't mistake them for
-        // something said in THIS meeting.
+        // The current meeting's own series membership gates fact eligibility below (bleed fix,
+        // docs/plans — see `factsClause`): only facts sourced from THIS meeting or another meeting
+        // in the same series are ever injected. A previous "include everything, just label it
+        // unrelated" approach still leaked into Action Items on a real run (a 4B model ignored the
+        // label), so relevance is now a whitelist, not a caveat.
         let currentSeriesIds = await Set((try? database.series.seriesIds(forMeeting: meetingId)) ?? [])
 
         if let owner {
@@ -242,29 +242,12 @@ public struct SummaryContextAssembler: Sendable {
 
     // MARK: - Facts (← `person_facts_clause`, commands.rs:398-414)
 
-    /// Relevance of a fact to the meeting currently being summarized (bleed-fix ranking, see the
-    /// header note in `contextBlock`). `relevant` sorts first; ties within a tier still break on
-    /// confidence/recency exactly as before this change.
-    private enum FactRelevance: Int, Comparable {
-        /// Sourced from THIS meeting, or from another meeting in the same series, or with no
-        /// recorded source meeting at all (can't be shown to be unrelated, so not flagged as such).
-        case relevant = 0
-        /// Sourced from a meeting that is demonstrably NOT part of this meeting's series — the
-        /// exact shape of the contamination this fix targets. Still included (F2/F3 must keep
-        /// working) but explicitly labelled `unrelated background` below.
-        case unrelated = 1
-
-        static func < (lhs: Self, rhs: Self) -> Bool {
-            lhs.rawValue < rhs.rawValue
-        }
-    }
-
-    /// The person's top active facts joined into one clause, or `nil` when there are none. Every
-    /// fact is framed as background (never a bare assertion) and, when a real source-meeting date
-    /// is known, dated — so the summarizer cannot mistake "what this person is known for" with
-    /// "what was discussed today". Facts sourced from the current meeting's own series rank first;
-    /// facts from an unrelated meeting are ranked last and explicitly marked `unrelated background`
-    /// rather than silently dropped.
+    /// The person's top *eligible* active facts joined into one clause, or `nil` when there are
+    /// none. Eligibility is a whitelist (see `eligibleDateText`), not a label: a previous approach
+    /// included every fact and merely labelled cross-meeting ones "(unrelated background)", but a
+    /// real regenerate showed a 4B model promoting labelled owner facts straight into Action Items
+    /// anyway (docs/plans bleed-fix history) — so facts that can't be shown to belong to this
+    /// meeting or its series are dropped from the prompt entirely, not just flagged.
     private func factsClause(
         for personId: PersonID,
         currentMeetingId: MeetingID,
@@ -274,69 +257,68 @@ public struct SummaryContextAssembler: Sendable {
             return nil
         }
 
-        var annotated: [(fact: ProfileFact, relevance: FactRelevance, dateText: String?)] = []
+        var eligible: [(fact: ProfileFact, dateText: String)] = []
         for fact in facts {
-            let relevance = await relevance(
-                of: fact,
+            guard let dateText = await eligibleDateText(
+                for: fact,
                 currentMeetingId: currentMeetingId,
                 currentSeriesIds: currentSeriesIds
-            )
-            // No-Fake-State: only render a date when we found a real source meeting to read it
-            // from — never fall back to e.g. the fact's own `createdAt` and imply it's the same.
-            var dateText: String?
-            if let sourceMeetingId = fact.sourceMeetingId,
-               let sourceMeeting = try? await database.meetings.find(sourceMeetingId) ?? nil {
-                dateText = Self.factDateFormatter.string(from: sourceMeeting.createdAt)
-            }
-            annotated.append((fact, relevance, dateText))
+            ) else { continue }
+            eligible.append((fact, dateText))
         }
 
-        // ← `top_active_facts` ordering (confidence DESC, created_at DESC) as the tiebreaker within
-        // each relevance tier, capped at `maxPersonFacts`.
-        let top = annotated
+        // ← `top_active_facts` ordering (confidence DESC, created_at DESC), capped at `maxPersonFacts`.
+        let top = eligible
             .sorted { lhs, rhs in
-                if lhs.relevance != rhs.relevance {
-                    return lhs.relevance < rhs.relevance
-                }
                 if lhs.fact.confidence != rhs.fact.confidence {
                     return lhs.fact.confidence > rhs.fact.confidence
                 }
                 return lhs.fact.createdAt > rhs.fact.createdAt
             }
             .prefix(Self.maxPersonFacts)
-            .map { Self.renderFact($0.fact, relevance: $0.relevance, dateText: $0.dateText) }
+            .map { Self.renderFact($0.fact, dateText: $0.dateText) }
 
         return top.isEmpty ? nil : top.joined(separator: "; ")
     }
 
-    /// Whether `fact` is relevant to `currentMeetingId` (see `FactRelevance`). Best-effort: any DB
-    /// failure degrades to `.relevant` — never actively mislabel a fact as unrelated on a hiccup.
-    private func relevance(
-        of fact: ProfileFact,
+    /// Provable-relevance eligibility gate. A fact is eligible for prompt injection ONLY if its
+    /// `sourceMeetingId` resolves to a real meeting row that is either the meeting currently being
+    /// summarized or a member of one of its series (`currentSeriesIds`). Returns that source
+    /// meeting's date text (for the `(background, from <date>)` framing) when eligible, `nil`
+    /// otherwise.
+    ///
+    /// Unlike the other best-effort reads in this file, unresolvable provenance — a nil/empty
+    /// `sourceMeetingId`, or one that doesn't resolve to an existing meeting row (both real shapes
+    /// seen in the store: blank ids and dangling legacy `meeting-`-prefixed ids) — degrades to
+    /// EXCLUDED, never included. The old code treated "can't prove it's unrelated" as "assume
+    /// relevant", which is backwards for prompt safety: the failure mode of over-inclusion is a
+    /// small model promoting unrelated facts into Action Items (see `factsClause` above).
+    private func eligibleDateText(
+        for fact: ProfileFact,
         currentMeetingId: MeetingID,
         currentSeriesIds: Set<SeriesID>
-    ) async -> FactRelevance {
-        guard let sourceMeetingId = fact.sourceMeetingId else { return .relevant }
-        if sourceMeetingId == currentMeetingId {
-            return .relevant
+    ) async -> String? {
+        guard let sourceMeetingId = fact.sourceMeetingId,
+              let sourceMeeting = try? await database.meetings.find(sourceMeetingId) ?? nil
+        else { return nil }
+
+        let isEligible: Bool = if sourceMeetingId == currentMeetingId {
+            true
+        } else if let sourceSeriesIds = try? await database.series.seriesIds(forMeeting: sourceMeetingId) {
+            !currentSeriesIds.isDisjoint(with: sourceSeriesIds)
+        } else {
+            false
         }
-        guard !currentSeriesIds.isEmpty else { return .unrelated }
-        guard let sourceSeriesIds = try? await database.series.seriesIds(forMeeting: sourceMeetingId) else {
-            return .relevant
-        }
-        return currentSeriesIds.isDisjoint(with: sourceSeriesIds) ? .unrelated : .relevant
+        guard isEligible else { return nil }
+
+        return Self.factDateFormatter.string(from: sourceMeeting.createdAt)
     }
 
-    /// Renders one fact as an explicitly-framed background clause, e.g.
-    /// `"training on X (background, from Jul 14, 2026)"` or, for an unrelated-meeting fact,
-    /// `"training on X (unrelated background, from Jul 14, 2026)"`. Omits the date parenthetical
-    /// entirely when none is known (No-Fake-State: never invent one).
-    private static func renderFact(_ fact: ProfileFact, relevance: FactRelevance, dateText: String?) -> String {
-        let label = relevance == .unrelated ? "unrelated background" : "background"
-        if let dateText {
-            return "\(fact.factText) (\(label), from \(dateText))"
-        }
-        return "\(fact.factText) (\(label))"
+    /// Renders one eligible fact as a dated background clause, e.g.
+    /// `"training on X (background, from Jul 14, 2026)"`. The date is always present here —
+    /// `eligibleDateText` only returns non-nil once it has already resolved a real source meeting.
+    private static func renderFact(_ fact: ProfileFact, dateText: String) -> String {
+        "\(fact.factText) (background, from \(dateText))"
     }
 
     // MARK: - Small helpers (← commands.rs:382-395)

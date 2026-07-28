@@ -125,14 +125,16 @@ struct SummaryContextAssemblerTests {
         let meeting = makeMeeting(id: "m-facts")
         try await db.meetings.upsert(meeting)
 
-        // Five active facts, ascending confidence — only the top 4 should appear, and the
-        // lowest-confidence one ("fact-0", confidence 0.10) must be dropped.
+        // Five active facts, ascending confidence, all sourced from the meeting being summarized
+        // (eligible) — only the top 4 should appear, and the lowest-confidence one ("fact-0",
+        // confidence 0.10) must be dropped.
         for index in 0 ..< 5 {
             try await db.profileFacts.upsert(ProfileFact(
                 id: ProfileFactID("fact-\(index)"),
                 personId: owner.id,
                 factText: "fact-\(index)",
                 factKind: .project,
+                sourceMeetingId: meeting.id,
                 origin: .selfReported,
                 confidence: 0.10 + Double(index) * 0.15,
                 sourceCount: 1,
@@ -144,14 +146,14 @@ struct SummaryContextAssemblerTests {
         let block = await SummaryContextAssembler(database: db).contextBlock(for: meeting.id)
         #expect(block.contains("fact-4"))
         #expect(!block.contains("fact-0"))
-        // Bleed fix: every surfaced fact is explicitly framed as background, never a bare assertion.
-        #expect(block.contains("fact-4 (background)"))
+        // Bleed fix: every surfaced fact is explicitly framed as dated background, never a bare assertion.
+        #expect(block.contains("fact-4 (background, from"))
     }
 
-    // MARK: - Bleed fix: facts are framed as background and ranked/labelled by series relevance
+    // MARK: - Bleed fix: facts are a provable-relevance WHITELIST, not an include-and-label
 
-    @Test("Facts sourced from the current meeting's own series rank first and are framed as plain background")
-    func factsClausePrefersSameSeriesFacts() async throws {
+    @Test("A fact sourced from a same-series meeting IS injected, framed as dated background")
+    func factsClauseIncludesSameSeriesFact() async throws {
         let db = try AppDatabase.makeInMemory()
 
         let person = Person(
@@ -163,30 +165,17 @@ struct SummaryContextAssemblerTests {
         )
         try await db.persons.upsert(person)
 
-        // Two prior meetings: one in the same series as the meeting being summarized, one wholly
-        // unrelated. Both produced a fact about this person.
         let seriesMeeting = makeMeeting(id: "m-series-prior", title: "Prior 1:1")
         try await db.meetings.upsert(seriesMeeting)
-        let unrelatedMeeting = makeMeeting(id: "m-unrelated", title: "Unrelated training session")
-        try await db.meetings.upsert(unrelatedMeeting)
-
         let currentMeeting = makeMeeting(id: "m-current", title: "1:1 with Amy")
         try await db.meetings.upsert(currentMeeting)
         try await db.persons.addParticipant(meetingId: currentMeeting.id, personId: person.id, at: epoch)
 
-        let series = Series(
-            id: SeriesID("series-amy"),
-            title: "Amy 1:1",
-            createdAt: epoch,
-            updatedAt: epoch
-        )
+        let series = Series(id: SeriesID("series-amy"), title: "Amy 1:1", createdAt: epoch, updatedAt: epoch)
         try await db.series.upsert(series)
         try await db.series.addMember(seriesId: series.id, meetingId: seriesMeeting.id, at: epoch)
         try await db.series.addMember(seriesId: series.id, meetingId: currentMeeting.id, at: epoch)
-        // `unrelatedMeeting` is deliberately NOT added to any series.
 
-        // Lower confidence than the unrelated fact, so a naive confidence-only sort would rank the
-        // unrelated fact first — the point of this test is that series relevance wins that tie-break.
         try await db.profileFacts.upsert(ProfileFact(
             id: ProfileFactID("fact-series"),
             personId: person.id,
@@ -199,6 +188,36 @@ struct SummaryContextAssemblerTests {
             status: .active,
             createdAt: epoch
         ))
+
+        let block = await SummaryContextAssembler(database: db).contextBlock(for: currentMeeting.id)
+        #expect(block.contains("Leading the Q1 reorg plan (background,"))
+        #expect(!block.contains("unrelated"))
+    }
+
+    @Test("A fact sourced from an unrelated (different-series) meeting is NOT injected")
+    func factsClauseExcludesUnrelatedMeetingFact() async throws {
+        let db = try AppDatabase.makeInMemory()
+
+        let person = Person(
+            id: PersonID("person-1"),
+            displayName: "Amy Teuscher",
+            isOwner: false,
+            createdAt: epoch,
+            updatedAt: epoch
+        )
+        try await db.persons.upsert(person)
+
+        let unrelatedMeeting = makeMeeting(id: "m-unrelated", title: "Unrelated training session")
+        try await db.meetings.upsert(unrelatedMeeting)
+        let currentMeeting = makeMeeting(id: "m-current", title: "1:1 with Amy")
+        try await db.meetings.upsert(currentMeeting)
+        try await db.persons.addParticipant(meetingId: currentMeeting.id, personId: person.id, at: epoch)
+
+        let series = Series(id: SeriesID("series-amy"), title: "Amy 1:1", createdAt: epoch, updatedAt: epoch)
+        try await db.series.upsert(series)
+        try await db.series.addMember(seriesId: series.id, meetingId: currentMeeting.id, at: epoch)
+        // `unrelatedMeeting` is deliberately NOT added to any series.
+
         try await db.profileFacts.upsert(ProfileFact(
             id: ProfileFactID("fact-unrelated"),
             personId: person.id,
@@ -213,21 +232,15 @@ struct SummaryContextAssemblerTests {
         ))
 
         let block = await SummaryContextAssembler(database: db).contextBlock(for: currentMeeting.id)
-
-        // The same-series fact is framed as plain background (no "unrelated" label)...
-        #expect(block.contains("Leading the Q1 reorg plan (background,"))
-        // ...and the cross-meeting fact is never silently dropped, but IS explicitly marked unrelated.
-        #expect(block.contains("Metro 2 reporting accuracy concerns (unrelated background,"))
-
-        // Relevance ranks before confidence: the same-series fact appears before the unrelated one,
-        // even though the unrelated fact has the higher raw confidence.
-        let seriesRange = try #require(block.range(of: "Leading the Q1 reorg plan"))
-        let unrelatedRange = try #require(block.range(of: "Metro 2 reporting accuracy concerns"))
-        #expect(seriesRange.lowerBound < unrelatedRange.lowerBound)
+        #expect(!block.contains("Metro 2 reporting accuracy concerns"))
+        // Nothing else to inject for this participant, so the clause is dropped cleanly.
+        #expect(!block.contains("- Amy Teuscher:"))
     }
 
-    @Test("A fact with no recorded source meeting is framed as background with no date, never labelled unrelated")
-    func factsClauseWithoutSourceMeetingOmitsDateAndUnrelatedLabel() async throws {
+    @Test(
+        "A fact with a nil/empty sourceMeetingId is NOT injected (unresolvable provenance is excluded, not assumed relevant)"
+    )
+    func factsClauseExcludesFactWithNoSourceMeeting() async throws {
         let db = try AppDatabase.makeInMemory()
 
         let owner = Person(
@@ -254,8 +267,101 @@ struct SummaryContextAssemblerTests {
         ))
 
         let block = await SummaryContextAssembler(database: db).contextBlock(for: meeting.id)
-        #expect(block.contains("Enjoys mentoring new hires (background)"))
-        #expect(!block.contains("unrelated"))
+        #expect(!block.contains("Enjoys mentoring new hires"))
+        // The owner line still renders (no dangling ":" once the only fact is filtered out).
+        #expect(block.contains("Owner: Owner"))
+        #expect(!block.contains("Owner: Owner:"))
+    }
+
+    @Test("A fact whose sourceMeetingId points at a nonexistent meeting row is NOT injected")
+    func factsClauseExcludesFactWithDanglingSourceMeeting() async throws {
+        let db = try AppDatabase.makeInMemory()
+
+        let owner = Person(
+            id: PersonID("owner-dangling"),
+            displayName: "Owner",
+            isOwner: true,
+            createdAt: epoch,
+            updatedAt: epoch
+        )
+        try await db.persons.upsert(owner)
+        let meeting = makeMeeting(id: "m-dangling")
+        try await db.meetings.upsert(meeting)
+
+        // A real shape seen in the store: a legacy-imported id that never resolves to a row. The
+        // `profileFact.sourceMeetingId` FK is real (`onDelete: .setNull`), so inserting a genuinely
+        // dangling reference through the repository is rejected — exactly the same protection real
+        // corrupt/legacy rows evade via a raw insert with FK checks off. Reproduce that shape
+        // directly against the writer (test-only; production code never does this).
+        try await db.dbWriter.writeWithoutTransaction { conn in
+            try conn.execute(sql: "PRAGMA foreign_keys = OFF")
+            try conn.execute(
+                sql: """
+                INSERT INTO profileFact
+                    (id, personId, factText, factKind, sourceMeetingId, origin, confidence, status, createdAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    "fact-dangling",
+                    owner.id.rawValue,
+                    "Announce GPM decisions",
+                    FactKind.project.rawValue,
+                    "meeting-does-not-exist",
+                    FactOrigin.attributed.rawValue,
+                    0.98,
+                    FactStatus.active.rawValue,
+                    epoch
+                ]
+            )
+            try conn.execute(sql: "PRAGMA foreign_keys = ON")
+        }
+
+        let block = await SummaryContextAssembler(database: db).contextBlock(for: meeting.id)
+        #expect(!block.contains("Announce GPM decisions"))
+    }
+
+    @Test(
+        "Owner-fact leak regression: an unrelated high-confidence fact merged onto the owner is NOT injected into the owner line"
+    )
+    func ownerLineExcludesUnrelatedFacts() async throws {
+        let db = try AppDatabase.makeInMemory()
+
+        let owner = Person(
+            id: PersonID("owner-leak"),
+            displayName: "Paul Fox-Reeks",
+            role: "Manager",
+            domain: "Engineering",
+            isOwner: true,
+            createdAt: epoch,
+            updatedAt: epoch
+        )
+        try await db.persons.upsert(owner)
+
+        let unrelatedMeeting = makeMeeting(id: "m-unrelated-work", title: "Unrelated work meeting")
+        try await db.meetings.upsert(unrelatedMeeting)
+        let currentMeeting = makeMeeting(id: "m-1on1", title: "Personal mentorship 1:1")
+        try await db.meetings.upsert(currentMeeting)
+
+        // The owner has no series membership at all here — a duplicate-person merge consolidated
+        // facts from unrelated work meetings onto the owner row, exactly the leak this fix targets.
+        try await db.profileFacts.upsert(ProfileFact(
+            id: ProfileFactID("fact-owner-leak"),
+            personId: owner.id,
+            factText: "Navigate Payment Manager role transition (Peter)",
+            factKind: .project,
+            sourceMeetingId: unrelatedMeeting.id,
+            origin: .attributed,
+            confidence: 0.98,
+            sourceCount: 1,
+            status: .active,
+            createdAt: epoch
+        ))
+
+        let block = await SummaryContextAssembler(database: db).contextBlock(for: currentMeeting.id)
+        #expect(!block.contains("Payment Manager"))
+        // Authored identity still renders even with every fact filtered out.
+        #expect(block.contains("Owner: Paul Fox-Reeks, Manager — Engineering"))
+        #expect(!block.contains("Owner: Paul Fox-Reeks, Manager — Engineering:"))
     }
 
     // MARK: - T-A3 (docs/plans/custom-vocabulary.md §5) — zero vocabulary terms changes nothing
