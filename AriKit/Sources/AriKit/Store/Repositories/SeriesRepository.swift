@@ -215,6 +215,19 @@ public struct SeriesRepository: Sendable {
         }
     }
 
+    /// Clears a series' ledger entirely — the "contaminated ledger" escape hatch (a bad ledger
+    /// re-contaminates every regenerated member summary via `SummaryContextAssembler`, and a fold
+    /// writes it straight back, so the only way out is to erase it and start over). Hard-deletes
+    /// the `seriesLedger` row (rather than blanking `ledgerMarkdown` in place) so a subsequent
+    /// `rebuildLedger` starts from a genuinely clean slate: `ledgerVersion` next becomes `1`, not
+    /// a confusing continuation of the contaminated row's version count. Idempotent — clearing a
+    /// series with no ledger row is a safe no-op. One write transaction.
+    public func clearLedger(_ seriesId: SeriesID) async throws {
+        try await dbWriter.write { db in
+            _ = try SeriesLedgerRecord.deleteOne(db, key: seriesId.rawValue)
+        }
+    }
+
     /// Tombstone — sets `isDeleted`/`deletedAt` on the `series` row only, never a hard `DELETE`.
     /// The `seriesLedger` row is left as-is (it has no tombstone of its own, plan §4.7).
     public func softDelete(_ id: SeriesID, at date: Date) async throws {

@@ -256,4 +256,82 @@ struct SeriesRepositoryTests {
         #expect(record?.linkSource == "suggested")
         #expect(record?.occurrenceTime == "2026-07-01T09:00:00Z")
     }
+
+    // MARK: - clearLedger
+
+    @Test("clearLedger removes the seriesLedger row entirely")
+    func clearLedgerRemovesRow() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let id = try await db.series.createSeries(title: "Brian 1:1", at: epoch)
+        try await db.series.updateLedger(
+            seriesId: id,
+            ledgerMarkdown: "- Open: ship the thing.",
+            structuredJson: "{}",
+            updatedFromMeetingId: nil,
+            ledgerVersion: 3,
+            at: epoch
+        )
+
+        try await db.series.clearLedger(id)
+
+        let found = try await db.series.find(id)
+        #expect(found?.ledgerMarkdown == nil)
+        #expect(found?.ledgerVersion == nil)
+
+        let record = try await db.dbWriter.read { db in
+            try SeriesLedgerRecord.fetchOne(db, key: id.rawValue)
+        }
+        #expect(record == nil)
+    }
+
+    @Test("clearLedger on a series with no ledger row is a safe no-op")
+    func clearLedgerNoOpWhenNoLedger() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let id = try await db.series.createSeries(title: "Brian 1:1", at: epoch)
+
+        // No ledger has ever been written — clearing must not throw and must leave the series
+        // findable and unchanged.
+        try await db.series.clearLedger(id)
+
+        let found = try await db.series.find(id)
+        #expect(found?.title == "Brian 1:1")
+        #expect(found?.ledgerMarkdown == nil)
+        #expect(found?.ledgerVersion == nil)
+    }
+
+    @Test("clearLedger then a fresh updateLedger starts ledgerVersion clean, not a continuation")
+    func clearLedgerResetsVersionBookkeeping() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let id = try await db.series.createSeries(title: "Brian 1:1", at: epoch)
+        try await db.series.updateLedger(
+            seriesId: id,
+            ledgerMarkdown: "- Contaminated content.",
+            structuredJson: nil,
+            updatedFromMeetingId: nil,
+            ledgerVersion: 7,
+            at: epoch
+        )
+
+        try await db.series.clearLedger(id)
+
+        // Mirrors the `(series.ledgerVersion ?? 0) + 1` bookkeeping in `SeriesLedgerReducer` —
+        // after a clear, the series carries no ledgerVersion at all, so the next fold/rebuild
+        // computes version 1, not 8.
+        let cleared = try await db.series.find(id)
+        let nextVersion = (cleared?.ledgerVersion ?? 0) + 1
+        #expect(nextVersion == 1)
+
+        try await db.series.updateLedger(
+            seriesId: id,
+            ledgerMarkdown: "- Fresh ledger.",
+            structuredJson: nil,
+            updatedFromMeetingId: nil,
+            ledgerVersion: nextVersion,
+            at: epoch.addingTimeInterval(60)
+        )
+
+        let rebuilt = try await db.series.find(id)
+        #expect(rebuilt?.ledgerVersion == 1)
+        #expect(rebuilt?.ledgerMarkdown == "- Fresh ledger.")
+    }
 }

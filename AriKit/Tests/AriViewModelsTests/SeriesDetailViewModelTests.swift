@@ -340,4 +340,87 @@ struct SeriesDetailViewModelTests {
         #expect(viewModel.errorMessage == nil)
         #expect(viewModel.series.value?.ledgerMarkdown == cannedLedger)
     }
+
+    // MARK: - Clear ledger
+
+    @Test("clearLedger removes the ledger and reloads to the honest empty state")
+    func clearLedgerRemovesLedgerAndReloads() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let seriesId = try await database.series.createSeries(title: "Weekly 1:1", at: epoch)
+        try await database.series.updateLedger(
+            seriesId: seriesId,
+            ledgerMarkdown: "## Open action items\n- Ship the beta",
+            structuredJson: nil,
+            updatedFromMeetingId: nil,
+            ledgerVersion: 4,
+            at: epoch
+        )
+        let viewModel = SeriesDetailViewModel(database: database, ledgerReducer: makeReducer(db: database))
+        await viewModel.load(seriesId)
+        #expect(viewModel.series.value?.ledgerMarkdown != nil)
+
+        await viewModel.clearLedger()
+
+        #expect(viewModel.isClearingLedger == false)
+        #expect(viewModel.errorMessage == nil)
+        #expect(viewModel.series.value?.ledgerMarkdown == nil)
+        #expect(viewModel.series.value?.ledgerVersion == nil)
+    }
+
+    @Test("clearLedger on a series with no ledger is a safe, error-free no-op")
+    func clearLedgerNoOpWhenNoLedger() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let seriesId = try await database.series.createSeries(title: "Weekly 1:1", at: epoch)
+        let viewModel = SeriesDetailViewModel(database: database, ledgerReducer: makeReducer(db: database))
+        await viewModel.load(seriesId)
+
+        await viewModel.clearLedger()
+
+        #expect(viewModel.isClearingLedger == false)
+        #expect(viewModel.errorMessage == nil)
+        #expect(viewModel.series.value?.ledgerMarkdown == nil)
+    }
+
+    @Test("clearLedger clears a stale error left over from a different failed action")
+    func clearLedgerClearsStaleError() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let seriesId = try await database.series.createSeries(title: "No summaries yet", at: epoch)
+        let viewModel = SeriesDetailViewModel(database: database, ledgerReducer: makeReducer(db: database))
+        await viewModel.load(seriesId)
+
+        // rebuildLedger with nothing to build from leaves a stale errorMessage.
+        await viewModel.rebuildLedger()
+        #expect(viewModel.errorMessage != nil)
+
+        await viewModel.clearLedger()
+
+        #expect(viewModel.errorMessage == nil)
+    }
+
+    @Test("clearLedger surfaces a genuine repository failure rather than swallowing it")
+    func clearLedgerSurfacesRepositoryError() async throws {
+        let database = try AppDatabase.makeInMemory()
+        let seriesId = try await database.series.createSeries(title: "Weekly 1:1", at: epoch)
+        try await database.series.updateLedger(
+            seriesId: seriesId,
+            ledgerMarkdown: "## Open action items\n- Ship the beta",
+            structuredJson: nil,
+            updatedFromMeetingId: nil,
+            ledgerVersion: 1,
+            at: epoch
+        )
+        let viewModel = SeriesDetailViewModel(database: database, ledgerReducer: makeReducer(db: database))
+        await viewModel.load(seriesId)
+
+        // Force a real repository-level failure: drop the table clearLedger writes to, so its
+        // DELETE genuinely throws instead of us faking an error path.
+        try await database.dbWriter.write { db in
+            try db.execute(sql: "DROP TABLE seriesLedger")
+        }
+
+        await viewModel.clearLedger()
+
+        #expect(viewModel.isClearingLedger == false)
+        #expect(viewModel.errorMessage != nil)
+    }
 }

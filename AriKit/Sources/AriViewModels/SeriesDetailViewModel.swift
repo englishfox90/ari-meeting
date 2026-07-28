@@ -29,6 +29,8 @@ public final class SeriesDetailViewModel {
 
     /// True while a ledger rebuild is in flight, so the UI can show progress + disable the button.
     public private(set) var isRebuildingLedger = false
+    /// True while a ledger clear is in flight, so the UI can show progress + disable the button.
+    public private(set) var isClearingLedger = false
     /// True while a rename/delete/merge mutation is in flight.
     public private(set) var isBusy = false
     /// The real error text of the last failed operation, or `nil`. Surfaced honestly (No-Fake-State).
@@ -156,6 +158,25 @@ public final class SeriesDetailViewModel {
             } else {
                 errorMessage = nil
             }
+            await reload()
+        } catch {
+            errorMessage = String(describing: error)
+        }
+    }
+
+    /// Clears the series' ledger entirely (the contaminated-ledger escape hatch — see
+    /// `SeriesRepository.clearLedger`). This is destructive and irreversible short of a manual
+    /// rebuild, so the view gates it behind a confirmation dialog before calling here. Clears
+    /// `errorMessage` first (M1), and reloads afterward so the ledger section immediately shows
+    /// the honest "No ledger yet" empty state.
+    public func clearLedger() async {
+        errorMessage = nil
+        guard let id = currentId else { return }
+        isClearingLedger = true
+        defer { isClearingLedger = false }
+        do {
+            try await database.series.clearLedger(id)
+            errorMessage = nil
             await reload()
         } catch {
             errorMessage = String(describing: error)

@@ -241,4 +241,53 @@ struct SeriesLedgerReducerTests {
         let persisted = try await db.series.find(seriesId)
         #expect(persisted?.ledgerMarkdown == nil)
     }
+
+    // MARK: - Clear then rebuild (the contaminated-ledger escape hatch)
+
+    @Test("A rebuild after clearLedger reproduces a fresh ledger from member summaries, starting at version 1")
+    func rebuildAfterClearReproducesLedger() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let seriesId = try await db.series.createSeries(title: "Brian 1:1", at: epoch)
+
+        let m1 = makeMeeting(id: "m1", title: "Brian 1:1 (week 1)", createdAt: epoch)
+        try await db.meetings.upsert(m1)
+        try await db.series.addMember(seriesId: seriesId, meetingId: m1.id, at: epoch)
+        try await db.summaries.upsert(Summary(
+            id: SummaryID("s1"),
+            meetingId: m1.id,
+            bodyMarkdown: "- Ship the beta @ref(04:21)",
+            createdAt: epoch,
+            updatedAt: epoch
+        ))
+
+        // Simulate a contaminated ledger at a high version.
+        try await db.series.updateLedger(
+            seriesId: seriesId,
+            ledgerMarkdown: "- Contaminated content from an unrelated series.",
+            structuredJson: nil,
+            updatedFromMeetingId: nil,
+            ledgerVersion: 9,
+            at: epoch
+        )
+
+        try await db.series.clearLedger(seriesId)
+        let cleared = try await db.series.find(seriesId)
+        #expect(cleared?.ledgerMarkdown == nil)
+        #expect(cleared?.ledgerVersion == nil)
+
+        let (reducer, _) = makeReducer(
+            db: db,
+            cannedResponse: "## Open action items\n- Ship beta @mref(m1@04:21)\n\n## Decisions\n_None yet._\n\n## Recurring themes\n_None yet._\n\n## Per-person threads\n_None yet._"
+        )
+        let ledger = try await reducer.rebuildLedger(seriesId: seriesId)
+
+        #expect(ledger != nil)
+        #expect(ledger?.contains("@mref(m1@04:21)") == true)
+        #expect(ledger?.contains("Contaminated") == false)
+
+        // Version bookkeeping starts clean — 1, not a continuation of the contaminated row's 9.
+        let persisted = try await db.series.find(seriesId)
+        #expect(persisted?.ledgerVersion == 1)
+        #expect(persisted?.ledgerMarkdown == ledger)
+    }
 }

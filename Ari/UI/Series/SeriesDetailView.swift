@@ -40,6 +40,7 @@ struct SeriesDetailView: View {
     @State private var mergeTargetId: SeriesID?
     @State private var showDeleteConfirm = false
     @State private var showMergeConfirm = false
+    @State private var showClearLedgerConfirm = false
 
     init(
         database: AppDatabase,
@@ -99,16 +100,20 @@ struct SeriesDetailView: View {
                         showMergeSheet = true
                     }
                     .disabled(viewModel.mergeTargets.isEmpty)
+                    Button("Clear ledger", role: .destructive) {
+                        showClearLedgerConfirm = true
+                    }
+                    .disabled(hasLedger == false)
                     Button("Delete", role: .destructive) {
                         showDeleteConfirm = true
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
-                // M3: no two mutations may overlap — a rebuild in flight must block Rename/Merge/
-                // Delete just as much as another rename/merge/delete would (e.g. Delete firing
-                // mid-rebuild would write a fresh ledger to a series it just tombstoned).
-                .disabled(viewModel.isBusy || viewModel.isRebuildingLedger)
+                // M3: no two mutations may overlap — a rebuild/clear in flight must block Rename/
+                // Merge/Delete just as much as another rename/merge/delete would (e.g. Delete
+                // firing mid-rebuild would write a fresh ledger to a series it just tombstoned).
+                .disabled(viewModel.isBusy || viewModel.isRebuildingLedger || viewModel.isClearingLedger)
             }
         }
         .sheet(isPresented: $showRenameSheet) {
@@ -133,6 +138,26 @@ struct SeriesDetailView: View {
         } message: {
             Text("This removes the series and detaches its meetings. The meetings themselves are kept.")
         }
+        .confirmationDialog(
+            "Clear this series' ledger?",
+            isPresented: $showClearLedgerConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Clear ledger", role: .destructive) {
+                Task { await viewModel.clearLedger() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This permanently erases the open items, decisions, themes, and per-person threads carried across this series. It can be rebuilt afterward from the meetings' own summaries."
+            )
+        }
+    }
+
+    /// Whether the series currently carries any ledger content — gates both the toolbar's "Clear
+    /// ledger" item and, indirectly, which empty/populated panel `ledgerSection` renders.
+    private var hasLedger: Bool {
+        viewModel.series.value?.ledgerMarkdown?.isEmpty == false
     }
 
     // MARK: - Rename sheet
@@ -277,7 +302,7 @@ struct SeriesDetailView: View {
                 Text("Ledger")
                     .marginaliaTextStyle(.caption, in: scheme)
                 Spacer()
-                if viewModel.isRebuildingLedger {
+                if viewModel.isRebuildingLedger || viewModel.isClearingLedger {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -285,9 +310,10 @@ struct SeriesDetailView: View {
                     Task { await viewModel.rebuildLedger() }
                 }
                 .buttonStyle(.marginalia(.secondary, .regular, in: scheme))
-                // M3: a rename/merge/delete in flight must also block a rebuild — e.g. a rebuild
-                // firing mid-delete would write a ledger to a series that's about to be tombstoned.
-                .disabled(viewModel.isRebuildingLedger || viewModel.isBusy)
+                // M3: a rename/merge/delete/clear in flight must also block a rebuild — e.g. a
+                // rebuild firing mid-delete would write a ledger to a series about to be
+                // tombstoned.
+                .disabled(viewModel.isRebuildingLedger || viewModel.isClearingLedger || viewModel.isBusy)
             }
             if let errorMessage = viewModel.errorMessage {
                 Text(errorMessage)
