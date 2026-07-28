@@ -18,6 +18,15 @@ struct LinkedEventCard: View {
 
     @Environment(\.colorScheme) private var scheme
     @State private var showingPicker = false
+    @State private var showingAllAttendees = false
+
+    /// How many attendees show before the list collapses behind a disclosure. Large invites
+    /// (all-hands, room resources) would otherwise grow the card without limit and starve the
+    /// rail's transcript list of height — the card sits above it in a plain `VStack`.
+    private static let attendeePreviewLimit = 5
+    /// Ceiling on the expanded list, so "show all" scrolls inside the card instead of pushing
+    /// the transcript off-screen.
+    private static let attendeeListMaxHeight: CGFloat = 260
 
     var body: some View {
         VStack(alignment: .leading, spacing: MarginaliaSpacing.sm.value) {
@@ -65,20 +74,55 @@ struct LinkedEventCard: View {
                 }
             }
             if !event.attendees.isEmpty {
-                VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
-                    ForEach(Array(event.attendees.enumerated()), id: \.offset) { _, attendee in
-                        AttendeeRow(
-                            attendee: attendee,
-                            resolvedName: attendee.email.flatMap { viewModel.resolvedAttendeeNames[$0.lowercased()] }
-                        )
-                    }
-                }
+                attendeeSection(event.attendees)
             }
             Button("Unlink") {
                 Task { await viewModel.unlink() }
             }
             .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
             .disabled(viewModel.isBusy)
+        }
+    }
+
+    /// The attendee list, bounded in both states: collapsed to the first
+    /// `attendeePreviewLimit` rows, or expanded into a height-capped scroll area. The count in the
+    /// header is the real attendee count — no truncation happens silently.
+    @ViewBuilder
+    private func attendeeSection(_ attendees: [Attendee]) -> some View {
+        let isOverflowing = attendees.count > Self.attendeePreviewLimit
+        let visible = isOverflowing && !showingAllAttendees
+            ? Array(attendees.prefix(Self.attendeePreviewLimit))
+            : attendees
+
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+            Text("Attendees (\(attendees.count))")
+                .marginaliaTextStyle(.caption, in: scheme)
+            if showingAllAttendees {
+                ScrollView {
+                    attendeeRows(visible)
+                }
+                .frame(maxHeight: Self.attendeeListMaxHeight)
+            } else {
+                attendeeRows(visible)
+            }
+            if isOverflowing {
+                Button(showingAllAttendees ? "Show fewer" : "Show all \(attendees.count)") {
+                    showingAllAttendees.toggle()
+                }
+                .buttonStyle(.marginalia(.quiet, .regular, in: scheme))
+            }
+        }
+    }
+
+    private func attendeeRows(_ attendees: [Attendee]) -> some View {
+        VStack(alignment: .leading, spacing: MarginaliaSpacing.xs.value) {
+            ForEach(Array(attendees.enumerated()), id: \.offset) { _, attendee in
+                AttendeeRow(
+                    attendee: attendee,
+                    resolvedName: attendee.email.flatMap { viewModel.resolvedAttendeeNames[$0.lowercased()] }
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
