@@ -79,7 +79,7 @@ struct MigrationSafetyTests {
     }
 
     @Test("Test 1 — additive v2 migration preserves data and adds the new column")
-    func test_additiveMigrationPreservesData() async throws {
+    func additiveMigrationPreservesData() async throws {
         let url = tempFileURL()
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -100,7 +100,7 @@ struct MigrationSafetyTests {
     }
 
     @Test("Test 2 — an in-place baseline edit does NOT wipe data when erase is off (the direct regression)")
-    func test_inPlaceBaselineEditDoesNotWipe_erasesOff() async throws {
+    func inPlaceBaselineEditDoesNotWipe_erasesOff() async throws {
         let url = tempFileURL()
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -125,7 +125,7 @@ struct MigrationSafetyTests {
     }
 
     @Test("Test 3 (contrast) — the same in-place baseline edit DOES wipe data when erase is on")
-    func test_inPlaceBaselineEditWipes_whenEraseOn() async throws {
+    func inPlaceBaselineEditWipes_whenEraseOn() async throws {
         let url = tempFileURL()
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -149,7 +149,7 @@ struct MigrationSafetyTests {
     }
 
     @Test("Test 4 — the real SchemaMigrator/AppDatabase defaults leave erase OFF")
-    func test_defaultMigratorHasEraseOff() throws {
+    func defaultMigratorHasEraseOff() throws {
         let migrator = SchemaMigrator.migrator()
         #expect(migrator.eraseDatabaseOnSchemaChange == false)
 
@@ -185,5 +185,62 @@ struct MigrationSafetyTests {
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM meeting") ?? 0
         }
         #expect(count == 1)
+    }
+
+    @Test(
+        "Test 5 — the real v7_summary_custom_prompt migration is additive: applies cleanly on top of an existing v1..v6 database, preserving existing rows and NULL-backfilling the new column"
+    )
+    func v7SummaryCustomPromptIsAdditive() async throws {
+        let url = tempFileURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+        // Simulate a real pre-v7 database: everything through `v5_calendar_series_consent`
+        // (`migratorWithoutVocabularyTerm` stops there — `v5_vocabulary_term`/`v6`/`v7` are all
+        // registered on top by the real `migrator()`), with an existing meeting + summary row,
+        // exactly like real user data predating this migration.
+        do {
+            let pool = try DatabasePool(path: url.path)
+            let db = try AppDatabase(pool, migrator: SchemaMigrator.migratorWithoutVocabularyTerm())
+            // `insertMeeting(_:)` above targets the SIMPLIFIED migrator A/B/C schema (`id`/`title`
+            // only) — the real `v1_baseline` requires `createdAt`/`updatedAt` NOT NULL, so this
+            // goes through the real repository instead, matching genuine pre-v7 user data.
+            try await db.meetings.upsert(Meeting(id: "m1", title: "Standup", createdAt: now, updatedAt: now))
+            try await db.dbWriter.write { writer in
+                try writer.execute(
+                    sql: """
+                    INSERT INTO summary (id, meetingId, bodyMarkdown, createdAt, updatedAt, isDeleted)
+                    VALUES (?, ?, ?, ?, ?, 0)
+                    """,
+                    arguments: ["s1", "m1", "# Recap", now, now]
+                )
+            }
+        }
+
+        // Now open the SAME on-disk file with the REAL, full `SchemaMigrator.migrator()` — which
+        // includes v5_vocabulary_term, v6_profile_fact_supersession, AND the new
+        // v7_summary_custom_prompt — and prove it migrates forward without wiping anything.
+        let pool = try DatabasePool(path: url.path)
+        let db = try AppDatabase(pool, migrator: SchemaMigrator.migrator())
+
+        #expect(try await meetingCount(db) == 1)
+
+        let hasCustomInstructionsColumn = try await db.dbWriter.read { writer in
+            try writer.columns(in: "summary").contains { $0.name == "customInstructions" }
+        }
+        #expect(hasCustomInstructionsColumn)
+
+        let summaryRow = try await db.dbWriter.read { writer in
+            try Row.fetchOne(writer, sql: "SELECT bodyMarkdown, customInstructions FROM summary WHERE id = 's1'")
+        }
+        #expect(summaryRow?["bodyMarkdown"] as String? == "# Recap")
+        // Pre-existing rows backfill to NULL — never a fabricated empty string (No-Fake-State).
+        #expect(summaryRow?["customInstructions"] as String? == nil)
+
+        // The repository layer round-trips the new column correctly against the migrated file too.
+        let fetched = try await db.summaries.find(SummaryID("s1"))
+        #expect(fetched?.bodyMarkdown == "# Recap")
+        #expect(fetched?.customInstructions == nil)
     }
 }

@@ -61,14 +61,25 @@ public struct SummaryContextAssembler: Sendable {
             block += "Organization: \(organization) (everyone below works at \(organization) unless noted).\n"
         }
 
+        // The current meeting's own series membership anchors fact-relevance ranking below (bleed
+        // fix, docs/plans — see `factsClause`): facts sourced from a meeting in this same series
+        // rank as relevant background; facts sourced from an unrelated meeting are still included
+        // (F2/F3 must still work) but explicitly labelled so the summarizer can't mistake them for
+        // something said in THIS meeting.
+        let currentSeriesIds = await Set((try? database.series.seriesIds(forMeeting: meetingId)) ?? [])
+
         if let owner {
-            block += await ownerLine(owner) + "\n"
+            block += await ownerLine(owner, meetingId: meetingId, currentSeriesIds: currentSeriesIds) + "\n"
         }
 
         if !participants.isEmpty {
             block += "Participants:\n"
             for participant in participants {
-                block += await participantLine(participant) + "\n"
+                block += await participantLine(
+                    participant,
+                    meetingId: meetingId,
+                    currentSeriesIds: currentSeriesIds
+                ) + "\n"
             }
         }
 
@@ -82,7 +93,7 @@ public struct SummaryContextAssembler: Sendable {
 
     // MARK: - Owner / participants (← commands.rs:454-496)
 
-    private func ownerLine(_ owner: Person) async -> String {
+    private func ownerLine(_ owner: Person, meetingId: MeetingID, currentSeriesIds: Set<SeriesID>) async -> String {
         var line = "Owner: \(owner.displayName)"
         if let role = Self.trimmedNonEmpty(owner.role) {
             line += ", \(role)"
@@ -90,7 +101,11 @@ public struct SummaryContextAssembler: Sendable {
         if let domain = Self.trimmedNonEmpty(owner.domain) {
             line += " — \(domain)"
         }
-        if let clause = await factsClause(for: owner.id) {
+        if let clause = await factsClause(
+            for: owner.id,
+            currentMeetingId: meetingId,
+            currentSeriesIds: currentSeriesIds
+        ) {
             line += ": \(clause)"
         }
         if let notes = Self.injectableNotes(owner.notes) {
@@ -99,7 +114,11 @@ public struct SummaryContextAssembler: Sendable {
         return line
     }
 
-    private func participantLine(_ participant: Person) async -> String {
+    private func participantLine(
+        _ participant: Person,
+        meetingId: MeetingID,
+        currentSeriesIds: Set<SeriesID>
+    ) async -> String {
         var line = "- \(participant.displayName)"
         if let role = Self.trimmedNonEmpty(participant.role) {
             line += " (\(role))"
@@ -107,7 +126,11 @@ public struct SummaryContextAssembler: Sendable {
         if let domain = Self.trimmedNonEmpty(participant.domain) {
             line += " — \(domain)"
         }
-        if let clause = await factsClause(for: participant.id) {
+        if let clause = await factsClause(
+            for: participant.id,
+            currentMeetingId: meetingId,
+            currentSeriesIds: currentSeriesIds
+        ) {
             line += ": \(clause)"
         }
         if let notes = Self.injectableNotes(participant.notes) {
@@ -208,22 +231,101 @@ public struct SummaryContextAssembler: Sendable {
 
     // MARK: - Facts (← `person_facts_clause`, commands.rs:398-414)
 
-    /// The person's top active facts joined into one clause, or `nil` when there are none.
-    private func factsClause(for personId: PersonID) async -> String? {
+    /// Relevance of a fact to the meeting currently being summarized (bleed-fix ranking, see the
+    /// header note in `contextBlock`). `relevant` sorts first; ties within a tier still break on
+    /// confidence/recency exactly as before this change.
+    private enum FactRelevance: Int, Comparable {
+        /// Sourced from THIS meeting, or from another meeting in the same series, or with no
+        /// recorded source meeting at all (can't be shown to be unrelated, so not flagged as such).
+        case relevant = 0
+        /// Sourced from a meeting that is demonstrably NOT part of this meeting's series — the
+        /// exact shape of the contamination this fix targets. Still included (F2/F3 must keep
+        /// working) but explicitly labelled `unrelated background` below.
+        case unrelated = 1
+
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            lhs.rawValue < rhs.rawValue
+        }
+    }
+
+    /// The person's top active facts joined into one clause, or `nil` when there are none. Every
+    /// fact is framed as background (never a bare assertion) and, when a real source-meeting date
+    /// is known, dated — so the summarizer cannot mistake "what this person is known for" with
+    /// "what was discussed today". Facts sourced from the current meeting's own series rank first;
+    /// facts from an unrelated meeting are ranked last and explicitly marked `unrelated background`
+    /// rather than silently dropped.
+    private func factsClause(
+        for personId: PersonID,
+        currentMeetingId: MeetingID,
+        currentSeriesIds: Set<SeriesID>
+    ) async -> String? {
         guard let facts = try? await database.profileFacts.activeFacts(for: personId), !facts.isEmpty else {
             return nil
         }
-        // ← `top_active_facts` ordering (confidence DESC, created_at DESC), capped at `maxPersonFacts`.
-        let top = facts
+
+        var annotated: [(fact: ProfileFact, relevance: FactRelevance, dateText: String?)] = []
+        for fact in facts {
+            let relevance = await relevance(
+                of: fact,
+                currentMeetingId: currentMeetingId,
+                currentSeriesIds: currentSeriesIds
+            )
+            // No-Fake-State: only render a date when we found a real source meeting to read it
+            // from — never fall back to e.g. the fact's own `createdAt` and imply it's the same.
+            var dateText: String?
+            if let sourceMeetingId = fact.sourceMeetingId,
+               let sourceMeeting = try? await database.meetings.find(sourceMeetingId) ?? nil {
+                dateText = Self.factDateFormatter.string(from: sourceMeeting.createdAt)
+            }
+            annotated.append((fact, relevance, dateText))
+        }
+
+        // ← `top_active_facts` ordering (confidence DESC, created_at DESC) as the tiebreaker within
+        // each relevance tier, capped at `maxPersonFacts`.
+        let top = annotated
             .sorted { lhs, rhs in
-                if lhs.confidence != rhs.confidence {
-                    return lhs.confidence > rhs.confidence
+                if lhs.relevance != rhs.relevance {
+                    return lhs.relevance < rhs.relevance
                 }
-                return lhs.createdAt > rhs.createdAt
+                if lhs.fact.confidence != rhs.fact.confidence {
+                    return lhs.fact.confidence > rhs.fact.confidence
+                }
+                return lhs.fact.createdAt > rhs.fact.createdAt
             }
             .prefix(Self.maxPersonFacts)
-            .map(\.factText)
-        return top.isEmpty ? nil : top.joined(separator: ", ")
+            .map { Self.renderFact($0.fact, relevance: $0.relevance, dateText: $0.dateText) }
+
+        return top.isEmpty ? nil : top.joined(separator: "; ")
+    }
+
+    /// Whether `fact` is relevant to `currentMeetingId` (see `FactRelevance`). Best-effort: any DB
+    /// failure degrades to `.relevant` — never actively mislabel a fact as unrelated on a hiccup.
+    private func relevance(
+        of fact: ProfileFact,
+        currentMeetingId: MeetingID,
+        currentSeriesIds: Set<SeriesID>
+    ) async -> FactRelevance {
+        guard let sourceMeetingId = fact.sourceMeetingId else { return .relevant }
+        if sourceMeetingId == currentMeetingId {
+            return .relevant
+        }
+        guard !currentSeriesIds.isEmpty else { return .unrelated }
+        guard let sourceSeriesIds = try? await database.series.seriesIds(forMeeting: sourceMeetingId) else {
+            return .relevant
+        }
+        return currentSeriesIds.isDisjoint(with: sourceSeriesIds) ? .unrelated : .relevant
+    }
+
+    /// Renders one fact as an explicitly-framed background clause, e.g.
+    /// `"training on X (background, from Jul 14, 2026)"` or, for an unrelated-meeting fact,
+    /// `"training on X (unrelated background, from Jul 14, 2026)"`. Omits the date parenthetical
+    /// entirely when none is known (No-Fake-State: never invent one).
+    private static func renderFact(_ fact: ProfileFact, relevance: FactRelevance, dateText: String?) -> String {
+        let label = relevance == .unrelated ? "unrelated background" : "background"
+        if let dateText {
+            return "\(fact.factText) (\(label), from \(dateText))"
+        }
+        return "\(fact.factText) (\(label))"
     }
 
     // MARK: - Small helpers (← commands.rs:382-395)
@@ -234,6 +336,15 @@ public struct SummaryContextAssembler: Sendable {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
+        return formatter
+    }()
+
+    /// Date-only rendering for a fact's background provenance (e.g. "Jul 14, 2026") — no time
+    /// component, since a fact's origin day is what matters for "is this today or old news".
+    static let factDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
         return formatter
     }()
 

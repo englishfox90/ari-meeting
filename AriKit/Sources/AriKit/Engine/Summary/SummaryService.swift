@@ -31,6 +31,13 @@ public struct SummaryProcessRequest: Sendable {
     public var modelProviderKey: String
     public var modelName: String
     public var customPrompt: String
+    /// The RAW user-entered "Instructions" text (← `MeetingSummaryViewModel.customInstructions`),
+    /// separate from `customPrompt` above which is the MERGED context-block+instructions string
+    /// sent to the LLM. `persist()` stores only this raw value into `Summary.customInstructions` —
+    /// the freshly-assembled F3 context block in `customPrompt` must never be frozen into storage,
+    /// since it's regenerated on every `generate()` call. `nil`/empty stores `nil` (No-Fake-State:
+    /// never a fabricated empty string).
+    public var rawCustomInstructions: String?
     public var templateId: String
     public var summaryLanguage: String?
     public var detectedTranscriptLanguage: String?
@@ -44,6 +51,7 @@ public struct SummaryProcessRequest: Sendable {
         modelProviderKey: String,
         modelName: String,
         customPrompt: String = "",
+        rawCustomInstructions: String? = nil,
         templateId: String,
         summaryLanguage: String? = nil,
         detectedTranscriptLanguage: String? = nil,
@@ -54,6 +62,7 @@ public struct SummaryProcessRequest: Sendable {
         self.modelProviderKey = modelProviderKey
         self.modelName = modelName
         self.customPrompt = customPrompt
+        self.rawCustomInstructions = rawCustomInstructions
         self.templateId = templateId
         self.summaryLanguage = summaryLanguage
         self.detectedTranscriptLanguage = detectedTranscriptLanguage
@@ -239,6 +248,10 @@ public struct SummaryService: Sendable {
         // succeeds/fails independently of the provenance write that follows it).
         let existing = try await db.summaries.forMeeting(request.meetingId)
         let now = Date()
+        // Store the RAW user instructions only — never `request.customPrompt` (the merged
+        // context-block+instructions string actually sent to the LLM). Trims to `nil` when empty
+        // (No-Fake-State: no fabricated empty string).
+        let trimmedInstructions = request.rawCustomInstructions?.trimmingCharacters(in: .whitespacesAndNewlines)
         let summary = Summary(
             id: existing?.id ?? SummaryID(UUID().uuidString),
             meetingId: request.meetingId,
@@ -246,6 +259,7 @@ public struct SummaryService: Sendable {
             provider: request.modelProviderKey,
             model: request.modelName,
             templateId: request.templateId,
+            customInstructions: (trimmedInstructions?.isEmpty ?? true) ? nil : trimmedInstructions,
             createdAt: existing?.createdAt ?? now,
             updatedAt: now
         )

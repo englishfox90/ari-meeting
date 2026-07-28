@@ -98,6 +98,22 @@ enum SchemaMigrator {
             }
         }
 
+        // v7 (docs/plans/... custom-instructions persistence) — additive-only, `v1_baseline`
+        // through `v6_profile_fact_supersession` all stay frozen. Persists the RAW user-entered
+        // "Instructions" text from the meeting-detail summary popover
+        // (`MeetingSummaryViewModel.customInstructions`) so it survives closing/reopening a
+        // meeting — previously it lived only in view-model memory and was blanked by
+        // `MeetingSummaryViewModel.reset()` on every mount. Deliberately NOT the merged
+        // `SummaryProcessRequest.customPrompt` (user text + freshly-assembled F3 context block) —
+        // that context is regenerated fresh on every `generate()` call and must never be frozen
+        // into the DB (`SummaryRunner.generate`/`SummaryRunner.mergeCustomPrompt`). Nullable,
+        // defaulting existing rows to `NULL` (no prior instructions), never a fabricated "").
+        migrator.registerMigration("v7_summary_custom_prompt") { db in
+            try db.alter(table: "summary") { t in
+                t.add(column: "customInstructions", .text)
+            }
+        }
+
         return migrator
     }
 

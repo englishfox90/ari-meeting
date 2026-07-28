@@ -82,6 +82,25 @@ struct SummaryGeneratorTests {
         #expect(systemPrompt?.contains("For the 'Summary' section:") == true)
     }
 
+    /// Bleed fix: the final-report system prompt must explicitly tell the model that
+    /// `<user_context>` is background, not a record of what was said in this meeting, and that
+    /// background may only be used to interpret/attribute — never to source a reported item.
+    @Test func finalReportPromptGuardsAgainstUserContextBleed() async throws {
+        let client = RecordingStubClient(kind: .claude, cannedResponse: "# Meeting\n\n**Summary**\n\nDone.")
+        _ = try await SummaryGenerator.generateMeetingSummary(
+            client: client,
+            text: Self.shortTranscript,
+            templateID: "standard_meeting",
+            template: Self.template,
+            tokenThreshold: 4000,
+            detectedTranscriptLanguage: "en"
+        )
+        let systemPrompt = await client.lastSystemPrompt
+        #expect(systemPrompt?.contains("`<user_context>` block is present, it is BACKGROUND") == true)
+        #expect(systemPrompt?.contains("NOT a record of what was said in this meeting") == true)
+        #expect(systemPrompt?.contains("ALSO stated in `<transcript_chunks>`") == true)
+    }
+
     @Test func customPromptIsAppendedToFinalUserPrompt() async throws {
         let client = RecordingStubClient(kind: .claude, cannedResponse: "# Meeting\n\n**Summary**\n\nDone.")
         _ = try await SummaryGenerator.generateMeetingSummary(

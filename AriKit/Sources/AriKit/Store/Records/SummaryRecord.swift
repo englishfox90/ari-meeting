@@ -16,6 +16,9 @@ struct SummaryRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
     var provider: String?
     var model: String?
     var templateId: String?
+    /// ← `v7_summary_custom_prompt`. The raw user-entered instructions only — never the merged
+    /// context+instructions prompt (see `Summary.customInstructions`'s header).
+    var customInstructions: String?
     var createdAt: Date
     var updatedAt: Date
     var isDeleted: Bool
@@ -30,6 +33,7 @@ extension SummaryRecord {
         provider = summary.provider
         model = summary.model
         templateId = summary.templateId
+        customInstructions = summary.customInstructions
         createdAt = summary.createdAt
         updatedAt = summary.updatedAt
         isDeleted = false
@@ -44,6 +48,7 @@ extension SummaryRecord {
             provider: provider,
             model: model,
             templateId: templateId,
+            customInstructions: customInstructions,
             createdAt: createdAt,
             updatedAt: updatedAt
         )

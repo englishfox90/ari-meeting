@@ -183,6 +183,7 @@ public struct SummaryRunner: Sendable {
             modelProviderKey: modelConfig.providerKey,
             modelName: modelConfig.model,
             customPrompt: customPrompt,
+            rawCustomInstructions: customInstructions,
             templateId: resolvedTemplateId,
             summaryLanguage: try? database.settings.string(forKey: .summaryLanguage),
             detectedTranscriptLanguage: detectedLanguage,

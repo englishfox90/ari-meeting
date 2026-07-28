@@ -56,7 +56,10 @@ struct SeriesDetailView: View {
     // No own `NavigationStack`: this view is pushed onto the shell's outer stack, which owns the
     // `navigationDestination(for:)` entries. Member-meeting rows push via `NavigationLink(value:)`
     // and ledger chips push via `onOpenMeetingMoment`, so back-navigation and the toolbar stay
-    // consistent (no nested stack / double bar).
+    // consistent (no nested stack / double bar). We also add no back button of our own: macOS 26
+    // renders the chevron automatically for a pushed detail-column destination, so a manual
+    // `ToolbarItem(placement: .navigation)` shows up as a *second* back button (fixed 2026-07-28).
+    // `dismiss` is still used to pop the screen after a destructive delete/merge.
     var body: some View {
         StateContainer(
             state: viewModel.series,
@@ -83,14 +86,6 @@ struct SeriesDetailView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    dismiss()
-                } label: {
-                    Label("Back", systemImage: "chevron.backward")
-                }
-                .help("Back")
-            }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button("Rename") {

@@ -210,6 +210,32 @@ struct RoundTripFidelityTests {
         #expect(fetched == summary)
     }
 
+    @Test("Summary.customInstructions round-trips through SummaryRepository (v7_summary_custom_prompt)")
+    func summaryCustomInstructionsRoundTrip() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(ModelSamples.meeting)
+        var summary = ModelSamples.summary
+        summary.customInstructions = "Focus on decisions and action items."
+
+        try await db.summaries.upsert(summary)
+        let fetched = try await db.summaries.find(summary.id)
+
+        #expect(fetched?.customInstructions == "Focus on decisions and action items.")
+        #expect(fetched == summary)
+    }
+
+    @Test("Summary.customInstructions is honestly nil when never set — never a fabricated empty string")
+    func summaryCustomInstructionsDefaultsToNil() async throws {
+        let db = try AppDatabase.makeInMemory()
+        try await db.meetings.upsert(ModelSamples.meeting)
+        let summary = ModelSamples.summary // customInstructions left at its default (nil)
+
+        try await db.summaries.upsert(summary)
+        let fetched = try await db.summaries.find(summary.id)
+
+        #expect(fetched?.customInstructions == nil)
+    }
+
     @Test("Summary.forMeeting finds the unique summary for a meeting")
     func summaryForMeeting() async throws {
         let db = try AppDatabase.makeInMemory()

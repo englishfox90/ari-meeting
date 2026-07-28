@@ -69,6 +69,69 @@ struct SummaryServiceTests {
         #expect(persisted.model == "claude-3-5-sonnet")
     }
 
+    @Test("persist() stores the RAW rawCustomInstructions, never the merged customPrompt context block")
+    func persistStoresRawInstructionsNotMergedPrompt() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = makeMeeting(id: "meeting-instructions", title: "New Meeting")
+        try await db.meetings.upsert(meeting)
+
+        let stub = StubLLMClient(kind: .claude, cannedResponse: "# Team Sync\n\n**Summary**\n\nDetails.")
+        let service = makeService(db: db, clientFactory: { _ in stub })
+
+        // `customPrompt` mirrors what `SummaryRunner.mergeCustomPrompt` actually sends the LLM: the
+        // freshly-assembled F3 context block PLUS the user's raw instructions. `rawCustomInstructions`
+        // is only the latter — the value that must survive into `Summary.customInstructions`.
+        let mergedPrompt = """
+        ### Meeting context
+        Owner: Paul. Participants: Alice, Bob. Calendar: Weekly Sync.
+
+        ### Additional instructions
+        Focus on decisions.
+        """
+        let request = SummaryProcessRequest(
+            meetingId: meeting.id,
+            text: "[00:00] Paul: Let's discuss the roadmap.",
+            modelProviderKey: "claude",
+            modelName: "claude-3-5-sonnet",
+            customPrompt: mergedPrompt,
+            rawCustomInstructions: "  Focus on decisions.  ",
+            templateId: "standard_meeting",
+            detectedTranscriptLanguage: "en"
+        )
+
+        let summary = try await service.processTranscript(request)
+
+        #expect(summary.customInstructions == "Focus on decisions.")
+        let persisted = try #require(try await db.summaries.forMeeting(meeting.id))
+        #expect(persisted.customInstructions == "Focus on decisions.")
+        // The merged context block must never leak into storage.
+        #expect(persisted.customInstructions?.contains("Meeting context") == false)
+        #expect(persisted.customInstructions?.contains("Owner: Paul") == false)
+    }
+
+    @Test("persist() stores nil (never a fabricated empty string) when no custom instructions were entered")
+    func persistStoresNilWhenNoInstructions() async throws {
+        let db = try AppDatabase.makeInMemory()
+        let meeting = makeMeeting(id: "meeting-no-instructions", title: "New Meeting")
+        try await db.meetings.upsert(meeting)
+
+        let stub = StubLLMClient(kind: .claude, cannedResponse: "# Team Sync\n\n**Summary**\n\nDetails.")
+        let service = makeService(db: db, clientFactory: { _ in stub })
+
+        let request = SummaryProcessRequest(
+            meetingId: meeting.id,
+            text: "[00:00] Paul: hello",
+            modelProviderKey: "claude",
+            modelName: "claude-3-5-sonnet",
+            rawCustomInstructions: "   ",
+            templateId: "standard_meeting",
+            detectedTranscriptLanguage: "en"
+        )
+
+        let summary = try await service.processTranscript(request)
+        #expect(summary.customInstructions == nil)
+    }
+
     @Test("A second run for the same meeting updates the existing Summary row rather than duplicating it")
     func secondRunUpdatesExistingSummaryRow() async throws {
         let db = try AppDatabase.makeInMemory()

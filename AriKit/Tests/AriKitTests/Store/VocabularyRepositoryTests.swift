@@ -91,8 +91,9 @@ struct VocabularyRepositoryTests {
         // The vocabulary migration must be registered after every prior migration, including the
         // separately-merged `v5_calendar_series_consent`. Guards against an in-place edit to, or
         // reordering ahead of, any earlier (frozen) migration. `v6_profile_fact_supersession`
-        // (docs/plans/person-fact-consolidation.md §4.2) is a later addition still — appended
-        // after `v5_vocabulary_term`, not inserted ahead of it.
+        // (docs/plans/person-fact-consolidation.md §4.2) and `v7_summary_custom_prompt` (custom-
+        // instructions persistence) are later additions still — appended after `v5_vocabulary_term`,
+        // not inserted ahead of it.
         let migrator = SchemaMigrator.migrator()
         #expect(migrator.migrations == [
             "v1_baseline",
@@ -101,7 +102,8 @@ struct VocabularyRepositoryTests {
             "v4_ask_message_cards",
             "v5_calendar_series_consent",
             "v5_vocabulary_term",
-            "v6_profile_fact_supersession"
+            "v6_profile_fact_supersession",
+            "v7_summary_custom_prompt"
         ])
 
         // Everything except the trailing vocabulary migration — the "before" state the

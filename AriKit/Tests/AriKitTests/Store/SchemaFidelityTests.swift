@@ -434,7 +434,9 @@ struct SchemaFidelityTests {
             ExpectedColumn(name: "createdAt", type: "DATETIME", notNull: true),
             ExpectedColumn(name: "updatedAt", type: "DATETIME", notNull: true),
             ExpectedColumn(name: "isDeleted", type: "BOOLEAN", notNull: true),
-            ExpectedColumn(name: "deletedAt", type: "DATETIME", notNull: false)
+            ExpectedColumn(name: "deletedAt", type: "DATETIME", notNull: false),
+            // v7_summary_custom_prompt — the raw user-entered "Instructions" text, additive.
+            ExpectedColumn(name: "customInstructions", type: "TEXT", notNull: false)
         ], table: "summary")
     }
 

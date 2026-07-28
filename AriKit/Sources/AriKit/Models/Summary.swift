@@ -18,6 +18,12 @@ public struct Summary: Codable, Hashable, Sendable, Identifiable {
     public var provider: String?
     public var model: String?
     public var templateId: String?
+    /// The RAW user-entered "Instructions" text from the meeting-detail summary popover (← the
+    /// `v7_summary_custom_prompt` migration) — deliberately NOT the merged
+    /// `SummaryProcessRequest.customPrompt` (user text + freshly-assembled F3 context block), which
+    /// is regenerated on every `generate()` call and must never be frozen into storage. `nil` means
+    /// no instructions were entered — never a fabricated empty string.
+    public var customInstructions: String?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -28,6 +34,7 @@ public struct Summary: Codable, Hashable, Sendable, Identifiable {
         provider: String? = nil,
         model: String? = nil,
         templateId: String? = nil,
+        customInstructions: String? = nil,
         createdAt: Date,
         updatedAt: Date
     ) {
@@ -37,6 +44,7 @@ public struct Summary: Codable, Hashable, Sendable, Identifiable {
         self.provider = provider
         self.model = model
         self.templateId = templateId
+        self.customInstructions = customInstructions
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

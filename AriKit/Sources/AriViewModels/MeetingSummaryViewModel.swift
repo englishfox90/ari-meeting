@@ -113,12 +113,16 @@ public final class MeetingSummaryViewModel {
         templates = loadTemplatesOperation()
     }
 
-    /// Restores the picker's selection from an existing summary's provenance, so re-opening
-    /// "Change template" reflects what actually generated the summary on screen — never a
-    /// fabricated default. `nil` (no summary, or a summary with no recorded `templateId`) restores
-    /// to "Auto (suggest)".
+    /// Restores the picker's selection AND the "Instructions" text from an existing summary's
+    /// provenance, so re-opening a saved meeting reflects what actually generated the summary on
+    /// screen — never a fabricated default, and never a silently-lost user instruction (previously
+    /// `reset()`'s blank stuck because nothing repopulated it). `nil` (no summary, or a summary
+    /// with no recorded `templateId`/`customInstructions`) restores to "Auto (suggest)"/empty.
+    /// Called right after `reset()` at the same call site (`MeetingDetailView`'s `.task(id:)`), so
+    /// this always runs last and wins.
     public func restoreSelection(from summary: Summary?) {
         selectedTemplateID = summary?.templateId
+        customInstructions = summary?.customInstructions ?? ""
     }
 
     /// Generates (or regenerates) the summary for `meetingId` using `selectedTemplateID`

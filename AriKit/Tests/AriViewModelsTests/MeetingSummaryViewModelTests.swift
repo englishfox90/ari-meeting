@@ -20,19 +20,27 @@ struct MeetingSummaryViewModelTests {
 
     private actor CallSpy {
         private(set) var callCount = 0
-        func record() { callCount += 1 }
+        func record() {
+            callCount += 1
+        }
     }
 
-    private func makeSummary(templateId: String? = "standard_meeting") -> Summary {
+    private func makeSummary(templateId: String? = "standard_meeting", customInstructions: String? = nil) -> Summary {
         Summary(
             id: "summary-1", meetingId: meetingId, bodyMarkdown: "# Recap",
-            templateId: templateId, createdAt: Date(), updatedAt: Date()
+            templateId: templateId, customInstructions: customInstructions, createdAt: Date(), updatedAt: Date()
         )
     }
 
     private func makeViewModel(
         generateOperation: @escaping MeetingSummaryViewModel.GenerateOperation = { _, _, _, _ in
-            Summary(id: "summary-1", meetingId: "meeting-1", bodyMarkdown: "# Recap", createdAt: Date(), updatedAt: Date())
+            Summary(
+                id: "summary-1",
+                meetingId: "meeting-1",
+                bodyMarkdown: "# Recap",
+                createdAt: Date(),
+                updatedAt: Date()
+            )
         },
         cancelOperation: @escaping MeetingSummaryViewModel.CancelOperation = { _ in },
         loadTemplatesOperation: @escaping MeetingSummaryViewModel.LoadTemplatesOperation = { [] }
@@ -119,8 +127,16 @@ struct MeetingSummaryViewModelTests {
         let (gate, gateContinuation) = AsyncStream<Void>.makeStream()
         let viewModel = makeViewModel(generateOperation: { _, _, _, _ in
             await spy.record()
-            for await _ in gate { break }
-            return Summary(id: "summary-1", meetingId: "meeting-1", bodyMarkdown: "# Recap", createdAt: Date(), updatedAt: Date())
+            for await _ in gate {
+                break
+            }
+            return Summary(
+                id: "summary-1",
+                meetingId: "meeting-1",
+                bodyMarkdown: "# Recap",
+                createdAt: Date(),
+                updatedAt: Date()
+            )
         })
 
         let firstRun = Task { await viewModel.generate(meetingId: meetingId, speakerCount: nil) }
@@ -165,7 +181,13 @@ struct MeetingSummaryViewModelTests {
         let captured = Captured()
         let viewModel = makeViewModel(generateOperation: { _, templateID, _, instructions in
             await captured.store(templateID, instructions)
-            return Summary(id: "s", meetingId: "meeting-1", bodyMarkdown: "# Recap", createdAt: Date(), updatedAt: Date())
+            return Summary(
+                id: "s",
+                meetingId: "meeting-1",
+                bodyMarkdown: "# Recap",
+                createdAt: Date(),
+                updatedAt: Date()
+            )
         })
         viewModel.selectedTemplateID = "one_on_one"
         viewModel.customInstructions = "  Focus on decisions.  "
@@ -197,6 +219,31 @@ struct MeetingSummaryViewModelTests {
         viewModel.selectedTemplateID = "daily_standup"
         viewModel.restoreSelection(from: nil)
         #expect(viewModel.selectedTemplateID == nil)
+    }
+
+    @Test("restoreSelection repopulates customInstructions from the saved summary, undoing reset()'s blank")
+    func restoreSelectionRepopulatesCustomInstructions() {
+        let viewModel = makeViewModel()
+
+        // Mirrors the real call site (`MeetingDetailView`'s `.task(id:)`): `reset()` blanks
+        // `customInstructions` first, then `restoreSelection(from:)` must repopulate it from
+        // whatever was actually saved with the summary — otherwise the user's instructions are
+        // lost every time the meeting is reopened.
+        viewModel.customInstructions = "stale from a previous meeting"
+        viewModel.reset()
+        #expect(viewModel.customInstructions.isEmpty)
+
+        viewModel.restoreSelection(from: makeSummary(customInstructions: "Focus on decisions."))
+        #expect(viewModel.customInstructions == "Focus on decisions.")
+
+        // No prior instructions on the summary (nil) restores to empty, not a fabricated value.
+        viewModel.restoreSelection(from: makeSummary(customInstructions: nil))
+        #expect(viewModel.customInstructions.isEmpty)
+
+        // No summary at all (e.g. never generated) also restores to empty.
+        viewModel.customInstructions = "stale"
+        viewModel.restoreSelection(from: nil)
+        #expect(viewModel.customInstructions.isEmpty)
     }
 
     @Test("reset clears a stale .failed/.generating state back to .idle")

@@ -144,6 +144,118 @@ struct SummaryContextAssemblerTests {
         let block = await SummaryContextAssembler(database: db).contextBlock(for: meeting.id)
         #expect(block.contains("fact-4"))
         #expect(!block.contains("fact-0"))
+        // Bleed fix: every surfaced fact is explicitly framed as background, never a bare assertion.
+        #expect(block.contains("fact-4 (background)"))
+    }
+
+    // MARK: - Bleed fix: facts are framed as background and ranked/labelled by series relevance
+
+    @Test("Facts sourced from the current meeting's own series rank first and are framed as plain background")
+    func factsClausePrefersSameSeriesFacts() async throws {
+        let db = try AppDatabase.makeInMemory()
+
+        let person = Person(
+            id: PersonID("person-1"),
+            displayName: "Amy Teuscher",
+            isOwner: false,
+            createdAt: epoch,
+            updatedAt: epoch
+        )
+        try await db.persons.upsert(person)
+
+        // Two prior meetings: one in the same series as the meeting being summarized, one wholly
+        // unrelated. Both produced a fact about this person.
+        let seriesMeeting = makeMeeting(id: "m-series-prior", title: "Prior 1:1")
+        try await db.meetings.upsert(seriesMeeting)
+        let unrelatedMeeting = makeMeeting(id: "m-unrelated", title: "Unrelated training session")
+        try await db.meetings.upsert(unrelatedMeeting)
+
+        let currentMeeting = makeMeeting(id: "m-current", title: "1:1 with Amy")
+        try await db.meetings.upsert(currentMeeting)
+        try await db.persons.addParticipant(meetingId: currentMeeting.id, personId: person.id, at: epoch)
+
+        let series = Series(
+            id: SeriesID("series-amy"),
+            title: "Amy 1:1",
+            createdAt: epoch,
+            updatedAt: epoch
+        )
+        try await db.series.upsert(series)
+        try await db.series.addMember(seriesId: series.id, meetingId: seriesMeeting.id, at: epoch)
+        try await db.series.addMember(seriesId: series.id, meetingId: currentMeeting.id, at: epoch)
+        // `unrelatedMeeting` is deliberately NOT added to any series.
+
+        // Lower confidence than the unrelated fact, so a naive confidence-only sort would rank the
+        // unrelated fact first — the point of this test is that series relevance wins that tie-break.
+        try await db.profileFacts.upsert(ProfileFact(
+            id: ProfileFactID("fact-series"),
+            personId: person.id,
+            factText: "Leading the Q1 reorg plan",
+            factKind: .project,
+            sourceMeetingId: seriesMeeting.id,
+            origin: .attributed,
+            confidence: 0.5,
+            sourceCount: 1,
+            status: .active,
+            createdAt: epoch
+        ))
+        try await db.profileFacts.upsert(ProfileFact(
+            id: ProfileFactID("fact-unrelated"),
+            personId: person.id,
+            factText: "Metro 2 reporting accuracy concerns",
+            factKind: .project,
+            sourceMeetingId: unrelatedMeeting.id,
+            origin: .attributed,
+            confidence: 0.9,
+            sourceCount: 1,
+            status: .active,
+            createdAt: epoch
+        ))
+
+        let block = await SummaryContextAssembler(database: db).contextBlock(for: currentMeeting.id)
+
+        // The same-series fact is framed as plain background (no "unrelated" label)...
+        #expect(block.contains("Leading the Q1 reorg plan (background,"))
+        // ...and the cross-meeting fact is never silently dropped, but IS explicitly marked unrelated.
+        #expect(block.contains("Metro 2 reporting accuracy concerns (unrelated background,"))
+
+        // Relevance ranks before confidence: the same-series fact appears before the unrelated one,
+        // even though the unrelated fact has the higher raw confidence.
+        let seriesRange = try #require(block.range(of: "Leading the Q1 reorg plan"))
+        let unrelatedRange = try #require(block.range(of: "Metro 2 reporting accuracy concerns"))
+        #expect(seriesRange.lowerBound < unrelatedRange.lowerBound)
+    }
+
+    @Test("A fact with no recorded source meeting is framed as background with no date, never labelled unrelated")
+    func factsClauseWithoutSourceMeetingOmitsDateAndUnrelatedLabel() async throws {
+        let db = try AppDatabase.makeInMemory()
+
+        let owner = Person(
+            id: PersonID("owner-nosource"),
+            displayName: "Owner",
+            isOwner: true,
+            createdAt: epoch,
+            updatedAt: epoch
+        )
+        try await db.persons.upsert(owner)
+        let meeting = makeMeeting(id: "m-nosource")
+        try await db.meetings.upsert(meeting)
+
+        try await db.profileFacts.upsert(ProfileFact(
+            id: ProfileFactID("fact-nosource"),
+            personId: owner.id,
+            factText: "Enjoys mentoring new hires",
+            factKind: .interest,
+            origin: .selfReported,
+            confidence: 0.8,
+            sourceCount: 1,
+            status: .active,
+            createdAt: epoch
+        ))
+
+        let block = await SummaryContextAssembler(database: db).contextBlock(for: meeting.id)
+        #expect(block.contains("Enjoys mentoring new hires (background)"))
+        #expect(!block.contains("unrelated"))
     }
 
     // MARK: - T-A3 (docs/plans/custom-vocabulary.md §5) — zero vocabulary terms changes nothing
