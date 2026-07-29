@@ -39,6 +39,5 @@ What governs now is ordinary good-engineering discipline: refactor deliberately 
 @.claude/rules/platform-and-deps.md
 @.claude/rules/no-legacy-files.md
 @.claude/rules/design-system.md
-@.claude/context/open-questions.md
 
 Backend- and frontend-scoped rules live in `frontend/src-tauri/CLAUDE.md` and `frontend/CLAUDE.md` and load automatically when you work in those trees.
